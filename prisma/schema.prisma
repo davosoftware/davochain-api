@@ -1,0 +1,1750 @@
+// Davochain — data model
+//
+// Money rule: every monetary column is Decimal(38,18). Never Float, never Int.
+// Prisma returns Decimal.js instances; never call .toNumber() on a balance.
+//
+// Ledger rule: LedgerEntry is append-only. Balance is a projection of it.
+// Corrections are compensating entries, never edits.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────── enums
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  CLOSED
+}
+
+enum KycTier {
+  TIER_0 // signed up only — cannot trade
+  TIER_1 // BVN or NIN verified
+  TIER_2 // government ID + selfie
+  TIER_3 // proof of address
+}
+
+enum KycStatus {
+  NOT_STARTED
+  PENDING // submitted, awaiting provider or review
+  APPROVED
+  REJECTED
+  EXPIRED // documents aged out; re-verification required
+}
+
+enum KycDocumentType {
+  BVN
+  NIN
+  PASSPORT
+  DRIVERS_LICENSE
+  VOTERS_CARD
+  SELFIE
+  PROOF_OF_ADDRESS
+}
+
+enum AddressStatus {
+  PENDING // POST accepted, Quidax generating; address is null
+  ACTIVE // usable
+  FAILED
+  DISABLED // chain de-listed; kept readable for history
+}
+
+enum TxType {
+  DEPOSIT
+  WITHDRAWAL
+  BUY // NGN -> coin
+  SELL // coin -> NGN
+  SWAP // coin -> coin
+  GIFT_CARD // a gift card traded for naira
+  FEE_CLAIM // internal: sweeping accrued fees
+  INTERNAL // internal treasury movement
+}
+
+enum TxStatus {
+  PENDING // accepted, funds locked, not yet settled
+  PROCESSING // upstream in progress
+  ON_HOLD // deposit under review
+  COMPLETED // final
+  FAILED // final; refund already applied where applicable
+  RECONCILING // outcome UNKNOWN — never refund from here
+}
+
+enum LedgerDirection {
+  DEBIT
+  CREDIT
+}
+
+/// Non-user ledger accounts. User balances key off (userId, assetCode).
+enum LedgerAccount {
+  USER
+  REVENUE // gate margin + swap fees
+  INVENTORY // treasury holdings in the main wallet
+  FEE_RECEIVABLE // fee earned, still sitting in a user sub-account
+  IN_FLIGHT // mid-settlement, owned by neither side yet
+  EXTERNAL // the outside world: chains, banks, Quidax
+  /// Referral rewards and anything else given away to win a customer.
+  ///
+  /// Its own account rather than a debit against REVENUE, because a reward is
+  /// a cost of acquisition, not a fee we failed to earn. Blending the two
+  /// would make a month of heavy referral spend look like a month of weak
+  /// margin, and they are answered by completely different decisions.
+  PROMOTION
+}
+
+enum SettlementLegKind {
+  TRANSFER_IN // sub -> main
+  TRANSFER_OUT // main -> sub
+  SWAP
+  CHAIN_WITHDRAWAL
+  BANK_PAYOUT
+}
+
+enum LegState {
+  PENDING
+  SENT
+  CONFIRMED
+  FAILED
+  UNKNOWN // timed out — resolve by polling, never by retrying blind
+}
+
+enum QuoteSide {
+  BUY
+  SELL
+  SWAP
+}
+
+enum ClaimRunStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  COMPLETED_WITH_ERRORS
+  FAILED
+}
+
+enum NotificationChannel {
+  PUSH
+  IN_APP
+  EMAIL
+}
+
+enum AlertType {
+  REFILL_NEEDED
+  PRICE_DIP
+  COIN_EMPTY
+  NGN_FUEL_LOW
+  NGN_FUEL_CRITICAL
+  RECONCILIATION_DRIFT
+  DAILY_DIGEST
+  MONTHLY_REPORT
+}
+
+// ─────────────────────────────────────────────── identity
+
+model User {
+  id           String     @id @default(uuid())
+  email        String     @unique
+  passwordHash String
+  phone        String?    @unique
+  firstName    String
+  lastName     String
+  status       UserStatus @default(ACTIVE)
+  isTest       Boolean    @default(false) // non-prod signups; filter these out of every report
+
+  /// Set together with status = SUSPENDED. The reason is shown to the user on
+  /// their next sign-in attempt, so it has to read as something a person wrote.
+  suspendedAt     DateTime?
+  suspendedReason String?
+  suspendedBy     String?
+
+  emailVerifiedAt DateTime?
+  lastLoginAt     DateTime?
+  failedLogins    Int       @default(0)
+  lockedUntil     DateTime? // brute-force backoff
+
+  /// Denormalised from KycProfile so a guard can check without a join.
+  kycTier   KycTier   @default(TIER_0)
+  kycStatus KycStatus @default(NOT_STARTED)
+
+  // ── referrals ─────────────────────────────────────────────
+
+  /// The code handed out at signup, built from their name plus enough random
+  /// characters to be unguessable. Everyone has one from the moment they
+  /// register, so there is never a state where a user has nothing to share.
+  referralCode String? @unique
+
+  /// A code they chose instead, at most 7 characters.
+  ///
+  /// It REPLACES the generated one rather than sitting alongside it: a person
+  /// has one code, and a link that resolves to somebody has to keep resolving
+  /// to them. Setting this retires `referralCode` from lookup — see
+  /// ReferralsService.resolve.
+  username String? @unique
+
+  /// The referral this user arrived through, and the ones they brought in.
+  ///
+  /// Who referred whom lives ONLY on the Referral row. An earlier draft also
+  /// carried it as a column here, which is two answers to one question and
+  /// eventually two different answers.
+  referralAsReferee Referral?        @relation("RefereeReferral")
+  referralsMade     Referral[]       @relation("ReferrerReferrals")
+  referralRewards   ReferralReward[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  quidaxAccount  QuidaxAccount?
+  kycProfile     KycProfile?
+  balances       Balance[]
+  addresses      DepositAddress[]
+  transactions   Transaction[]
+  quotes         RateQuote[]
+  receivables    FeeReceivable[]
+  notifications  Notification[]
+  refreshTokens  RefreshToken[]
+  deviceTokens   DeviceToken[]
+  otps           UserOtp[]
+  giftCardTrades GiftCardTrade[]
+
+  @@index([status])
+  @@index([kycTier, kycStatus])
+  @@map("users")
+}
+
+/// One Quidax sub-account per user. The email is aliased and immutable upstream —
+/// see README: a test signup permanently burns an address on the live merchant account.
+model QuidaxAccount {
+  id           String   @id @default(uuid())
+  userId       String   @unique
+  quidaxUserId String   @unique
+  quidaxSn     String // fall back to this when webhooks ship user.id as null
+  aliasEmail   String   @unique
+  createdAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([quidaxSn])
+  @@map("quidax_accounts")
+}
+
+// ─────────────────────────────────────────────── catalogue
+
+model Asset {
+  code         String  @id // btc, usdt, eth … Quidax currency code (pol, not matic)
+  name         String
+  isListed     Boolean @default(false)
+  sortOrder    Int     @default(0)
+  isFiat       Boolean @default(false)
+  displayScale Int     @default(8) // decimals shown in the UI
+
+  // Measured from Quidax, not guessed. See README "First live calls".
+  transferMin    Decimal?  @db.Decimal(38, 18) // internal transfer floor, in coin
+  transferMax    Decimal?  @db.Decimal(38, 18)
+  transferStep   Decimal?  @db.Decimal(38, 18) // smallest movable increment
+  limitsSyncedAt DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  networks      AssetNetwork[]
+  balances      Balance[]
+  addresses     DepositAddress[]
+  rateConfigs   RateConfig[]
+  feeSchedules  FeeSchedule[]
+  inventory     InventorySetting?
+  refills       Refill[]
+  refillPeriods RefillPeriod[]
+  snapshots     RateSnapshot[]
+  receivables   FeeReceivable[]
+
+  @@index([isListed, sortOrder])
+  @@map("assets")
+}
+
+/// Synced from GET /users/me/wallets/{currency} -> networks[]. Never hand-typed,
+/// never copied from a docs page — two published pages disagree with each other.
+model AssetNetwork {
+  id               String   @id @default(uuid())
+  assetCode        String
+  networkId        String // bep20, trc20, erc20, arbitrum …
+  label            String
+  depositsEnabled  Boolean  @default(false)
+  withdrawsEnabled Boolean  @default(false)
+  isListed         Boolean  @default(true)
+  isDefault        Boolean  @default(false)
+  confirmations    Int      @default(1)
+  addressRegex     String? // Davochain owns this — Quidax does not return it
+  requiresTag      Boolean  @default(false) // XRP, XLM, TON
+  syncedAt         DateTime @default(now())
+
+  asset     Asset            @relation(fields: [assetCode], references: [code])
+  addresses DepositAddress[]
+
+  @@unique([assetCode, networkId])
+  @@index([assetCode, isListed])
+  @@map("asset_networks")
+}
+
+// ─────────────────────────────────────────────── addresses
+
+model DepositAddress {
+  id              String        @id @default(uuid())
+  userId          String
+  assetCode       String
+  networkId       String
+  address         String? // null while PENDING — never render it
+  destinationTag  String?
+  quidaxAddressId String?
+  status          AddressStatus @default(PENDING)
+  requestedAt     DateTime      @default(now())
+  activatedAt     DateTime?
+
+  user    User         @relation(fields: [userId], references: [id])
+  asset   Asset        @relation(fields: [assetCode], references: [code])
+  network AssetNetwork @relation(fields: [assetCode, networkId], references: [assetCode, networkId])
+
+  @@unique([userId, assetCode, networkId])
+  @@index([status])
+  @@index([address])
+  @@map("deposit_addresses")
+}
+
+// ─────────────────────────────────────────────── ledger
+
+/// Projection of LedgerEntry. Written only by LedgerService, inside a transaction,
+/// with SELECT … FOR UPDATE on the row. Nothing else in the codebase touches it.
+model Balance {
+  id        String   @id @default(uuid())
+  userId    String
+  assetCode String
+  available Decimal  @default(0) @db.Decimal(38, 18)
+  locked    Decimal  @default(0) @db.Decimal(38, 18)
+  updatedAt DateTime @updatedAt
+
+  user  User  @relation(fields: [userId], references: [id])
+  asset Asset @relation(fields: [assetCode], references: [code])
+
+  @@unique([userId, assetCode])
+  @@map("balances")
+}
+
+/// Append-only. Never updated, never deleted. A balance you cannot derive from
+/// these is a balance you cannot defend.
+model LedgerEntry {
+  id            String          @id @default(uuid())
+  transactionId String?
+  account       LedgerAccount
+  userId        String? // set when account = USER or FEE_RECEIVABLE
+  assetCode     String
+  direction     LedgerDirection
+  amount        Decimal         @db.Decimal(38, 18)
+  memo          String?
+  createdAt     DateTime        @default(now())
+
+  transaction Transaction? @relation(fields: [transactionId], references: [id])
+
+  @@index([transactionId])
+  @@index([userId, assetCode, createdAt])
+  @@index([account, assetCode, createdAt])
+  @@map("ledger_entries")
+}
+
+// ─────────────────────────────────────────────── movement
+
+model Transaction {
+  id     String   @id @default(uuid())
+  userId String
+  type   TxType
+  status TxStatus @default(PENDING)
+
+  fromAsset  String?
+  fromAmount Decimal? @db.Decimal(38, 18)
+  toAsset    String?
+  toAmount   Decimal? @db.Decimal(38, 18)
+
+  // What was promised on screen, and what Quidax actually gave us.
+  displayedRate Decimal? @db.Decimal(38, 18)
+  quidaxRate    Decimal? @db.Decimal(38, 18)
+  gateApplied   Decimal? @db.Decimal(38, 18) // NGN per USD, from the versioned config
+  feeAmount     Decimal? @db.Decimal(38, 18)
+  feeAsset      String?
+
+  /// What this trade was worth in dollars, priced when it was quoted.
+  ///
+  /// Amounts are held in each asset's own units, so BTC and DOGE cannot be
+  /// added up — a total across coins is only meaningful in one currency, and
+  /// pricing it later would answer "what would it be worth today", which is a
+  /// different question from "what moved".
+  usdValue Decimal? @db.Decimal(38, 18)
+
+  /// The fee in dollars. feeAmount is in whichever asset was charged, so
+  /// summing that column across trades adds bitcoin to naira.
+  ///
+  /// On a withdrawal this is the PLATFORM's share only. The chain's fee is
+  /// money that left, not money that was earned, and adding it to revenue
+  /// would report a cost as a profit.
+  feeUsd Decimal? @db.Decimal(38, 18)
+
+  /// What the chain and Quidax took on a withdrawal, in the coin's own units.
+  /// Recorded apart from feeAmount so the two halves of a withdrawal fee can
+  /// always be told from one another after the fact.
+  networkFee   Decimal? @db.Decimal(38, 18)
+  rateConfigId String?
+
+  reference       String  @unique // our idempotency key, sent to Quidax
+  quidaxRef       String? // their id
+  quidaxRawStatus String? // keep the upstream string verbatim for support
+  failureReason   String?
+  settledFrom     String? // INVENTORY | FALLBACK_SWAP — which rung of the ladder
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  completedAt DateTime?
+
+  user           User            @relation(fields: [userId], references: [id])
+  entries        LedgerEntry[]
+  legs           SettlementLeg[]
+  notifications  Notification[]
+  swapFee        SwapFee?
+  /// Set when this transaction is the naira credit that paid a referral
+  /// reward — which is the only moment a reward becomes visible in a history.
+  referralReward ReferralReward?
+  /// Likewise for a gift card that was accepted.
+  giftCardTrade  GiftCardTrade?
+
+  @@index([userId, createdAt])
+  @@index([status, type])
+  @@index([quidaxRef])
+  @@map("transactions")
+}
+
+/// One row per upstream call a transaction is made of. A swap has several.
+/// This is what a stuck reversal is found from.
+model SettlementLeg {
+  id            String            @id @default(uuid())
+  transactionId String
+  kind          SettlementLegKind
+  assetCode     String
+  amount        Decimal           @db.Decimal(38, 18)
+  reference     String            @unique
+  quidaxRef     String?
+  state         LegState          @default(PENDING)
+  attempts      Int               @default(0)
+  lastError     String?
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  transaction Transaction @relation(fields: [transactionId], references: [id])
+
+  @@index([state, updatedAt])
+  @@index([transactionId])
+  @@map("settlement_legs")
+}
+
+/// A quote is binding on Davochain, not on Quidax. TTL is short (12s) and
+/// enforced at execution — see README "Why the quote expires".
+model RateQuote {
+  id            String    @id @default(uuid())
+  userId        String
+  side          QuoteSide
+  fromAsset     String
+  toAsset       String
+  fromAmount    Decimal   @db.Decimal(38, 18)
+  toAmount      Decimal   @db.Decimal(38, 18)
+  displayedRate Decimal   @db.Decimal(38, 18)
+  quidaxRate    Decimal   @db.Decimal(38, 18)
+  gateApplied   Decimal   @db.Decimal(38, 18)
+  feeAmount     Decimal   @default(0) @db.Decimal(38, 18)
+  feeAsset      String?
+
+  /// What the trade is worth in dollars, and what the fee is in dollars.
+  /// Carried onto the transaction on execution so the figures a dashboard adds
+  /// up are the ones the user was actually quoted, not a later reprice.
+  usdValue Decimal? @db.Decimal(38, 18)
+  feeUsd   Decimal? @db.Decimal(38, 18)
+
+  rateConfigId String
+  snapshotId   String?
+  expiresAt    DateTime
+  consumedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([expiresAt])
+  @@map("rate_quotes")
+}
+
+// ─────────────────────────────────────────────── pricing
+
+/// What the quote service last saw. The TTL is enforced against capturedAt,
+/// and a disputed trade is reconstructed from here.
+model RateSnapshot {
+  assetCode  String
+  id         String   @id @default(uuid())
+  ngnPerUsd  Decimal  @db.Decimal(38, 18)
+  priceUsd   Decimal  @db.Decimal(38, 18)
+  source     String   @default("temporary_swap_quotation")
+  capturedAt DateTime @default(now())
+
+  asset Asset @relation(fields: [assetCode], references: [code])
+
+  @@index([assetCode, capturedAt])
+  @@map("rate_snapshots")
+}
+
+/// Versioned. Insert a new row, never UPDATE — a dispute six weeks from now has
+/// to be answerable with the gate that was live at that moment.
+model RateConfig {
+  id        String  @id @default(uuid())
+  assetCode String? // null = GLOBAL default
+
+  gateNgnPerUsd   Decimal @db.Decimal(38, 18) // added on buy, subtracted on sell
+  swapFeeUsd      Decimal @default(2) @db.Decimal(38, 18) // flat, coin-to-coin
+  floorUsd        Decimal @default(10) @db.Decimal(38, 18)
+  maxTradeUsd     Decimal @default(2000) @db.Decimal(38, 18) // compliance, not inventory
+  quoteTtlSeconds Int     @default(12)
+  withdrawalFee   Decimal @default(0) @db.Decimal(38, 18)
+
+  effectiveFrom DateTime @default(now())
+  setBy         String
+  note          String?
+  createdAt     DateTime @default(now())
+
+  asset Asset? @relation(fields: [assetCode], references: [code])
+
+  @@index([assetCode, effectiveFrom])
+  @@map("rate_configs")
+}
+
+// ─────────────────────────────────────────────── inventory desk
+
+model InventorySetting {
+  assetCode           String  @id
+  target              Decimal @db.Decimal(38, 18)
+  floorPct            Decimal @default(25) @db.Decimal(38, 18)
+  dipAlertPct         Decimal @default(5) @db.Decimal(38, 18)
+  fallbackSwapEnabled Boolean @default(true) // what stops trading halting
+
+  updatedAt DateTime @updatedAt
+
+  asset Asset @relation(fields: [assetCode], references: [code])
+
+  @@map("inventory_settings")
+}
+
+/// The open period since the last recorded refill. Everything in the alert
+/// table is computed from this — "sold since refill", not "sold today".
+model RefillPeriod {
+  id               String    @id @default(uuid())
+  assetCode        String
+  openedAt         DateTime  @default(now())
+  closedAt         DateTime?
+  soldQty          Decimal   @default(0) @db.Decimal(38, 18)
+  weightedAvgUsd   Decimal   @default(0) @db.Decimal(38, 18)
+  marginForgoneNgn Decimal   @default(0) @db.Decimal(38, 18)
+
+  asset Asset @relation(fields: [assetCode], references: [code])
+
+  @@index([assetCode, closedAt])
+  @@map("refill_periods")
+}
+
+/// A restock you made elsewhere and recorded here. Closes the open period and
+/// gives the monthly report its cost side.
+model Refill {
+  id           String   @id @default(uuid())
+  assetCode    String
+  quantity     Decimal  @db.Decimal(38, 18)
+  pricePaidUsd Decimal  @db.Decimal(38, 18)
+  occurredAt   DateTime
+  recordedBy   String
+  note         String?
+  createdAt    DateTime @default(now())
+
+  asset Asset @relation(fields: [assetCode], references: [code])
+
+  @@index([assetCode, occurredAt])
+  @@map("refills")
+}
+
+// ─────────────────────────────────────────────── swap fees
+
+model SwapFee {
+  id            String   @id @default(uuid())
+  transactionId String   @unique
+  assetCode     String // the coin it was taken in (the swap's destination)
+  amount        Decimal  @db.Decimal(38, 18)
+  usdAtAccrual  Decimal  @db.Decimal(38, 18)
+  rateConfigId  String
+  createdAt     DateTime @default(now())
+
+  transaction Transaction @relation(fields: [transactionId], references: [id])
+
+  @@map("swap_fees")
+}
+
+/// Fee earned but still sitting in the user's sub-account. Cleared only after a
+/// claim transfer confirms, so a crashed run leaves it claimable, never lost.
+model FeeReceivable {
+  id           String    @id @default(uuid())
+  userId       String
+  assetCode    String
+  amount       Decimal   @db.Decimal(38, 18)
+  usdAtAccrual Decimal   @db.Decimal(38, 18)
+  claimRunId   String?
+  sweptAt      DateTime?
+  createdAt    DateTime  @default(now())
+
+  user     User         @relation(fields: [userId], references: [id])
+  asset    Asset        @relation(fields: [assetCode], references: [code])
+  claimRun FeeClaimRun? @relation(fields: [claimRunId], references: [id])
+
+  @@index([assetCode, sweptAt])
+  @@index([userId, assetCode])
+  @@map("fee_receivables")
+}
+
+/// Admin-triggered. Throttled well under the shared rate limit so it never
+/// starves live trading. This is the P&L record for fee revenue.
+model FeeClaimRun {
+  id             String         @id @default(uuid())
+  triggeredBy    String
+  assetCodes     String[]
+  destination    String         @default("usdt")
+  status         ClaimRunStatus @default(QUEUED)
+  totalCount     Int            @default(0)
+  succeededCount Int            @default(0)
+  failedCount    Int            @default(0)
+  realisedUsd    Decimal        @default(0) @db.Decimal(38, 18)
+  summary        Json?
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  createdAt      DateTime       @default(now())
+
+  receivables FeeReceivable[]
+
+  @@index([status, createdAt])
+  @@map("fee_claim_runs")
+}
+
+// ─────────────────────────────────────────────── plumbing
+
+/// Raw inbound webhook. Verify signature over raw bytes, store, return 200 fast,
+/// process on a worker. Quidax states plainly that duplicates will arrive.
+model WebhookEvent {
+  id             String    @id @default(uuid())
+  eventName      String
+  dedupHash      String    @unique
+  payload        Json
+  signatureValid Boolean
+  receivedAt     DateTime  @default(now())
+  processedAt    DateTime?
+  attempts       Int       @default(0)
+  lastError      String?
+
+  @@index([eventName, processedAt])
+  @@map("webhook_events")
+}
+
+model Notification {
+  id            String              @id @default(uuid())
+  userId        String
+  transactionId String?
+  broadcastId   String?
+  type          String
+  title         String
+  body          String
+  channel       NotificationChannel
+  readAt        DateTime?
+  sentAt        DateTime?
+  createdAt     DateTime            @default(now())
+
+  user        User         @relation(fields: [userId], references: [id])
+  transaction Transaction? @relation(fields: [transactionId], references: [id])
+  broadcast   Broadcast?   @relation(fields: [broadcastId], references: [id])
+
+  @@unique([userId, transactionId, type, channel])
+  @@index([userId, readAt])
+  @@map("notifications")
+}
+
+/// Admin alerts. Throttle record too: what fired, when, so a cooldown can be
+/// enforced and a repeat suppressed. An alert channel that cries wolf is worse
+/// than none, because it teaches you to ignore the one that mattered.
+model Alert {
+  id        String    @id @default(uuid())
+  type      AlertType
+  assetCode String?
+  threshold String?
+  payload   Json
+  sentAt    DateTime  @default(now())
+
+  @@index([type, assetCode, sentAt])
+  @@map("alerts")
+}
+
+model AlertRecipient {
+  id      String    @id @default(uuid())
+  type    AlertType
+  email   String
+  enabled Boolean   @default(true)
+
+  @@unique([type, email])
+  @@map("alert_recipients")
+}
+
+model EmailLog {
+  id          String   @id @default(uuid())
+  to          String
+  subject     String
+  alertId     String?
+  /// Which template produced it, so "did the deposit email go out?" is a query
+  /// rather than a guess from the subject line.
+  templateKey String?
+  succeeded   Boolean
+  error       String?
+  sentAt      DateTime @default(now())
+
+  @@index([sentAt])
+  @@index([templateKey, sentAt])
+  @@map("email_log")
+}
+
+/// Replay a mutating request and get the original result back — the action does
+/// not happen twice.
+model IdempotencyKey {
+  key         String   @id
+  userId      String
+  requestHash String
+  statusCode  Int
+  response    Json
+  createdAt   DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("idempotency_keys")
+}
+
+model AdminUser {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  name         String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  /// Kept in the row rather than an object store: there is no bucket yet, an
+  /// avatar is a few KB, and a picture that lives with the account cannot go
+  /// missing separately from it. Bytes, not base64 — the 33% is free to avoid.
+  avatar          Bytes?
+  avatarType      String?
+  avatarUpdatedAt DateTime?
+
+  /// Every token issued before this instant is refused. Changing a password
+  /// has to end the sessions it is being changed because of.
+  passwordChangedAt DateTime  @default(now())
+  lastLoginAt       DateTime?
+
+  /// Which admin created this one. Null for the bootstrap account, which by
+  /// definition predates anyone who could have created it.
+  createdBy String?
+
+  role AdminRole @default(SUB_ADMIN)
+
+  /// What a sub-admin may do. Ignored for an OWNER, who has everything —
+  /// storing an owner's permissions would let a stale list lock them out of
+  /// their own dashboard.
+  permissions String[] @default([])
+
+  auditEntries AdminAuditLog[]
+  sessions     AdminSession[]
+  otps         AdminOtp[]
+  invites      AdminInvite[]
+
+  @@map("admin_users")
+}
+
+/// An admin moving a gate is a financial act. Log who, when, and what it was before.
+enum AdminRole {
+  /// Everything, always. There is at least one, and the last one cannot be
+  /// demoted or deactivated.
+  OWNER
+  /// Only the features an owner granted.
+  SUB_ADMIN
+}
+
+/// A signed-in admin, tracked so a session can be ended — by idling, by a
+/// password change, or by an owner — rather than living until its JWT expires.
+model AdminSession {
+  id          String    @id @default(uuid())
+  /// The token's jti. Matching on this is what ties a bearer to a row.
+  jti         String    @unique
+  adminUserId String
+  createdAt   DateTime  @default(now())
+  /// Touched as the admin works. Idle for longer than the timeout ends it.
+  lastSeenAt  DateTime  @default(now())
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  revokedWhy  String?
+  ip          String?
+  userAgent   String?
+
+  admin AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+
+  @@index([adminUserId, revokedAt])
+  @@index([lastSeenAt])
+  @@map("admin_sessions")
+}
+
+enum AdminOtpPurpose {
+  PASSWORD_RESET
+}
+
+/// A one-time code emailed to an admin. Stored as a hash: a leaked database
+/// row must not be a working credential.
+model AdminOtp {
+  id          String          @id @default(uuid())
+  adminUserId String
+  purpose     AdminOtpPurpose
+  codeHash    String
+  /// Where it was actually delivered, so an owner copied in on a sub-admin's
+  /// reset can be shown who else received it.
+  sentTo      String[]        @default([])
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  /// Wrong guesses. Enough of them burn the code — otherwise six digits is a
+  /// million tries against a live reset.
+  attempts    Int             @default(0)
+  createdAt   DateTime        @default(now())
+
+  admin AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+
+  @@index([adminUserId, purpose, consumedAt])
+  @@map("admin_otps")
+}
+
+/// Everything the public website and the apps read about this business.
+///
+/// A single row, because there is one company. Edited in the admin and served
+/// unauthenticated at GET /v1/site, so changing a phone number here changes it
+/// on the landing page without a deploy.
+model SiteSetting {
+  /// Always "default". A primary key with one legal value is how you spell
+  /// "singleton" in a relational database.
+  id String @id @default("default")
+
+  /// Where the public website lives, without a trailing slash.
+  ///
+  /// Referral links are built from it, so it is admin-managed rather than an
+  /// environment variable: the day the domain changes, the person who knows
+  /// should be able to fix every link that has not been shared yet without a
+  /// deploy.
+  websiteUrl String @default("https://davochain.com")
+
+  // ── contact ───────────────────────────────────────────────
+  companyName  String  @default("Davochain")
+  supportEmail String  @default("support@davochain.com")
+  phone        String?
+  address      String?
+
+  // ── the apps ──────────────────────────────────────────────
+  iosVersion      String?
+  androidVersion  String?
+  iosStoreUrl     String?
+  androidStoreUrl String?
+
+  /// Turns the apps and the website to a holding page. The API keeps serving
+  /// the admin either way — locking yourself out of the switch that caused the
+  /// outage is not a recovery plan.
+  maintenanceMode    Boolean @default(false)
+  maintenanceMessage String?
+
+  // ── social ────────────────────────────────────────────────
+  facebook  String?
+  twitter   String?
+  instagram String?
+  linkedin  String?
+  youtube   String?
+  tiktok    String?
+
+  // ── branding ──────────────────────────────────────────────
+  /// Kept in the row like an admin avatar, for the same reason: there is no
+  /// object store yet, and a logo is a few KB.
+  logo          Bytes?
+  logoType      String?
+  logoUpdatedAt DateTime?
+
+  // ── the email footer ──────────────────────────────────────
+  //
+  // The wording under the social icons on every email. Admin-managed because
+  // the legal entity, the registered address and the opt-in sentence all
+  // change without the layout changing, and none of them should need a deploy.
+  // Null means "use the default", so a blank field never ships an empty line.
+
+  /// The legal entity in the copyright line: "© 2026 <this>. All rights reserved."
+  emailLegalName       String?
+  /// The registered address. Most bulk-mail rules require a physical one.
+  emailAddressLine     String?
+  /// Why they are receiving this at all.
+  emailOptInNote       String?
+  /// The line above the unsubscribe link.
+  emailUnsubscribeNote String?
+  /// Where "unsubscribe" points. Until there is a preference centre this is
+  /// usually a mailto: — better an address that reaches a person than a link
+  /// that 404s.
+  emailUnsubscribeUrl  String?
+
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+
+  @@map("site_settings")
+}
+
+model AdminAuditLog {
+  id          String   @id @default(uuid())
+  adminUserId String
+  action      String
+  entity      String
+  entityId    String?
+  before      Json?
+  after       Json?
+  ip          String?
+  createdAt   DateTime @default(now())
+
+  admin AdminUser @relation(fields: [adminUserId], references: [id])
+
+  @@index([entity, createdAt])
+  @@index([adminUserId, createdAt])
+  @@index([action, createdAt])
+  @@map("admin_audit_log")
+}
+
+/// Global kill switches. Ship with the brakes on — there is no rollback on live.
+model SystemFlag {
+  key       String   @id
+  value     Json
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+
+  @@map("system_flags")
+}
+
+// ─────────────────────────────────────────────── kyc
+
+/// Verification state. Tier drives the limits in KycTierLimit; guards read the
+/// denormalised copy on User rather than joining on every request.
+model KycProfile {
+  id     String    @id @default(uuid())
+  userId String    @unique
+  tier   KycTier   @default(TIER_0)
+  status KycStatus @default(NOT_STARTED)
+
+  dateOfBirth DateTime?
+
+  /// NEVER store a raw BVN or NIN. Hash for matching, keep the last 4 so support
+  /// can confirm against it, and let the provider hold the real value.
+  bvnHash  String?
+  bvnLast4 String?
+  ninHash  String?
+  ninLast4 String?
+
+  addressLine String?
+  city        String?
+  state       String?
+  country     String  @default("NG")
+
+  providerName String?
+  providerRef  String?
+
+  submittedAt     DateTime?
+  reviewedAt      DateTime?
+  reviewedBy      String?
+  rejectionReason String?
+  expiresAt       DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User          @relation(fields: [userId], references: [id])
+  documents KycDocument[]
+
+  @@index([status, tier])
+  @@index([providerRef])
+  @@map("kyc_profiles")
+}
+
+model KycDocument {
+  id              String          @id @default(uuid())
+  kycProfileId    String
+  type            KycDocumentType
+  /// Object-store key. Never the file itself, never a public URL.
+  storageKey      String
+  mimeType        String
+  sizeBytes       Int
+  status          KycStatus       @default(PENDING)
+  rejectionReason String?
+  uploadedAt      DateTime        @default(now())
+  reviewedAt      DateTime?
+
+  profile KycProfile @relation(fields: [kycProfileId], references: [id], onDelete: Cascade)
+
+  @@index([kycProfileId, type])
+  @@map("kyc_documents")
+}
+
+/// What each tier may do. Admin-editable, and every change is audited —
+/// raising a limit is a financial act.
+model KycTierLimit {
+  tier                KycTier @id
+  canTrade            Boolean @default(false)
+  canWithdrawCrypto   Boolean @default(false)
+  canWithdrawFiat     Boolean @default(false)
+  maxTradeUsd         Decimal @db.Decimal(38, 18)
+  maxDailyTradeUsd    Decimal @db.Decimal(38, 18)
+  maxDailyWithdrawUsd Decimal @db.Decimal(38, 18)
+
+  /// Naira in and out, per transaction and per day.
+  ///
+  /// Naira is the only leg a tier caps by amount, because it is the only leg
+  /// that touches a bank — the point of a KYC tier is how much real money a
+  /// verified identity may move, and a coin moving between two of our own
+  /// wallets moves none. Zero means the tier cannot do it at all.
+  ngnDepositSingle  Decimal @default(0) @db.Decimal(38, 18)
+  ngnDepositDaily   Decimal @default(0) @db.Decimal(38, 18)
+  ngnWithdrawSingle Decimal @default(0) @db.Decimal(38, 18)
+  ngnWithdrawDaily  Decimal @default(0) @db.Decimal(38, 18)
+
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+
+  @@map("kyc_tier_limits")
+}
+
+/// A secret belonging to a partner, held by the platform rather than the
+/// deployment.
+///
+/// The VALUE is encrypted with a key that lives in the environment and never in
+/// this table — so a stolen database dump is ciphertext, not a Quidax key that
+/// can move money. Losing that environment key means losing every credential
+/// here, which is the correct trade: the alternative is a database that is
+/// itself the keys to the business.
+model IntegrationCredential {
+  /// A name from the CREDENTIALS catalogue — quidax.secretKey, smtp.password …
+  name String @id
+
+  /// AES-256-GCM, stored as iv:tag:ciphertext. Never returned to any client.
+  ciphertext String
+
+  /// The last four characters, so a person can tell which key is loaded
+  /// without the API ever handing back one that works.
+  last4 String?
+
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+
+  @@map("integration_credentials")
+}
+
+// ─────────────────────────────────────────────── sessions
+
+/// Rotated on every refresh. Only the hash is stored, so a database leak does
+/// not hand out live sessions. Reuse of a retired token kills the whole family.
+model RefreshToken {
+  id         String    @id @default(uuid())
+  userId     String
+  tokenHash  String    @unique
+  family     String
+  userAgent  String?
+  ip         String?
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  replacedBy String?
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, revokedAt])
+  @@index([family])
+  @@map("refresh_tokens")
+}
+
+// ─────────────────────────────────────────────── fee bands
+
+/**
+ * A versioned SET of bands. Editing fees inserts a whole new schedule rather
+ * than mutating bands in place — a disputed trade has to be answerable with
+ * the exact ladder that was live at that moment, and editing one band of a
+ * live schedule would silently rewrite history for every trade before it.
+ */
+/// Which fee a ladder prices. The two are set, versioned and resolved
+/// independently — a coin can charge a tight rate fee and a generous swap fee,
+/// and their band boundaries need not line up.
+enum FeeKind {
+  /// Naira per dollar, folded into the buy or sell rate.
+  RATE
+  /// Flat USD taken from a coin-to-coin swap.
+  SWAP
+  /// Flat USD the platform adds to an external crypto withdrawal, on top of
+  /// whatever the chain charges. The two are always shown as separate lines.
+  WITHDRAWAL
+  /// Flat NAIRA charged when a user cashes out to a Nigerian bank. Priced in
+  /// naira because that is the currency leaving; banded on the dollar value so
+  /// every ladder in the system breaks on the same axis.
+  NGN_WITHDRAWAL
+}
+
+model FeeSchedule {
+  id   String  @id @default(uuid())
+  kind FeeKind @default(RATE)
+
+  /// A schedule with no bands, marking the moment a coin was put back on the
+  /// global default. Deleting its old schedules would be simpler and wrong —
+  /// a trade from last week still has to be explainable with the ladder that
+  /// was live when it happened.
+  inherits      Boolean  @default(false)
+  assetCode     String? // null = the global default, used when a coin has none
+  effectiveFrom DateTime @default(now())
+  setBy         String
+  note          String?
+  createdAt     DateTime @default(now())
+
+  asset Asset?    @relation(fields: [assetCode], references: [code])
+  bands FeeBand[]
+
+  @@index([kind, assetCode, effectiveFrom])
+  @@map("fee_schedules")
+}
+
+/**
+ * One rung: "a trade worth between minUsd and maxUsd pays this gate".
+ * Bands are validated to be contiguous and non-overlapping when a schedule is
+ * saved, so no trade size can fall through a gap or match two rungs at once.
+ */
+model FeeBand {
+  id         String @id @default(uuid())
+  scheduleId String
+
+  /// Where this rung starts, in the ladder's OWN currency.
+  ///
+  /// Dollars for the three ladders that price a coin, naira for the one that
+  /// prices a naira cash-out — because a naira band pegged to a dollar amount
+  /// silently moves every time the exchange rate does, and a ₦50,000
+  /// withdrawal would change what it costs without anyone touching the ladder.
+  minAmount Decimal  @db.Decimal(38, 18)
+  /// null on the top band — everything above minAmount
+  maxAmount Decimal? @db.Decimal(38, 18)
+  /// What this rung charges. Naira per dollar on a RATE ladder; flat dollars
+  /// on a SWAP one. One column because a band belongs to exactly one ladder,
+  /// and two nullable ones only invite a row that sets neither.
+  value     Decimal  @db.Decimal(38, 18)
+  sortOrder Int      @default(0)
+
+  schedule FeeSchedule @relation(fields: [scheduleId], references: [id], onDelete: Cascade)
+
+  @@index([scheduleId, sortOrder])
+  @@map("fee_bands")
+}
+
+// ─────────────────────────────────────────────── broadcasts
+
+enum BroadcastAudience {
+  ALL
+  SELECTED
+}
+
+/**
+ * An admin message pushed to users' in-app feeds. Kept as its own record so a
+ * send can be audited and counted after the fact, rather than only existing as
+ * N scattered notification rows.
+ */
+model Broadcast {
+  id             String            @id @default(uuid())
+  title          String
+  body           String
+  audience       BroadcastAudience
+  recipientCount Int               @default(0)
+  sentBy         String
+  createdAt      DateTime          @default(now())
+
+  notifications Notification[]
+
+  @@index([createdAt])
+  @@map("broadcasts")
+}
+
+// ─────────────────────────────────────────────── push
+
+enum DevicePlatform {
+  ANDROID
+  IOS
+  WEB
+}
+
+/**
+ * An FCM registration token for one install of the app.
+ * A user can have several — a phone and a tablet — and a token can move
+ * between users if a device is handed on, so the token itself is the unique
+ * key rather than the pair. Tokens expire and get rotated by the OS; FCM tells
+ * us when one is dead and the sender prunes it.
+ */
+model DeviceToken {
+  id         String         @id @default(uuid())
+  userId     String
+  token      String         @unique
+  platform   DevicePlatform
+  appVersion String?
+  lastSeenAt DateTime       @default(now())
+  createdAt  DateTime       @default(now())
+  /// Set when FCM reports the token as unregistered. Kept rather than deleted
+  /// so a support question about a missing notification can still be answered.
+  disabledAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, disabledAt])
+  @@map("device_tokens")
+}
+
+// ── CMS ─────────────────────────────────────────────────────
+//
+// What the website and the apps display, and what the system emails, held as
+// data rather than as strings compiled into three codebases. An admin edits it
+// once and every surface changes.
+//
+// Bodies are stored as MARKDOWN, never HTML. The renderer escapes the source
+// before it applies any formatting, so the only tags that can reach a page are
+// ones we generated — an admin cannot paste a <script> into Terms and have it
+// run on the website, which is exactly the risk of a rich-text field that
+// three clients render.
+
+/// About us, Terms, Privacy — and anything else an admin adds.
+model StaticPage {
+  id      String  @id @default(uuid())
+  /// The URL segment and the app's lookup key. Lowercase, hyphenated.
+  slug    String  @unique
+  title   String
+  /// Markdown. Rendered to HTML on read.
+  body    String
+  /// One or two lines for a card or a meta description.
+  excerpt String?
+
+  isPublished Boolean @default(true)
+  sortOrder   Int     @default(0)
+
+  /// A page the app links to by slug. It can be edited and unpublished but not
+  /// deleted — the app has a Terms screen whether or not anyone remembered to
+  /// keep the row, and a 404 there is worse than stale copy.
+  isSystem Boolean @default(false)
+
+  updatedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isPublished, sortOrder])
+  @@map("static_pages")
+}
+
+/// Website only. The apps have their own help surface.
+model Faq {
+  id       String  @id @default(uuid())
+  question String
+  /// Markdown, same as a page.
+  answer   String
+  /// Free text — "Deposits", "Verification". Null groups under "General".
+  category String?
+
+  isPublished Boolean @default(true)
+  sortOrder   Int     @default(0)
+
+  updatedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isPublished, category, sortOrder])
+  @@map("faqs")
+}
+
+/// One row per thing the system emails. The catalogue in code defines which
+/// keys exist and what variables each may use; this table holds the admin's
+/// wording. A missing row means nobody has edited it and the default applies.
+model EmailTemplate {
+  id  String @id @default(uuid())
+  /// Matches a key in EMAIL_TEMPLATES. Not an enum: adding a template should
+  /// be a code change, not a migration.
+  key String @unique
+
+  subject String
+  /// Rich HTML from the editor, sanitised on write, wrapped in the brand
+  /// layout at send time. The layout is not editable — one change to it fixes
+  /// every email at once.
+  body    String
+
+  /// A picture for this email, shown under the header. Held in the row like the
+  /// site logo, for the same reason: there is no object store yet, and one
+  /// banner is a few dozen KB. Served from a public URL because a mail client
+  /// fetches it from outside our network.
+  image          Bytes?
+  imageType      String?
+  imageUpdatedAt DateTime?
+  /// Alt text. An email opened with images off shows this instead, which for
+  /// many corporate inboxes is the only version anyone sees.
+  imageAlt       String?
+
+  /// Off means this event sends no email. The in-app notification and the push
+  /// are unaffected; they are separate channels.
+  isActive Boolean @default(true)
+
+  updatedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("email_templates")
+}
+
+/// A single-use link that lets a new admin set their own password.
+///
+/// Created instead of generating a password for them: a generated password has
+/// to travel to its owner somehow, and every route it can take — an email, a
+/// chat message, a note — leaves a live credential sitting somewhere readable.
+/// This leaves nothing usable behind if the invitation is intercepted after it
+/// has been accepted.
+model AdminInvite {
+  id          String @id @default(uuid())
+  adminUserId String
+  /// SHA-256 of the token in the link. A leaked database row is not a working
+  /// invitation.
+  tokenHash   String @unique
+
+  expiresAt  DateTime
+  consumedAt DateTime?
+  /// Who sent it, for the audit trail.
+  invitedBy  String
+  createdAt  DateTime  @default(now())
+
+  admin AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+
+  @@index([adminUserId, consumedAt])
+  @@map("admin_invites")
+}
+
+/// Why a user was sent a one-time code.
+enum UserOtpPurpose {
+  PASSWORD_RESET
+}
+
+/// A six-digit code emailed to a user who cannot sign in.
+///
+/// Mirrors AdminOtp deliberately rather than sharing a table: the two have
+/// different owners, different lifetimes and different blast radius, and a
+/// single table joined to two kinds of account is how a lookup ends up
+/// resolving the wrong one.
+model UserOtp {
+  id         String         @id @default(uuid())
+  userId     String
+  purpose    UserOtpPurpose
+  /// SHA-256. A leaked row is not a working credential.
+  codeHash   String
+  expiresAt  DateTime
+  consumedAt DateTime?
+  /// Wrong guesses. Enough of them burn the code — otherwise six digits is a
+  /// million tries against a live reset.
+  attempts   Int            @default(0)
+  createdAt  DateTime       @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose, consumedAt])
+  @@map("user_otps")
+}
+
+/// One social network in the email footer and on the website.
+///
+/// A table rather than a column per network, because "add TikTok" should not be
+/// a migration, a schema change and a deploy. Each row carries its own icon, so
+/// a new network needs nothing from an engineer.
+model SocialLink {
+  id    String @id @default(uuid())
+  /// Shown as the link's title and used as the fallback glyph's source.
+  ///
+  /// Unique: two rows with the same name would render as two identical icons
+  /// side by side, which reads as a bug. It also makes the one-time carry-over
+  /// from the old settings columns idempotent, however many times it runs.
+  label String @unique
+  url   String
+
+  /// A PNG, JPEG or GIF. Email clients do not render SVG, so an uploaded icon
+  /// has to be a raster — and when there is none, the layout falls back to a
+  /// letterform so the row never has a hole in it.
+  icon          Bytes?
+  iconType      String?
+  iconUpdatedAt DateTime?
+
+  /// Off keeps the row and its icon but takes it out of every email and off
+  /// the website — the way to stop showing a network without losing its URL.
+  isEnabled Boolean @default(true)
+  sortOrder Int     @default(0)
+
+  updatedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([isEnabled, sortOrder])
+  @@map("social_links")
+}
+
+// ── referrals and rewards ──────────────────────────────────────
+
+enum ReferralStatus {
+  /// Signed up with the code. Nobody has been paid yet.
+  PENDING
+  /// The referee reached the tier that unlocks it and the referrer was paid.
+  COMPLETED
+  /// Cancelled — a suspended account, or a referral that broke a rule. Kept
+  /// rather than deleted, because a referral that vanishes is one nobody can
+  /// answer a question about later.
+  VOID
+}
+
+enum ReferralRewardKind {
+  /// Paid to the person who shared the code.
+  REFERRER
+  /// Paid to the person who signed up with it.
+  REFEREE
+}
+
+enum ReferralRewardStatus {
+  /// Earned in principle, conditions not met. NOT money: nothing is in the
+  /// ledger, nothing is in a balance, and it appears in no transaction
+  /// history. It is a promise with conditions attached, and it is shown as
+  /// exactly that.
+  PENDING
+  /// Conditions met, naira credited. From this moment it is ordinary money.
+  RELEASED
+  /// Will not be paid. The reason says why, and the user is told.
+  VOID
+}
+
+/**
+ * One person bringing in another.
+ * The relationship is also carried on User.referredById so a guard can read it
+ * without a join; this row is where its STATE lives — what was promised to
+ * whom, and whether it has been earned.
+ */
+model Referral {
+  id         String @id @default(uuid())
+  referrerId String
+  /// One row per referee, forever. The unique index is the guard: an account
+  /// can be referred exactly once, and no retry or race can give it a second
+  /// referrer.
+  refereeId  String @unique
+
+  /// The code as it was actually typed, kept verbatim. If the referrer later
+  /// changes their username, this still says how this person arrived.
+  codeUsed String
+
+  status      ReferralStatus @default(PENDING)
+  completedAt DateTime?
+  /// Why it was voided, in words a person wrote.
+  voidReason  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  referrer User             @relation("ReferrerReferrals", fields: [referrerId], references: [id])
+  referee  User             @relation("RefereeReferral", fields: [refereeId], references: [id])
+  rewards  ReferralReward[]
+
+  @@index([referrerId, createdAt])
+  @@index([status])
+  @@map("referrals")
+}
+
+/**
+ * What one side of a referral is owed, and whether it has been paid.
+ * Two rows per referral, because the two sides unlock on different conditions:
+ * the referrer is paid when the referee verifies, the referee when they verify
+ * AND have traded enough. One row with two states could not express that.
+ * The amount is copied in at creation, never read from settings at payout
+ * time. Somebody who was promised ₦1,000 is owed ₦1,000 even if an admin
+ * lowers the figure next week — repricing a promise after the fact is how you
+ * lose the argument with the customer.
+ */
+model ReferralReward {
+  id         String @id @default(uuid())
+  referralId String
+  /// Who gets it. Denormalised from the referral so "what am I owed" is one
+  /// indexed query rather than a join in two directions.
+  userId     String
+
+  kind      ReferralRewardKind
+  status    ReferralRewardStatus @default(PENDING)
+  amountNgn Decimal              @db.Decimal(38, 18)
+
+  /// What is still standing between this and being paid, in a sentence. Kept
+  /// current so the screen never has to guess.
+  blockedReason String?
+
+  releasedAt    DateTime?
+  /// The naira credit that paid it. Null until then — which is also how you
+  /// tell, from the row alone, whether any money has moved.
+  transactionId String?   @unique
+  voidReason    String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  referral    Referral     @relation(fields: [referralId], references: [id])
+  user        User         @relation(fields: [userId], references: [id])
+  transaction Transaction? @relation(fields: [transactionId], references: [id])
+
+  /// One reward per side per referral. Belt and braces against a double
+  /// payout: even if the release ran twice, the second insert cannot land.
+  @@unique([referralId, kind])
+  @@index([userId, status])
+  @@index([status, createdAt])
+  @@map("referral_rewards")
+}
+
+/**
+ * What the programme pays and what has to happen first.
+ * A singleton, like SiteSetting. Changing it never touches a reward that has
+ * already been promised — see ReferralReward.amountNgn.
+ */
+model ReferralSetting {
+  /// Always "default". A primary key with one legal value is how you spell
+  /// "singleton" in a relational database.
+  id String @id @default("default")
+
+  /// Off stops new referrals being created. Rewards already promised are
+  /// still honoured — switching the programme off is not a way to renege.
+  isEnabled Boolean @default(false)
+
+  /// Naira, both sides, set independently.
+  referrerRewardNgn Decimal @default(0) @db.Decimal(38, 18)
+  refereeRewardNgn  Decimal @default(0) @db.Decimal(38, 18)
+
+  /// The tier a referee must reach before either side is paid.
+  unlockTier KycTier @default(TIER_1)
+
+  /// What the REFEREE must trade, cumulatively, before their own bonus is
+  /// released. Their referrer is not made to wait for this. Zero means the
+  /// tier alone is enough.
+  refereeTradeVolumeNgn Decimal @default(0) @db.Decimal(38, 18)
+
+  /// How many referrals one person may be PAID for. Zero is unlimited. Past
+  /// it, referrals still list and still show — they simply stop paying, which
+  /// is a different thing from being refused.
+  maxPaidReferralsPerUser Int @default(0)
+
+  /// The most one person may earn from the programme in total, in naira. Zero
+  /// is unlimited. Reaching it pauses their earning rather than ending it, so
+  /// raising the cap later lets them continue.
+  maxEarningsPerUserNgn Decimal @default(0) @db.Decimal(38, 18)
+
+  /// What the app shows above the figures. Admin-managed, because the offer
+  /// wording changes far more often than the mechanism does.
+  headline String  @default("Invite friends, earn naira")
+  terms    String?
+
+  updatedBy String?
+  updatedAt DateTime @updatedAt
+
+  @@map("referral_settings")
+}
+
+// ── gift cards ─────────────────────────────────────────────────
+
+enum GiftCardTradeStatus {
+  /// Submitted, waiting on an admin. No money has moved.
+  PENDING
+  /// Accepted in full at the rate the user was shown.
+  APPROVED
+  /// Accepted for less than was claimed — a smaller balance, a partly used
+  /// card. The reason is shown to the user.
+  PARTIALLY_APPROVED
+  /// Refused, with a reason. Nothing is credited.
+  REJECTED
+}
+
+/// What a brand sells into: Shopping, Gaming, Streaming.
+model GiftCardBrandCategory {
+  id       String  @id @default(uuid())
+  name     String  @unique
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+
+  brands GiftCardBrand[]
+
+  @@index([isActive, name])
+  @@map("gift_card_brand_categories")
+}
+
+/// Amazon, Steam, iTunes — the thing a user recognises and taps.
+model GiftCardBrand {
+  id         String @id @default(uuid())
+  categoryId String
+  name       String @unique
+
+  /// Shown in the app. Bytes rather than a URL for the same reason an admin
+  /// avatar is: there is no object store yet, and a logo that lives with its
+  /// row cannot go missing separately from it.
+  image          Bytes?
+  imageType      String?
+  imageUpdatedAt DateTime?
+
+  isActive  Boolean @default(true)
+  sortOrder Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+
+  category GiftCardBrandCategory @relation(fields: [categoryId], references: [id])
+  types    GiftCardType[]
+
+  @@index([categoryId, isActive])
+  @@map("gift_card_brands")
+}
+
+/**
+ * One tradeable variety of a brand: Amazon E-code, Amazon Physical.
+ * The rate lives here rather than on the brand because the two are not worth
+ * the same — an e-code clears faster and carries less risk than a physical
+ * card somebody has to photograph, and pricing them together means
+ * underpaying one or overpaying the other.
+ */
+model GiftCardType {
+  id      String @id @default(uuid())
+  brandId String
+  name    String
+
+  /// What the card's face value is denominated in — USD, GBP, EUR. Not every
+  /// gift card is a dollar card, and a UK Amazon card priced as if it were
+  /// would underpay the person trading it by a fifth.
+  currency String @default("USD")
+
+  minAmount Decimal @db.Decimal(38, 18)
+  maxAmount Decimal @db.Decimal(38, 18)
+
+  /// Naira per unit of `currency`. This is the figure the app shows and the
+  /// figure a trade is priced at — never the rate the desk actually clears the
+  /// card at, which the user never sees.
+  rateNgn Decimal @db.Decimal(38, 18)
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+
+  brand  GiftCardBrand   @relation(fields: [brandId], references: [id])
+  trades GiftCardTrade[]
+
+  /// Two "E-code" rows under Amazon would be indistinguishable in the app.
+  @@unique([brandId, name])
+  @@index([isActive])
+  @@map("gift_card_types")
+}
+
+/**
+ * One card somebody has offered to sell.
+ * Every figure that decides what they are paid is COPIED here at submission.
+ * An admin raising the rate tomorrow must not change what was promised today,
+ * and lowering it must not quietly reprice a card already in the queue.
+ */
+model GiftCardTrade {
+  id     String @id @default(uuid())
+  userId String
+  typeId String
+
+  /// What the user says the card is worth, in the type's currency.
+  faceValue   Decimal @db.Decimal(38, 18)
+  /// Copied, so history reads correctly even if the type is renamed or
+  /// repriced later.
+  currency    String
+  rateNgn     Decimal @db.Decimal(38, 18)
+  /// faceValue x rateNgn — what they were shown they would receive.
+  expectedNgn Decimal @db.Decimal(38, 18)
+
+  /**
+   * The voucher code, encrypted at rest.
+   * A gift card code IS the money: anyone who reads it can spend it. Stored
+   * sealed under CREDENTIALS_KEY, the same protection a partner API key gets,
+   * so a database dump or a stray query result does not hand out cards.
+   */
+  codeSealed String?
+
+  status GiftCardTradeStatus @default(PENDING)
+
+  // ── what the desk decided ───────────────────────────────
+  /// The value actually accepted. Equals faceValue on a full approval; less
+  /// when the card turned out to be worth less than claimed.
+  approvedValue   Decimal? @db.Decimal(38, 18)
+  /// The rate used to pay the user. Equals rateNgn unless an admin overrode it
+  /// on a partial approval.
+  approvedRateNgn Decimal? @db.Decimal(38, 18)
+
+  /**
+   * What the desk actually cleared the card at.
+   * NEVER returned to the user, on any endpoint. It is the buy side of our own
+   * trade and the only input to the profit figure; showing it would publish
+   * our margin to the people we are quoting.
+   */
+  actualRateNgn Decimal? @db.Decimal(38, 18)
+
+  /// approvedValue x approvedRateNgn. What reached their naira balance.
+  creditedNgn Decimal? @db.Decimal(38, 18)
+  /// approvedValue x (actualRateNgn - approvedRateNgn). The desk's margin.
+  profitNgn   Decimal? @db.Decimal(38, 18)
+
+  /// Why it was partly accepted, or refused. Shown to the user verbatim, so it
+  /// has to read as something a person wrote.
+  reason String?
+
+  reviewedBy String?
+  reviewedAt DateTime?
+
+  /// The naira credit that paid it. Null until then — and null forever on a
+  /// rejection, which is how the row alone says whether money moved.
+  transactionId String? @unique
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user        User                 @relation(fields: [userId], references: [id])
+  type        GiftCardType         @relation(fields: [typeId], references: [id])
+  transaction Transaction?         @relation(fields: [transactionId], references: [id])
+  images      GiftCardTradeImage[]
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+  @@map("gift_card_trades")
+}
+
+/**
+ * A photograph of the card.
+ * Several per trade, because a physical card needs its front, its back and a
+ * close-up of the scratched panel before anybody can tell whether it is real.
+ */
+model GiftCardTradeImage {
+  id        String   @id @default(uuid())
+  tradeId   String
+  image     Bytes
+  imageType String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  trade GiftCardTrade @relation(fields: [tradeId], references: [id], onDelete: Cascade)
+
+  @@index([tradeId, sortOrder])
+  @@map("gift_card_trade_images")
+}
