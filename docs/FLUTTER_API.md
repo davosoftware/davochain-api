@@ -1575,8 +1575,8 @@ Authorization: Bearer eyJhbGciOi…
 
 ---
 
-> ### ⚠️ Naira (NGN) bank withdrawals: currently switched OFF
-> Endpoints 8.5–8.7 exist in the API's current working branch but **are not in the main branch yet**. They return `403 "Naira withdrawals are not available yet."` until the backend turns the feature on. **Build the screens, but enable the submit button only when 8.4 returns `payoutAvailable: true`.** 8.4 works today.
+> ### ⚠️ Naira (NGN) bank withdrawals can be switched off at any time
+> Endpoints 8.5–8.7 return `403 "Naira withdrawals are temporarily unavailable."` whenever naira withdrawals are off. That happens when the server setting is off, or when an admin has switched them off in the dashboard (System → Withdrawals). **Always gate the submit button on `payoutAvailable` from 8.4**, and handle this 403 even after a fresh 8.4, because the switch can flip between the two calls. 8.4 itself always works.
 
 ### 8.4 Naira withdrawal fee quote
 
@@ -1671,7 +1671,7 @@ Authorization: Bearer eyJhbGciOi…
 
 | Status | When | `message` |
 | --- | --- | --- |
-| 403 | Feature off | `"Naira withdrawals are not available yet."` |
+| 403 | Naira withdrawals switched off | `"Naira withdrawals are temporarily unavailable."` |
 
 **Integration notes**
 - Use a searchable picker; cache the list for the session.
@@ -1780,7 +1780,7 @@ Content-Type: application/json
 
 | Status | When | `message` |
 | --- | --- | --- |
-| 403 | Feature off | `"Naira withdrawals are not available yet."` |
+| 403 | Naira withdrawals switched off | `"Naira withdrawals are temporarily unavailable."` |
 | 403 | Withdrawals paused | `"Withdrawals are temporarily paused."` |
 | 400 | Over limit | The same text as 8.4 `limit.reason` |
 | 400 | Bank not supported | `"Choose a supported Nigerian bank"` |
@@ -2860,7 +2860,7 @@ Locally the API uses a **fake ("mock") version of Quidax**, the crypto provider.
 | **Swap** | ⚠️ stays **`PROCESSING` forever**. Test the progress UI; ask the backend to simulate completion. |
 | **Crypto withdrawal** | ⚠️ stays **`PROCESSING` forever** (same reason) |
 | Incoming crypto deposit | ⚠️ can't happen; the backend can simulate one |
-| Naira withdrawal | ⚠️ off unless the backend enables `NGN_WITHDRAWALS_ENABLED` |
+| Naira withdrawal | ⚠️ off unless `NGN_WITHDRAWALS_ENABLED=true` in `api/.env`, or an owner switches it on in the admin dashboard (System → Withdrawals) |
 | Gift cards, referrals, in-app notifications | ✅ |
 | Push | ⚠️ only if the backend set up Firebase |
 

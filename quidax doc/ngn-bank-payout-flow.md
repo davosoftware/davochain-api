@@ -97,8 +97,8 @@ sequenceDiagram
 | --- | --- |
 | `GET /v1/withdrawals/ngn/banks` | `WithdrawalsController.ngnBanks()` returns Quidax banks filtered to Nigeria/NGN. |
 | `POST /v1/withdrawals/ngn/verify-account` | TIER_1-only; resolves the bank account and returns the name plus last four digits. Full account number is not returned or stored. |
-| `GET /v1/withdrawals/quote/ngn` | Existing fee/KYC quote. `payoutAvailable` reflects `NGN_WITHDRAWALS_ENABLED`. |
-| `POST /v1/withdrawals/ngn` | TIER_1 + `Idempotency-Key`; disabled unless `NGN_WITHDRAWALS_ENABLED=true`. It re-verifies account details, checks the limit inside the serializable lock transaction, stores a `BANK_PAYOUT` leg and calls Quidax main account. |
+| `GET /v1/withdrawals/quote/ngn` | Existing fee/KYC quote. `payoutAvailable` reflects the switch: an admin's dashboard override if set, else `NGN_WITHDRAWALS_ENABLED`. |
+| `POST /v1/withdrawals/ngn` | TIER_1 + `Idempotency-Key`; disabled unless the switch is on (dashboard override, else `NGN_WITHDRAWALS_ENABLED`). It re-verifies account details, checks the limit inside the serializable lock transaction, stores a `BANK_PAYOUT` leg and calls Quidax main account. |
 | `QuidaxClient.fetchBanks()` | Calls `GET /banks`. |
 | `QuidaxClient.verifyBankAccount()` | Calls `POST /banks/verify_account`; read-only and safe to retry. |
 | `QuidaxClient.createNgnBankWithdrawal()` | Calls `POST /users/me/withdraws`; ambiguous failures are not retried. |
@@ -113,8 +113,12 @@ name/code and account last four only, never the complete account number.
 
 ## Safety Gate and Rollout
 
-- `NGN_WITHDRAWALS_ENABLED` defaults to `false`. Do not set it true in local or
-  staging `.env` files just to test UI behavior.
+- `NGN_WITHDRAWALS_ENABLED` (default `false`) is the server setting. Admins can
+  override it live in the dashboard (System → Withdrawals; stored as the
+  `ngn_withdrawals_enabled` system flag): anyone with `withdrawals.manage` can
+  switch off, only an owner can switch on or reset, and every change needs the
+  admin's password. Do not set it true in local or staging `.env` files just to
+  test UI behavior.
 - The mock provides a small bank catalogue, synthetic account-name resolution,
   a main-account NGN debit, and reference lookup. Use a signed/accepted mock
   webhook to drive final success/rejection; the mock's create response remains
