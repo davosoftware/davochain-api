@@ -42,6 +42,11 @@ export const PERMISSION_GROUPS = [
         hint: 'Releasing credits a naira deposit that arrived over the depositor’s tier limit. It moves real money into a balance.',
       },
       {
+        key: 'withdrawals.manage',
+        label: 'Switch naira withdrawals off',
+        hint: 'Stops new naira bank withdrawals at once. Only an owner can switch them back on.',
+      },
+      {
         key: 'earnings.view',
         label: 'See the earnings manager',
         hint: 'Every fee the platform has charged, and which user paid it',

@@ -83,6 +83,8 @@ import {
   RejectDepositDto,
   ReviewKycDto,
   SetGateDto,
+  ResetNgnWithdrawalsDto,
+  SetNgnWithdrawalsDto,
 } from './dto';
 import { Public } from '../auth/public.decorator';
 import { PrismaService } from '../prisma/prisma.service';
@@ -95,6 +97,7 @@ import { CmsService } from '../cms/cms.service';
 import { EmailTemplateService } from '../cms/email-template.service';
 import { isEmailTemplateKey } from '../cms/email-templates';
 import { SocialLinksService, KNOWN_NETWORKS, ICON_PIXELS } from '../cms/social-links.service';
+import { NgnWithdrawalsService } from './ngn-withdrawals.service';
 import {
   CreateFaqDto,
   CreatePageDto,
@@ -154,6 +157,7 @@ export class AdminController {
     private readonly cms: CmsService,
     private readonly templates: EmailTemplateService,
     private readonly socials: SocialLinksService,
+    private readonly ngnSwitch: NgnWithdrawalsService,
   ) {}
 
   // ── gates ─────────────────────────────────────────────────
@@ -834,6 +838,42 @@ export class AdminController {
     await this.flags.resumeAsset(dto.asset, adminId);
     await this.admin.audit(adminId, 'asset.resume', 'SystemFlag', dto.asset, null, dto);
     return { resumed: dto.asset };
+  }
+
+  // ── naira withdrawal switch ───────────────────────────────
+
+  /** On or off, whether the dashboard or NGN_WITHDRAWALS_ENABLED decided it, and what is mid-flight. */
+  @Get('withdrawals/ngn')
+  @RequirePermissions('withdrawals.manage')
+  ngnWithdrawalsState() {
+    return this.ngnSwitch.view();
+  }
+
+  /**
+   * Switch naira withdrawals on or off over the server setting. Costs the
+   * admin's password (a wrong one is 400). Off: anyone with the permission;
+   * on: owners only. 409 NGN_WITHDRAWALS_IN_FLIGHT until confirmInFlight.
+   */
+  @Put('withdrawals/ngn')
+  @RequirePermissions('withdrawals.manage')
+  setNgnWithdrawals(
+    @CurrentAdmin() actor: AdminJwtPayload,
+    @Body() dto: SetNgnWithdrawalsDto,
+    @Req() req: Request,
+  ) {
+    return this.ngnSwitch.set({ id: actor.sub, role: actor.role }, dto, req.ip);
+  }
+
+  /** Owner only: drop the override so NGN_WITHDRAWALS_ENABLED decides again. */
+  @Post('withdrawals/ngn/reset')
+  @RequirePermissions('withdrawals.manage')
+  @HttpCode(200)
+  resetNgnWithdrawals(
+    @CurrentAdmin() actor: AdminJwtPayload,
+    @Body() dto: ResetNgnWithdrawalsDto,
+    @Req() req: Request,
+  ) {
+    return this.ngnSwitch.reset({ id: actor.sub, role: actor.role }, dto, req.ip);
   }
 
 

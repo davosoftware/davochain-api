@@ -44,6 +44,11 @@ describe('permission catalogue', () => {
     }
   });
 
+  it('lets naira withdrawals be stopped by an explicit grant, never by default', () => {
+    expect(isPermission('withdrawals.manage')).toBe(true);
+    expect(DEFAULT_SUB_ADMIN_PERMISSIONS).not.toContain('withdrawals.manage');
+  });
+
   it('splits seeing from doing wherever there is something to do', () => {
     // If a feature can be acted on, reading it must be grantable separately —
     // otherwise "let them look at users" also means "let them suspend one".

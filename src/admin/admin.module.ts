@@ -10,6 +10,7 @@ import { AdminTransactionsService } from './transactions.service';
 import { SiteSettingsService } from './site-settings.service';
 import { AdminSessionsService } from './sessions.service';
 import { AdminOtpService } from './otp.service';
+import { NgnWithdrawalsService } from './ngn-withdrawals.service';
 import { AdminController, AdminAuthController } from './admin.controller';
 import { AdminGuard } from './admin.guard';
 import { AssetsModule } from '../assets/assets.module';
@@ -35,7 +36,7 @@ import { QUEUES } from '../common/queues';
     GiftCardsModule,
   ],
   controllers: [AdminController, AdminAuthController],
-  providers: [AdminService, UsersAdminService, AdminsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService, AdminSessionsService, AdminOtpService, AdminGuard],
+  providers: [AdminService, UsersAdminService, AdminsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService, AdminSessionsService, AdminOtpService, NgnWithdrawalsService, AdminGuard],
   exports: [AdminService, UsersAdminService, AdminsService, AdminSessionsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService],
 })
 export class AdminModule {}

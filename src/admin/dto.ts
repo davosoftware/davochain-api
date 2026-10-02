@@ -249,3 +249,19 @@ export class SetCredentialDto {
   /** Write-only. Nothing ever hands this back. */
   @IsString() @MaxLength(8000) value!: string;
 }
+
+/** Every change to the naira-withdrawal switch costs the admin's password. */
+export class SetNgnWithdrawalsDto {
+  @IsBoolean() enabled!: boolean;
+  /** Checked, never stored or audited. */
+  @IsString() @MinLength(1) @MaxLength(128) password!: string;
+  @IsOptional() @IsString() @MaxLength(500) reason?: string;
+  /** Set once the admin has seen the "withdrawals in progress" warning. */
+  @IsOptional() @IsBoolean() confirmInFlight?: boolean;
+}
+
+export class ResetNgnWithdrawalsDto {
+  @IsString() @MinLength(1) @MaxLength(128) password!: string;
+  @IsOptional() @IsString() @MaxLength(500) reason?: string;
+  @IsOptional() @IsBoolean() confirmInFlight?: boolean;
+}
