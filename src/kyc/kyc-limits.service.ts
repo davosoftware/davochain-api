@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { KycTier, TxStatus, TxType } from '@prisma/client';
+import { KycTier, Prisma, TxStatus, TxType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { Decimal, ZERO, dec, str } from '../common/money';
 
@@ -100,8 +100,8 @@ export class KycLimitsService {
       const r = await this.prisma.transaction.aggregate({ where, _sum: { toAmount: true } });
       return r._sum.toAmount ? dec(r._sum.toAmount) : ZERO;
     }
-    const r = await this.prisma.transaction.aggregate({ where, _sum: { fromAmount: true } });
-    return r._sum.fromAmount ? dec(r._sum.fromAmount) : ZERO;
+    const r = await this.prisma.transaction.aggregate({ where, _sum: { toAmount: true } });
+    return r._sum.toAmount ? dec(r._sum.toAmount) : ZERO;
   }
 
   /**
@@ -123,6 +123,45 @@ export class KycLimitsService {
     const single = direction === 'deposit' ? limits.depositSingle : limits.withdrawSingle;
     const daily = direction === 'deposit' ? limits.depositDaily : limits.withdrawDaily;
     const used = await this.usedToday(userId, direction, now, excludeTransactionId);
+    return this.result(direction, amount, single, daily, used);
+  }
+
+  /** Recheck a spend limit in the same serializable transaction as its lock. */
+  async checkInTransaction(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    tier: KycTier,
+    direction: 'deposit' | 'withdraw',
+    amount: Decimal,
+    now = new Date(),
+  ): Promise<LimitCheck> {
+    const row = await tx.kycTierLimit.findUnique({ where: { tier } });
+    const single = dec(direction === 'deposit' ? row?.ngnDepositSingle ?? 0 : row?.ngnWithdrawSingle ?? 0);
+    const daily = dec(direction === 'deposit' ? row?.ngnDepositDaily ?? 0 : row?.ngnWithdrawDaily ?? 0);
+    const where = {
+      userId,
+      createdAt: { gte: this.startOfDay(now) },
+      status: {
+        in: [TxStatus.COMPLETED, TxStatus.PENDING, TxStatus.PROCESSING, TxStatus.ON_HOLD],
+      },
+      ...(direction === 'deposit'
+        ? { type: TxType.DEPOSIT, toAsset: 'ngn' }
+        : { type: TxType.WITHDRAWAL, fromAsset: 'ngn' }),
+    };
+    const usage = direction === 'deposit'
+      ? await tx.transaction.aggregate({ where, _sum: { toAmount: true } })
+      : await tx.transaction.aggregate({ where, _sum: { toAmount: true } });
+    const used = usage._sum.toAmount ? dec(usage._sum.toAmount) : ZERO;
+    return this.result(direction, amount, single, daily, used);
+  }
+
+  private result(
+    direction: 'deposit' | 'withdraw',
+    amount: Decimal,
+    single: Decimal,
+    daily: Decimal,
+    used: Decimal,
+  ): LimitCheck {
     const remaining = daily.minus(used);
 
     const base = { singleLimit: single, dailyLimit: daily, usedToday: used, remainingToday: remaining };

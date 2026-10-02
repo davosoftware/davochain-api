@@ -190,16 +190,37 @@ export class ReconciliationService {
         const upstream = await this.quidax.fetchWithdrawalByReference(leg.reference, sender);
         if (!upstream) continue;
 
-        const done = upstream.status?.toLowerCase() === 'done';
-        await this.prisma.settlementLeg.update({
-          where: { id: leg.id },
-          data: { state: done ? LegState.CONFIRMED : LegState.FAILED, quidaxRef: upstream.id },
-        });
-
-        if (!done && leg.transaction.status === TxStatus.RECONCILING) {
-          await this.settlement.reverse(leg.transactionId, 'Confirmed failed upstream');
+        const status = upstream.status?.toLowerCase();
+        if (status === 'done') {
+          if (leg.transaction.type === 'WITHDRAWAL') {
+            // This also consumes the locked user balance and completes the
+            // parent transaction; a leg-only update would strand the debit.
+            await this.settlement.applyWithdrawalWebhook('withdraw.successful', upstream);
+          } else {
+            await this.prisma.settlementLeg.update({
+              where: { id: leg.id },
+              data: { state: LegState.CONFIRMED, quidaxRef: upstream.id },
+            });
+          }
+          resolved++;
+          continue;
         }
-        resolved++;
+
+        if (status === 'rejected' || status === 'failed') {
+          if (leg.transaction.type === 'WITHDRAWAL') {
+            await this.settlement.applyWithdrawalWebhook('withdraw.rejected', upstream);
+          } else {
+            await this.prisma.settlementLeg.update({
+              where: { id: leg.id },
+              data: { state: LegState.FAILED, quidaxRef: upstream.id },
+            });
+            if (leg.transaction.status === TxStatus.RECONCILING) {
+              await this.settlement.reverse(leg.transactionId, 'Confirmed failed upstream');
+            }
+          }
+          resolved++;
+        }
+        // Processing/unknown states remain open and will be checked next run.
       } catch (err) {
         this.log.warn('Could not resolve leg ' + leg.reference + ': ' + (err as Error).message);
       }

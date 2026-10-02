@@ -1,4 +1,10 @@
-import { IsNumberString, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import {
+  IsNumberString,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+} from 'class-validator';
 
 export class WithdrawCryptoDto {
   @IsString()
@@ -21,4 +27,19 @@ export class WithdrawCryptoDto {
   @IsString()
   @MaxLength(64)
   destinationTag?: string;
+}
+
+export class VerifyNgnBankAccountDto {
+  @IsString()
+  @Matches(/^\d{10}$/, { message: 'Enter a valid 10-digit Nigerian bank account number' })
+  accountNumber!: string;
+
+  @IsString()
+  @Matches(/^[a-zA-Z0-9]{1,20}$/, { message: 'Choose a valid bank from the list' })
+  bankCode!: string;
+}
+
+export class WithdrawNgnDto extends VerifyNgnBankAccountDto {
+  @IsNumberString({}, { message: 'Enter a valid naira amount' })
+  amount!: string;
 }

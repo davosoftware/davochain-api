@@ -144,6 +144,7 @@ export const envSchema = z
     FEE_CLAIM_MIN_USD: num(1.5),
 
     TRADING_ENABLED: bool(true),
+    NGN_WITHDRAWALS_ENABLED: bool(false),
     MAX_TRADE_USD: num(2000),
     MAX_USER_DAILY_USD: num(5000),
     MAX_PLATFORM_DAILY_USD: num(50000),

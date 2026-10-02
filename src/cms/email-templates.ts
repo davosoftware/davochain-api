@@ -370,19 +370,54 @@ Reference: {{transactionId}}
 ${SIGN_OFF}`),
   },
   {
+    key: 'ngn.withdrawal.submitted',
+    label: 'Naira withdrawal requested',
+    hint: 'Sent when a naira bank payout is requested, before the provider processes it.',
+    group: 'Withdrawals',
+    variables: ['amount', 'fee', 'bankName', 'accountNumber', 'transactionId'],
+    sentBy: 'WithdrawalsService.withdrawNgn',
+    subject: 'Naira withdrawal requested: ₦{{amount}}',
+    body: html(`Hi {{firstName}},
+
+A withdrawal of **₦{{amount}}** has been requested to {{bankName}}
+({{accountNumber}}). A fee of ₦{{fee}} will be charged if it completes.
+
+**If you did not request this**, contact {{supportEmail}} immediately.
+
+Reference: {{transactionId}}
+${SIGN_OFF}`),
+  },
+  {
     key: 'ngn.withdrawal.sent',
     label: 'Naira withdrawal sent',
     hint: 'Sent when a naira cash-out is paid to a bank account.',
     group: 'Withdrawals',
     variables: ['amount', 'fee', 'bankName', 'accountNumber', 'transactionId'],
-    sentBy: 'Naira payout provider',
-    pending: 'No naira payout provider is connected yet, so nothing sends this.',
+    sentBy: 'SettlementService (withdraw.successful webhook)',
     subject: '₦{{amount}} sent to your bank',
     body: html(`Hi {{firstName}},
 
 **₦{{amount}}** is on its way to {{bankName}} ({{accountNumber}}).
 
 A fee of ₦{{fee}} was charged, so ₦{{amount}} reaches your bank.
+
+Reference: {{transactionId}}
+${SIGN_OFF}`),
+  },
+  {
+    key: 'ngn.withdrawal.rejected',
+    label: 'Naira withdrawal rejected',
+    hint: 'Sent when a bank payout is rejected and the locked balance is returned.',
+    group: 'Withdrawals',
+    variables: ['amount', 'bankName', 'accountNumber', 'reason', 'transactionId'],
+    sentBy: 'SettlementService (withdraw.rejected webhook)',
+    subject: 'Your naira withdrawal was not paid',
+    body: html(`Hi {{firstName}},
+
+Your withdrawal of **₦{{amount}}** to {{bankName}} ({{accountNumber}}) could
+not be completed. The amount has been returned to your naira balance.
+
+**Reason:** {{reason}}
 
 Reference: {{transactionId}}
 ${SIGN_OFF}`),

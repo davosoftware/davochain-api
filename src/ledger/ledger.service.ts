@@ -149,7 +149,50 @@ export class LedgerService {
       memo?: string;
     },
   ): Promise<void> {
+    return this.settleLockedWithEntries(tx, {
+      userId: params.userId,
+      assetCode: params.assetCode,
+      amount: params.amount,
+      transactionId: params.transactionId,
+      entries: [
+        {
+          account: params.counterparty,
+          assetCode: params.assetCode,
+          direction: LedgerDirection.CREDIT,
+          amount: params.amount,
+          memo: params.memo,
+        },
+      ],
+    });
+  }
+
+  /** Consume a lock and balance its debit across multiple ledger accounts. */
+  async settleLockedWithEntries(
+    tx: Prisma.TransactionClient,
+    params: {
+      userId: string;
+      assetCode: string;
+      amount: Numeric;
+      transactionId: string;
+      entries: Omit<LedgerLeg, 'userId'>[];
+    },
+  ): Promise<void> {
     const amt = dec(params.amount);
+    if (params.entries.some((entry) => entry.account === LedgerAccount.USER)) {
+      throw new Error('Settlement counter-entries cannot use the USER account');
+    }
+    const legs: LedgerLeg[] = [
+      {
+        account: LedgerAccount.USER,
+        userId: params.userId,
+        assetCode: params.assetCode,
+        direction: LedgerDirection.DEBIT,
+        amount: amt,
+      },
+      ...params.entries,
+    ];
+    this.assertBalanced(legs);
+
     const balance = await this.lockRow(tx, params.userId, params.assetCode);
     const locked = dec(balance.locked);
     if (locked.lt(amt)) {
@@ -164,26 +207,15 @@ export class LedgerService {
     });
 
     await tx.ledgerEntry.createMany({
-      data: [
-        {
-          transactionId: params.transactionId,
-          account: LedgerAccount.USER,
-          userId: params.userId,
-          assetCode: params.assetCode,
-          direction: LedgerDirection.DEBIT,
-          amount: amt.toFixed(),
-          memo: params.memo ?? null,
-        },
-        {
-          transactionId: params.transactionId,
-          account: params.counterparty,
-          userId: null,
-          assetCode: params.assetCode,
-          direction: LedgerDirection.CREDIT,
-          amount: amt.toFixed(),
-          memo: params.memo ?? null,
-        },
-      ],
+      data: legs.map((leg) => ({
+        transactionId: params.transactionId,
+        account: leg.account,
+        userId: leg.account === LedgerAccount.USER ? params.userId : null,
+        assetCode: leg.assetCode,
+        direction: leg.direction,
+        amount: dec(leg.amount).toFixed(),
+        memo: leg.memo ?? null,
+      })),
     });
   }
 

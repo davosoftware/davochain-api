@@ -1,7 +1,15 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ForbiddenException,
+  Injectable,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { FeeKind, TxStatus, TxType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuidaxClient } from '../quidax/quidax.client';
+import { QuidaxError } from '../quidax/quidax.errors';
 import { LedgerService } from '../ledger/ledger.service';
 import { AssetsService } from '../assets/assets.service';
 import { SettlementService } from '../trades/settlement.service';
@@ -13,11 +21,8 @@ import { KycLimitsService } from '../kyc/kyc-limits.service';
 import { ZERO, dec, str, type Decimal } from '../common/money';
 
 /**
- * Crypto leaves from the user's OWN sub-account — inventory is never touched,
- * so a withdrawal can never compete with a buy.
- *
- * Naira leaves through a separate payout provider, which is still undecided.
- * See TODO.md: Quidax's bank-withdrawal endpoints are deliberately unused.
+ * Crypto leaves from the user's own Quidax sub-account; NGN bank payouts leave
+ * the merchant's main Quidax account against the user's Davochain ledger claim.
  */
 @Injectable()
 export class WithdrawalsService {
@@ -34,6 +39,7 @@ export class WithdrawalsService {
     private readonly kycLimits: KycLimitsService,
     private readonly flags: SystemFlagsService,
     private readonly notifications: NotificationsService,
+    private readonly config: ConfigService,
   ) {}
 
   /**
@@ -59,11 +65,20 @@ export class WithdrawalsService {
     networkFee: Decimal;
     usdValue: Decimal | null;
   }> {
-    const upstream = await this.quidax
-      .fetchWithdrawalFee({ currency: code, amount: amount.toFixed(), network: networkId })
-      // A withdrawal must not fail because a fee lookup did. Quidax deducts its
-      // own fee regardless; showing zero here understates a line we do not set.
-      .catch(() => ({ fee: 0, type: 'unknown' }));
+    let upstream;
+    try {
+      upstream = await this.quidax.fetchWithdrawalFee({
+        currency: code,
+        amount: amount.toFixed(),
+        network: networkId,
+      });
+    } catch {
+      // Quidax charges this fee regardless. A zero fallback can under-lock the
+      // user's balance and make the quote materially false.
+      throw new ServiceUnavailableException(
+        'Unable to retrieve the network fee. Please try again shortly.',
+      );
+    }
     const networkFee = dec(upstream.fee);
 
     // Best effort: a price lookup is a call out, and money leaving must never
@@ -202,8 +217,240 @@ export class WithdrawalsService {
         usedToday: str(limit.usedToday, 2),
         remainingToday: str(limit.remainingToday.lt(0) ? ZERO : limit.remainingToday, 2),
       },
-      /** There is no rail yet — this is the price, not a promise it will send. */
-      payoutAvailable: false,
+      /** Enable only after main-account liquidity and webhook reconciliation are ready. */
+      payoutAvailable: this.config.get<boolean>('NGN_WITHDRAWALS_ENABLED') ?? false,
+    };
+  }
+
+  async ngnBanks() {
+    if (!(this.config.get<boolean>('NGN_WITHDRAWALS_ENABLED') ?? false)) {
+      throw new ForbiddenException('Naira withdrawals are not available yet.');
+    }
+    const banks = await this.quidax.fetchBanks();
+    return banks
+      .filter((bank) => bank.country.toLowerCase() === 'nigeria' && bank.currency.toLowerCase() === 'ngn')
+      .map(({ code, name }) => ({ code, name }));
+  }
+
+  async verifyNgnBankAccount(input: { accountNumber: string; bankCode: string }) {
+    if (!(this.config.get<boolean>('NGN_WITHDRAWALS_ENABLED') ?? false)) {
+      throw new ForbiddenException('Naira withdrawals are not available yet.');
+    }
+    let accountName: string;
+    try {
+      ({ account_name: accountName } = await this.quidax.verifyBankAccount(input));
+    } catch (err) {
+      if (err instanceof QuidaxError && err.httpStatus >= 400 && err.httpStatus < 500) {
+        throw new BadRequestException('Unable to verify those bank details. Check the account and bank.');
+      }
+      throw new ServiceUnavailableException('Bank account verification is temporarily unavailable.');
+    }
+    return {
+      accountName,
+      accountNumberLast4: input.accountNumber.slice(-4),
+      bankCode: input.bankCode,
+    };
+  }
+
+  async withdrawNgn(
+    userId: string,
+    input: { amount: string; accountNumber: string; bankCode: string },
+  ) {
+    if (!(this.config.get<boolean>('NGN_WITHDRAWALS_ENABLED') ?? false)) {
+      throw new ForbiddenException('Naira withdrawals are not available yet.');
+    }
+    await this.flags.assertWithdrawalsAllowed();
+
+    const amount = dec(input.amount);
+    if (!amount.isFinite() || amount.lte(0)) {
+      throw new BadRequestException('Enter an amount greater than zero');
+    }
+
+    const quote = await this.quoteNgnWithdrawalFee(userId, input.amount);
+    if (!quote.limit.allowed) {
+      throw new BadRequestException(quote.limit.reason ?? 'Withdrawal limit exceeded');
+    }
+
+    // Resolve again at submit time; never trust a client-supplied account name.
+    const verified = await this.quidax.verifyBankAccount({
+      accountNumber: input.accountNumber,
+      bankCode: input.bankCode,
+    });
+    const bank = (await this.quidax.fetchBanks()).find(
+      (candidate) =>
+        candidate.code === input.bankCode &&
+        candidate.country.toLowerCase() === 'nigeria' &&
+        candidate.currency.toLowerCase() === 'ngn',
+    );
+    if (!bank) throw new BadRequestException('Choose a supported Nigerian bank');
+
+    const platformFee = dec(quote.feeNgn);
+    const totalDebit = amount.plus(platformFee);
+    const reference = this.quidax.newReference('ngnwd');
+    const tx = await this.prisma.serializable(async (t) => {
+      await this.ledger.lock(t, userId, 'ngn', totalDebit);
+      const user = await t.user.findUnique({
+        where: { id: userId },
+        select: { kycTier: true },
+      });
+      const currentLimit = await this.kycLimits.checkInTransaction(
+        t,
+        userId,
+        user?.kycTier ?? 'TIER_0',
+        'withdraw',
+        amount,
+      );
+      if (!currentLimit.allowed) {
+        throw new BadRequestException(currentLimit.reason ?? 'Withdrawal limit exceeded');
+      }
+      const created = await t.transaction.create({
+        data: {
+          userId,
+          type: TxType.WITHDRAWAL,
+          status: TxStatus.PENDING,
+          fromAsset: 'ngn',
+          fromAmount: totalDebit.toFixed(),
+          toAsset: 'ngn',
+          toAmount: amount.toFixed(),
+          feeAmount: platformFee.toFixed(),
+          feeAsset: 'ngn',
+          payoutBankCode: input.bankCode,
+          payoutBankName: bank.name,
+          payoutAccountLast4: input.accountNumber.slice(-4),
+          reference,
+        },
+      });
+      await t.settlementLeg.create({
+        data: {
+          transactionId: created.id,
+          kind: 'BANK_PAYOUT',
+          assetCode: 'ngn',
+          amount: amount.toFixed(),
+          reference,
+        },
+      });
+      return created;
+    });
+
+    await this.notifications
+      .notify({
+        userId,
+        transactionId: tx.id,
+        type: 'withdrawal.submitted',
+        title: `Naira withdrawal requested: ${str(amount, 2)}`,
+        body: `To ${bank.name} account ending ${input.accountNumber.slice(-4)}. We will confirm when it is paid.`,
+        email: {
+          key: 'ngn.withdrawal.submitted',
+          variables: {
+            amount: str(amount, 2),
+            fee: str(platformFee, 2),
+            bankName: bank.name,
+            accountNumber: `****${input.accountNumber.slice(-4)}`,
+            transactionId: tx.id,
+          },
+        },
+      })
+      .catch((err: Error) => this.log.error(`Could not notify NGN withdrawal ${tx.id}: ${err.message}`));
+
+    let result: Awaited<ReturnType<QuidaxClient['createNgnBankWithdrawal']>>;
+    try {
+      result = await this.quidax.createNgnBankWithdrawal({
+        amount: amount.toFixed(2),
+        accountNumber: input.accountNumber,
+        bankCode: input.bankCode,
+        reference,
+        transactionNote: `DavoChain withdrawal ${tx.id}`,
+        narration: 'DavoChain NGN withdrawal',
+      });
+    } catch (err) {
+      if (this.settlement.isUnknown(err)) {
+        await this.prisma.settlementLeg.update({
+          where: { reference },
+          data: {
+            state: 'UNKNOWN',
+            attempts: { increment: 1 },
+            lastError: this.settlement.describe(err).slice(0, 1000),
+          },
+        });
+        await this.settlement.markReconciling(tx.id, this.settlement.describe(err));
+        return {
+          transactionId: tx.id,
+          status: TxStatus.RECONCILING,
+          asset: 'ngn',
+          amount: str(amount, 2),
+          bankName: bank.name,
+          accountNumberLast4: input.accountNumber.slice(-4),
+        };
+      }
+
+      await this.prisma.settlementLeg.update({
+        where: { reference },
+        data: {
+          state: 'FAILED',
+          attempts: { increment: 1 },
+          lastError: this.settlement.describe(err).slice(0, 1000),
+        },
+      });
+      await this.settlement.reverse(tx.id, this.settlement.describe(err));
+      throw new BadRequestException(
+        `${this.settlement.describe(err)}. Nothing was deducted from your balance.`,
+      );
+    }
+
+    const providerFee = dec(result.fee ?? 0).plus(result.stamp_duty_fee ?? 0);
+    try {
+      await this.prisma.$transaction([
+        this.prisma.transaction.update({
+          where: { id: tx.id },
+          data: {
+            status: TxStatus.PROCESSING,
+            quidaxRef: result.id,
+            quidaxRawStatus: result.status,
+            networkFee: providerFee.toFixed(2),
+          },
+        }),
+        this.prisma.settlementLeg.update({
+          where: { reference },
+          data: {
+            state: 'SENT',
+            quidaxRef: result.id,
+            attempts: { increment: 1 },
+          },
+        }),
+      ]);
+    } catch (err) {
+      // Quidax accepted the request; a DB write failure must never refund it.
+      await this.prisma.settlementLeg
+        .update({
+          where: { reference },
+          data: {
+            state: 'UNKNOWN',
+            quidaxRef: result.id,
+            attempts: { increment: 1 },
+            lastError: (err as Error).message.slice(0, 1000),
+          },
+        })
+        .catch(() => undefined);
+      await this.settlement.markReconciling(tx.id, `Provider accepted payout but local update failed: ${(err as Error).message}`);
+      return {
+        transactionId: tx.id,
+        status: TxStatus.RECONCILING,
+        asset: 'ngn',
+        amount: str(amount, 2),
+        bankName: bank.name,
+        accountNumberLast4: input.accountNumber.slice(-4),
+      };
+    }
+
+    return {
+      transactionId: tx.id,
+      status: TxStatus.PROCESSING,
+      asset: 'ngn',
+      amount: str(amount, 2),
+      feeNgn: str(platformFee, 2),
+      totalDebited: str(totalDebit, 2),
+      bankName: bank.name,
+      accountNumberLast4: input.accountNumber.slice(-4),
     };
   }
 
@@ -259,7 +506,7 @@ export class WithdrawalsService {
       input.network,
       cfg,
     );
-    const totalDebit = amount.plus(platformFee);
+    const totalDebit = amount.plus(platformFee).plus(networkFee);
 
     const reference = this.quidax.newReference('wd');
     const subId = await this.settlement.quidaxIdFor(userId);
@@ -267,13 +514,15 @@ export class WithdrawalsService {
     // Debit under lock BEFORE the call out.
     const tx = await this.prisma.serializable(async (t) => {
       await this.ledger.lock(t, userId, code, totalDebit);
-      return t.transaction.create({
+      const created = await t.transaction.create({
         data: {
           userId,
           type: TxType.WITHDRAWAL,
           status: TxStatus.PENDING,
           fromAsset: code,
           fromAmount: totalDebit.toFixed(),
+          toAsset: code,
+          toAmount: amount.toFixed(),
           // What we keep, and what the chain takes, recorded apart. Blending
           // them would report a cost we paid out as revenue we earned.
           feeAmount: platformFee.toFixed(),
@@ -285,6 +534,16 @@ export class WithdrawalsService {
           rateConfigId: cfg.id,
         },
       });
+      await t.settlementLeg.create({
+        data: {
+          transactionId: created.id,
+          kind: 'CHAIN_WITHDRAWAL',
+          assetCode: code,
+          amount: amount.toFixed(),
+          reference,
+        },
+      });
+      return created;
     });
 
     /*
@@ -331,6 +590,15 @@ export class WithdrawalsService {
           status: TxStatus.PROCESSING,
           quidaxRef: result.id,
           quidaxRawStatus: result.status,
+          networkFee: dec(result.fee).toFixed(),
+        },
+      });
+      await this.prisma.settlementLeg.update({
+        where: { reference },
+        data: {
+          state: result.status.toLowerCase() === 'done' ? 'CONFIRMED' : 'SENT',
+          quidaxRef: result.id,
+          attempts: { increment: 1 },
         },
       });
 
@@ -344,6 +612,14 @@ export class WithdrawalsService {
     } catch (err) {
       // Unknown outcome: the send may have gone out. Funds stay locked.
       if (this.settlement.isUnknown(err)) {
+        await this.prisma.settlementLeg.update({
+          where: { reference },
+          data: {
+            state: 'UNKNOWN',
+            attempts: { increment: 1 },
+            lastError: this.settlement.describe(err).slice(0, 1000),
+          },
+        });
         await this.settlement.markReconciling(tx.id, this.settlement.describe(err));
         return {
           transactionId: tx.id,
@@ -353,6 +629,14 @@ export class WithdrawalsService {
           address: input.address,
         };
       }
+      await this.prisma.settlementLeg.update({
+        where: { reference },
+        data: {
+          state: 'FAILED',
+          attempts: { increment: 1 },
+          lastError: this.settlement.describe(err).slice(0, 1000),
+        },
+      });
       await this.settlement.reverse(tx.id, this.settlement.describe(err));
       throw new BadRequestException(
         `${this.settlement.describe(err)}. Nothing was deducted from your balance.`,
@@ -369,7 +653,12 @@ export class WithdrawalsService {
     return rows.map((t) => ({
       id: t.id,
       asset: t.fromAsset,
-      amount: t.fromAmount ? str(t.fromAmount) : null,
+      amount: t.toAmount ? str(t.toAmount, t.fromAsset === 'ngn' ? 2 : 8) : null,
+      totalDebited: t.fromAmount ? str(t.fromAmount, t.fromAsset === 'ngn' ? 2 : 8) : null,
+      feeAmount: t.feeAmount ? str(t.feeAmount, t.fromAsset === 'ngn' ? 2 : 8) : '0',
+      networkFee: t.networkFee ? str(t.networkFee, t.fromAsset === 'ngn' ? 2 : 8) : '0',
+      bankName: t.payoutBankName,
+      accountNumberLast4: t.payoutAccountLast4,
       status: t.status,
       reason: t.failureReason,
       createdAt: t.createdAt,

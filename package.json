@@ -21,7 +21,7 @@
     "prisma:studio": "prisma studio",
     "seed": "ts-node prisma/seed.ts",
     "smoke": "node scripts/smoke.mjs",
-    "setup": "prisma migrate dev --name init && prisma generate && ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts",
+    "setup": "prisma migrate dev --name init && prisma generate && ts-node prisma/seed.ts",
     "stop": "node scripts/free-port.mjs",
     "prestart:dev": "node scripts/free-port.mjs",
     "prestart": "node scripts/free-port.mjs",
@@ -108,6 +108,6 @@
     ]
   },
   "prisma": {
-    "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
+    "seed": "ts-node prisma/seed.ts"
   }
 }

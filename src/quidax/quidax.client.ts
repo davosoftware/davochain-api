@@ -7,6 +7,7 @@ import { TokenBucket } from './rate-limiter';
 import { QuidaxError, QuidaxRateLimitError, QuidaxUnknownError } from './quidax.errors';
 import type {
   QuidaxDeposit,
+  QuidaxBank,
   QuidaxEnvelope,
   QuidaxErrorBody,
   QuidaxFeeRule,
@@ -15,6 +16,7 @@ import type {
   QuidaxSwapQuotation,
   QuidaxSwapTransaction,
   QuidaxUser,
+  QuidaxVerifiedBankAccount,
   QuidaxWallet,
   QuidaxWithdrawal,
 } from './quidax.types';
@@ -326,6 +328,53 @@ export class QuidaxClient {
 
   async fetchSwapTransactions(userId = 'me'): Promise<QuidaxSwapTransaction[]> {
     return (await this.get<QuidaxSwapTransaction[]>(`/users/${userId}/swap_transactions`)).data;
+  }
+
+  // ── NGN bank payouts ────────────────────────────────────────
+
+  async fetchBanks(): Promise<QuidaxBank[]> {
+    return (await this.get<QuidaxBank[]>('/banks')).data;
+  }
+
+  /** Read-only account-name resolution; the POST does not move money. */
+  async verifyBankAccount(input: {
+    accountNumber: string;
+    bankCode: string;
+  }): Promise<QuidaxVerifiedBankAccount> {
+    const page = await this.call<QuidaxVerifiedBankAccount>(
+      'POST',
+      '/banks/verify_account',
+      { fund_uid: input.accountNumber, fund_uid2: input.bankCode, currency: 'ngn' },
+      { idempotent: true },
+    );
+    return page.data;
+  }
+
+  /** NGN bank payouts are sent from the merchant's main Quidax account. */
+  async createNgnBankWithdrawal(
+    input: {
+      amount: string;
+      accountNumber: string;
+      bankCode: string;
+      reference: string;
+      transactionNote?: string;
+      narration?: string;
+    },
+    userId = 'me',
+  ): Promise<QuidaxWithdrawal> {
+    return this.post<QuidaxWithdrawal>(
+      `/users/${userId}/withdraws`,
+      {
+        currency: 'ngn',
+        amount: input.amount,
+        fund_uid: input.accountNumber,
+        fund_uid2: input.bankCode,
+        reference: input.reference,
+        transaction_note: input.transactionNote,
+        narration: input.narration,
+      },
+      { reference: input.reference },
+    );
   }
 
   // ── transfers & withdrawals ─────────────────────────────────

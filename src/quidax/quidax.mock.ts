@@ -6,10 +6,12 @@ import { QuidaxClient } from './quidax.client';
 import { QuidaxError } from './quidax.errors';
 import { requiresTag, seedNetworksFor } from '../assets/chain-catalogue';
 import type {
+  QuidaxBank,
   QuidaxPaymentAddress,
   QuidaxSwapQuotation,
   QuidaxSwapTransaction,
   QuidaxUser,
+  QuidaxVerifiedBankAccount,
   QuidaxWallet,
   QuidaxWithdrawal,
 } from './quidax.types';
@@ -99,6 +101,12 @@ export class QuidaxMockClient extends QuidaxClient {
   private readonly wallets = new Map<string, Map<string, string>>();
   private readonly quotations = new Map<string, QuidaxSwapQuotation>();
   private readonly addresses = new Map<string, QuidaxPaymentAddress>();
+  private readonly withdrawals = new Map<string, { sender: string; data: QuidaxWithdrawal }>();
+
+  private static readonly BANKS: QuidaxBank[] = [
+    { code: '0000', name: 'Test Bank', country: 'Nigeria', currency: 'NGN' },
+    { code: '100004', name: 'Paycom (Opay)', country: 'Nigeria', currency: 'NGN' },
+  ];
 
   constructor(config: ConfigService, credentials: CredentialsService) {
     super(config, credentials);
@@ -122,6 +130,12 @@ export class QuidaxMockClient extends QuidaxClient {
     const k = QuidaxMockClient.key(userId);
     if (!this.wallets.has(k)) this.wallets.set(k, new Map());
     this.wallets.get(k)!.set(currency.toLowerCase(), String(Math.max(0, amount)));
+  }
+
+  private recordWithdrawal(sender: string, data: QuidaxWithdrawal): void {
+    if (data.reference) {
+      this.withdrawals.set(data.reference, { sender: QuidaxMockClient.key(sender), data });
+    }
   }
 
   /** Seed a wallet so a test can spend from it. */
@@ -375,6 +389,59 @@ export class QuidaxMockClient extends QuidaxClient {
     return [];
   }
 
+  override async fetchBanks(): Promise<QuidaxBank[]> {
+    return QuidaxMockClient.BANKS.map((bank) => ({ ...bank }));
+  }
+
+  override async verifyBankAccount(input: {
+    accountNumber: string;
+    bankCode: string;
+  }): Promise<QuidaxVerifiedBankAccount> {
+    const bankExists = QuidaxMockClient.BANKS.some((bank) => bank.code === input.bankCode);
+    if (!bankExists || !/^\d{10}$/.test(input.accountNumber)) {
+      throw new QuidaxError('Invalid bank account details', '110112', 400);
+    }
+    return { account_name: `MOCK ACCOUNT ${input.accountNumber.slice(-4)}` };
+  }
+
+  override async createNgnBankWithdrawal(
+    input: {
+      amount: string;
+      accountNumber: string;
+      bankCode: string;
+      reference: string;
+      transactionNote?: string;
+      narration?: string;
+    },
+    userId = 'me',
+  ): Promise<QuidaxWithdrawal> {
+    const amount = Number(input.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new QuidaxError('Invalid withdrawal amount', 'E0605', 400);
+    }
+    if (this.balance(userId, 'ngn') < amount) {
+      throw new QuidaxError('Insufficient NGN balance in the main Quidax account', 'E0300', 400);
+    }
+
+    this.setBalance(userId, 'ngn', this.balance(userId, 'ngn') - amount);
+    const data: QuidaxWithdrawal = {
+      id: `FW-${randomUUID().replace(/-/g, '')}`,
+      reference: input.reference,
+      type: 'bank_account',
+      currency: 'ngn',
+      amount: input.amount,
+      fee: '0.0',
+      stamp_duty_fee: '0.0',
+      total: input.amount,
+      status: 'processing',
+      reason: null,
+      created_at: new Date().toISOString(),
+      done_at: null,
+    };
+    this.recordWithdrawal(userId, data);
+    return data;
+  }
+
   // ── transfers ───────────────────────────────────────────────
 
   override async internalTransfer(
@@ -411,7 +478,7 @@ export class QuidaxMockClient extends QuidaxClient {
   ): Promise<QuidaxWithdrawal> {
     const c = input.currency.toLowerCase();
     this.setBalance(userId, c, this.balance(userId, c) - Number(input.amount));
-    return {
+    const withdrawal: QuidaxWithdrawal = {
       id: `CW-${randomUUID().replace(/-/g, '')}`,
       reference: input.reference,
       type: 'coin_address',
@@ -423,14 +490,27 @@ export class QuidaxMockClient extends QuidaxClient {
       created_at: new Date().toISOString(),
       done_at: null,
     };
+    this.recordWithdrawal(userId, withdrawal);
+    return withdrawal;
   }
 
-  override async fetchWithdrawals(): Promise<QuidaxWithdrawal[]> {
-    return [];
+  override async fetchWithdrawals(
+    userId = 'me',
+    filters: { currency?: string; state?: 'processing' | 'done' | 'rejected' } = {},
+  ): Promise<QuidaxWithdrawal[]> {
+    return [...this.withdrawals.values()]
+      .filter(({ sender }) => sender === QuidaxMockClient.key(userId))
+      .map(({ data }) => data)
+      .filter((withdrawal) => !filters.currency || withdrawal.currency === filters.currency)
+      .filter((withdrawal) => !filters.state || withdrawal.status.toLowerCase() === filters.state);
   }
 
-  override async fetchWithdrawalByReference(): Promise<QuidaxWithdrawal | null> {
-    return null;
+  override async fetchWithdrawalByReference(
+    reference: string,
+    userId = 'me',
+  ): Promise<QuidaxWithdrawal | null> {
+    const found = this.withdrawals.get(reference);
+    return found?.sender === QuidaxMockClient.key(userId) ? found.data : null;
   }
 
   override async fetchWithdrawalFee(input: {

@@ -213,38 +213,67 @@ export class SettlementService {
    */
   async applyWithdrawalWebhook(event: string, data: QuidaxWithdrawal): Promise<void> {
     if (!data.reference) return;
-
-    const leg = await this.prisma.settlementLeg.findUnique({
-      where: { reference: data.reference },
-      include: { transaction: true },
-    });
-
-    if (leg) {
-      await this.prisma.settlementLeg.update({
-        where: { id: leg.id },
-        data: {
-          state: event === 'withdraw.successful' ? LegState.CONFIRMED : LegState.FAILED,
-          quidaxRef: data.id,
-        },
-      });
-    }
-
     const tx = await this.prisma.transaction.findFirst({
       where: { reference: data.reference },
     });
     if (!tx || tx.type !== TxType.WITHDRAWAL) return;
     if (tx.status === TxStatus.COMPLETED || tx.status === TxStatus.FAILED) return;
 
+    const leg = await this.prisma.settlementLeg.findUnique({
+      where: { reference: data.reference },
+    });
+    const isNgn = tx.fromAsset === 'ngn';
+    const lockedAmount = dec(tx.fromAmount!);
+    const payoutAmount = tx.toAmount
+      ? dec(tx.toAmount)
+      : lockedAmount.minus(dec(tx.feeAmount ?? 0)).minus(dec(tx.networkFee ?? 0));
+
     if (event === 'withdraw.successful') {
+      // Quidax documents the successful event as authoritative for fiat; its
+      // payload may still say status="Processing". Include stamp duty when
+      // balancing the provider's actual debit against our locked amount.
+      const providerFee = dec(data.fee ?? tx.networkFee ?? 0).plus(data.stamp_duty_fee ?? 0);
+      const externalAmount = payoutAmount.plus(providerFee);
+      const netPlatform = lockedAmount.minus(externalAmount);
+      const entries: {
+        account: LedgerAccount;
+        assetCode: string;
+        direction: 'CREDIT' | 'DEBIT';
+        amount: Decimal;
+        memo: string;
+      }[] = [
+        {
+          account: LedgerAccount.EXTERNAL,
+          assetCode: tx.fromAsset!,
+          direction: 'CREDIT',
+          amount: externalAmount,
+          memo: `withdrawal ${data.txid ?? data.id}`,
+        },
+      ];
+      if (!netPlatform.isZero()) {
+        entries.push({
+          account: LedgerAccount.REVENUE,
+          assetCode: tx.fromAsset!,
+          direction: netPlatform.gt(0) ? 'CREDIT' : 'DEBIT',
+          amount: netPlatform.abs(),
+          memo: `withdrawal platform margin ${tx.id}`,
+        });
+      }
+
       await this.prisma.serializable(async (t) => {
-        await this.ledger.settleLocked(t, {
+        await this.ledger.settleLockedWithEntries(t, {
           userId: tx.userId,
           assetCode: tx.fromAsset!,
-          amount: dec(tx.fromAmount!),
-          counterparty: LedgerAccount.EXTERNAL,
+          amount: lockedAmount,
           transactionId: tx.id,
-          memo: `withdrawal ${data.txid ?? data.id}`,
+          entries,
         });
+        if (leg) {
+          await t.settlementLeg.update({
+            where: { id: leg.id },
+            data: { state: LegState.CONFIRMED, quidaxRef: data.id },
+          });
+        }
         await t.transaction.update({
           where: { id: tx.id },
           data: {
@@ -252,34 +281,51 @@ export class SettlementService {
             completedAt: new Date(),
             quidaxRawStatus: data.status,
             quidaxRef: data.id,
+            networkFee: providerFee.toFixed(),
           },
         });
       });
 
+      const amountText = str(payoutAmount, isNgn ? 2 : 8);
       await this.notifications.notify({
         userId: tx.userId,
         transactionId: tx.id,
         type: 'withdrawal.sent',
-        title: `${str(dec(tx.fromAmount!), 8)} ${tx.fromAsset!.toUpperCase()} sent`,
-        body: data.txid ? `Transaction hash: ${data.txid}` : 'Your withdrawal has been sent.',
+        title: isNgn ? `₦${amountText} sent` : `${amountText} ${tx.fromAsset!.toUpperCase()} sent`,
+        body: isNgn
+          ? `Sent to ${tx.payoutBankName ?? 'your bank'} account ending ${tx.payoutAccountLast4 ?? '****'}.`
+          : data.txid
+            ? `Transaction hash: ${data.txid}`
+            : 'Your withdrawal has been sent.',
         email: {
-          key: 'withdrawal.sent',
-          variables: {
-            amount: str(dec(tx.fromAmount!), 8),
-            assetCode: tx.fromAsset!.toUpperCase(),
-            // The destination address is neither stored on the transaction nor
-            // returned by the webhook. The hash is, and it is the more useful
-            // of the two anyway — it is what a block explorer takes.
-            txHash: data.txid ?? 'not yet available',
-            transactionId: tx.id,
-          },
+          key: isNgn ? 'ngn.withdrawal.sent' : 'withdrawal.sent',
+          variables: isNgn
+            ? {
+                amount: amountText,
+                fee: str(tx.feeAmount ?? 0, 2),
+                bankName: tx.payoutBankName ?? 'your bank',
+                accountNumber: `****${tx.payoutAccountLast4 ?? ''}`,
+                transactionId: tx.id,
+              }
+            : {
+                amount: amountText,
+                assetCode: tx.fromAsset!.toUpperCase(),
+                txHash: data.txid ?? 'not yet available',
+                transactionId: tx.id,
+              },
         },
       });
     } else {
       // Rejected — release the lock. The money never left, so this is a clean
       // unlock rather than a compensating credit.
       await this.prisma.serializable(async (t) => {
-        await this.ledger.unlock(t, tx.userId, tx.fromAsset!, dec(tx.fromAmount!));
+        await this.ledger.unlock(t, tx.userId, tx.fromAsset!, lockedAmount);
+        if (leg) {
+          await t.settlementLeg.update({
+            where: { id: leg.id },
+            data: { state: LegState.FAILED, quidaxRef: data.id, lastError: data.reason ?? null },
+          });
+        }
         await t.transaction.update({
           where: { id: tx.id },
           data: {
@@ -295,15 +341,23 @@ export class SettlementService {
         transactionId: tx.id,
         type: 'withdrawal.rejected',
         title: 'Withdrawal could not be completed',
-        body: `Your ${tx.fromAsset!.toUpperCase()} has been returned to your balance.`,
+        body: `Your ${tx.fromAsset!.toUpperCase()} withdrawal was returned to your balance.`,
         email: {
-          key: 'withdrawal.rejected',
-          variables: {
-            amount: str(dec(tx.fromAmount!), 8),
-            assetCode: tx.fromAsset!.toUpperCase(),
-            reason: data.reason ?? 'Rejected by provider',
-            transactionId: tx.id,
-          },
+          key: isNgn ? 'ngn.withdrawal.rejected' : 'withdrawal.rejected',
+          variables: isNgn
+            ? {
+                amount: str(payoutAmount, 2),
+                bankName: tx.payoutBankName ?? 'your bank',
+                accountNumber: `****${tx.payoutAccountLast4 ?? ''}`,
+                reason: data.reason ?? 'Rejected by provider',
+                transactionId: tx.id,
+              }
+            : {
+                amount: str(payoutAmount, 8),
+                assetCode: tx.fromAsset!.toUpperCase(),
+                reason: data.reason ?? 'Rejected by provider',
+                transactionId: tx.id,
+              },
         },
       });
     }
@@ -411,16 +465,39 @@ export class SettlementService {
       });
     });
 
+    const isWithdrawal = tx.type === TxType.WITHDRAWAL;
+    const isNgnWithdrawal = isWithdrawal && tx.fromAsset === 'ngn';
+    const withdrawalAmount = tx.toAmount
+      ? dec(tx.toAmount)
+      : dec(tx.fromAmount ?? 0).minus(dec(tx.feeAmount ?? 0)).minus(dec(tx.networkFee ?? 0));
+
     await this.notifications.notify({
       userId: tx.userId,
       transactionId: tx.id,
-      type: 'trade.failed',
-      title: 'Trade could not be completed',
-      body: `${reason}. Nothing was deducted from your balance.`,
-      email: {
-        key: 'trade.failed',
-        variables: { reason, transactionId: tx.id },
-      },
+      type: isWithdrawal ? 'withdrawal.rejected' : 'trade.failed',
+      title: isWithdrawal ? 'Withdrawal could not be completed' : 'Trade could not be completed',
+      body: isWithdrawal
+        ? `Your ${tx.fromAsset!.toUpperCase()} withdrawal was returned to your balance. ${reason}`
+        : `${reason}. Nothing was deducted from your balance.`,
+      email: isWithdrawal
+        ? {
+            key: isNgnWithdrawal ? 'ngn.withdrawal.rejected' : 'withdrawal.rejected',
+            variables: isNgnWithdrawal
+              ? {
+                  amount: str(withdrawalAmount, 2),
+                  bankName: tx.payoutBankName ?? 'your bank',
+                  accountNumber: `****${tx.payoutAccountLast4 ?? ''}`,
+                  reason,
+                  transactionId: tx.id,
+                }
+              : {
+                  amount: str(withdrawalAmount, 8),
+                  assetCode: tx.fromAsset!.toUpperCase(),
+                  reason,
+                  transactionId: tx.id,
+                },
+          }
+        : { key: 'trade.failed', variables: { reason, transactionId: tx.id } },
     });
 
     this.log.warn(`Reversed ${tx.id}: ${reason}`);

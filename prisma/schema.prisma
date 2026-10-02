@@ -396,6 +396,10 @@ model Transaction {
   networkFee   Decimal? @db.Decimal(38, 18)
   rateConfigId String?
 
+  payoutBankCode       String?
+  payoutBankName       String?
+  payoutAccountLast4   String?
+
   reference       String  @unique // our idempotency key, sent to Quidax
   quidaxRef       String? // their id
   quidaxRawStatus String? // keep the upstream string verbatim for support

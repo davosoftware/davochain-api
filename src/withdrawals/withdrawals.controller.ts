@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Post, Query, UseInterceptors } from '@nestjs/common';
 import { KycTier } from '@prisma/client';
 import { WithdrawalsService } from './withdrawals.service';
-import { WithdrawCryptoDto } from './dto';
+import { VerifyNgnBankAccountDto, WithdrawCryptoDto, WithdrawNgnDto } from './dto';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { RequiresKyc } from '../auth/jwt-auth.guard';
 import { IdempotencyInterceptor } from '../common/idempotency.interceptor';
@@ -38,6 +38,25 @@ export class WithdrawalsController {
   @Get('quote/ngn')
   quoteNgn(@CurrentUser('sub') userId: string, @Query('amount') amount: string) {
     return this.withdrawals.quoteNgnWithdrawalFee(userId, amount);
+  }
+
+  @Get('ngn/banks')
+  ngnBanks() {
+    return this.withdrawals.ngnBanks();
+  }
+
+  @RequiresKyc(KycTier.TIER_1)
+  @RequiresKyc(KycTier.TIER_1)
+  @Post('ngn/verify-account')
+  verifyNgnBankAccount(@Body() dto: VerifyNgnBankAccountDto) {
+    return this.withdrawals.verifyNgnBankAccount(dto);
+  }
+
+  @RequiresKyc(KycTier.TIER_1)
+  @UseInterceptors(IdempotencyInterceptor)
+  @Post('ngn')
+  withdrawNgn(@CurrentUser('sub') userId: string, @Body() dto: WithdrawNgnDto) {
+    return this.withdrawals.withdrawNgn(userId, dto);
   }
 
   @RequiresKyc(KycTier.TIER_1)

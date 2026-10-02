@@ -96,6 +96,7 @@ export interface QuidaxWithdrawal {
   currency: string;
   amount: string;
   fee: string;
+  stamp_duty_fee?: string;
   total: string;
   txid?: string | null;
   status: string; // "done" | "processing" | "rejected" — case varies by endpoint
@@ -128,6 +129,17 @@ export interface QuidaxDeposit {
 export interface QuidaxFeeRule {
   fee: number;
   type: string;
+}
+
+export interface QuidaxBank {
+  code: string;
+  name: string;
+  country: string;
+  currency: string;
+}
+
+export interface QuidaxVerifiedBankAccount {
+  account_name: string;
 }
 
 /** Header-based cursor. Quidax does NOT put pagination in the body. */
