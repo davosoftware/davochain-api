@@ -1,0 +1,2954 @@
+# DavoChain Mobile API: Flutter Integration Guide
+
+| | |
+| --- | --- |
+| **For** | The Flutter developer building the DavoChain mobile app |
+| **API version** | `v1` |
+| **Last verified** | 2 October 2026, against the API source (`api/src/`) and a running local instance |
+| **Source of truth** | The API code. If this guide and the API disagree, tell the backend team so the guide gets fixed. |
+| **Replaces** | `admin/docs/FLUTTER.md` |
+
+## How to use this guide
+
+1. Read **Part 0, Before you start** once. It covers the rules that apply to every call: base URL, headers, money format, errors, tokens.
+2. Build each screen from **Part 1, Endpoints**. Every endpoint is written the same way:
+   - **Endpoint:** method, path, whether a token is needed, the KYC level needed, and the success status
+   - **What it does:** in plain words, and when to call it
+   - **Request:** headers, path/query parameters, body fields with their rules, and a full example
+   - **Response:** a full example, plus a table explaining every field
+   - **Errors:** each error you can get, with the exact message
+   - **Integration notes:** UX rules and gotchas
+3. Use **Part 2, Appendices** for push notifications, enum values, ready-made Dart code, testing on the local backend, and known limitations.
+
+---
+
+## Contents
+
+**Part 0: Before you start**
+[0.1 Base URL](#01-base-url) · [0.2 Headers](#02-headers) · [0.3 Data formats](#03-data-formats) · [0.4 Errors](#04-errors) · [0.5 Tokens and sessions](#05-tokens-and-sessions) · [0.6 KYC gate](#06-kyc-gate) · [0.7 Idempotency-Key](#07-idempotency-key) · [0.8 Transaction statuses](#08-transaction-statuses) · [0.9 Image URLs](#09-image-urls)
+
+**Part 1: Endpoints**
+
+| # | Area | Endpoints |
+| --- | --- | --- |
+| 1 | [Health](#1-health) | 1.1 Server health |
+| 2 | [Authentication](#2-authentication) | 2.1 Register · 2.2 Log in · 2.3 Refresh token · 2.4 Log out · 2.5 Change password · 2.6 Request reset code · 2.7 Reset password · 2.8 Who am I (token) |
+| 3 | [Profile & wallets](#3-profile--wallets) | 3.1 Get profile · 3.2 Get wallet balances |
+| 4 | [KYC](#4-kyc-identity-verification) | 4.1 Get KYC status · 4.2 Submit Tier 1 · 4.3 Attach document (not ready) |
+| 5 | [Assets](#5-assets--networks) | 5.1 List coins · 5.2 List a coin's networks |
+| 6 | [Deposits](#6-deposits) | 6.1 Get deposit address · 6.2 List my addresses · 6.3 Deposit history |
+| 7 | [Trading](#7-trading-buy-sell-swap) | 7.1 Get a quote · 7.2 Execute a quote · 7.3 Trade history · 7.4 Get one transaction |
+| 8 | [Withdrawals](#8-withdrawals) | 8.1 Crypto fee quote · 8.2 Withdraw crypto · 8.3 Withdrawal history · 8.4 Naira fee quote · 8.5 Bank list · 8.6 Verify bank account · 8.7 Withdraw naira |
+| 9 | [Gift cards](#9-gift-cards) | 9.1 Catalogue · 9.2 Brand logo · 9.3 Sell a card · 9.4 My card trades · 9.5 One card trade · 9.6 Card photo |
+| 10 | [Referrals](#10-referrals) | 10.1 Check a code · 10.2 Referral dashboard · 10.3 Set username |
+| 11 | [Notifications](#11-notifications) | 11.1 Notification feed · 11.2 Mark as read |
+| 12 | [Devices (push)](#12-devices-push-tokens) | 12.1 Register device · 12.2 Unregister device · 12.3 List devices |
+| 13 | [Site & content](#13-site-settings--content) | 13.1 Site settings · 13.2 Logo · 13.3 Social icon · 13.4 List pages · 13.5 Get page · 13.6 FAQs |
+
+**Part 2: Appendices**
+[A. Push notifications](#appendix-a-push-notifications) · [B. Enum values](#appendix-b-enum-values) · [C. Screen flows](#appendix-c-screen-flows) · [D. Dart starter code](#appendix-d-dart-starter-code) · [E. Testing on the local backend](#appendix-e-testing-on-the-local-backend) · [F. Known limitations](#appendix-f-known-limitations--upcoming-changes) · [G. Endpoint index](#appendix-g-endpoint-index)
+
+---
+
+# Part 0: Before you start
+
+## 0.1 Base URL
+
+Every endpoint in this guide is written as a full path starting with `/v1/…`. Prefix it with the **host**:
+
+| Environment | Host |
+| --- | --- |
+| Production | `https://<api-host>` (not decided yet; make it a build config value) |
+| Android emulator → API on your laptop | `http://10.0.2.2:3000` |
+| iOS simulator → API on your laptop | `http://localhost:3000` |
+| Physical phone → API on your laptop | `http://<laptop LAN IP>:3000` (same Wi-Fi) |
+
+Example: host `http://10.0.2.2:3000` + endpoint `/v1/auth/login` = `http://10.0.2.2:3000/v1/auth/login`.
+
+Store the **host** in config, not a base URL that already ends in `/v1`. Some responses contain paths that already start with `/v1/…` (§0.9). The one endpoint without `/v1` is `GET /health`.
+
+In development you can try every endpoint in the browser at `http://<host>/docs` (Swagger).
+
+## 0.2 Headers
+
+| Header | When | Value |
+| --- | --- | --- |
+| `Content-Type` | Every request that has a body | `application/json` |
+| `Authorization` | Every endpoint marked **Auth: Bearer** | `Bearer <accessToken>` |
+| `Idempotency-Key` | Only on 7.2, 8.2, 8.7 (money-moving) | A UUID v4 you generate (§0.7) |
+
+## 0.3 Data formats
+
+| Thing | Format | Example |
+| --- | --- | --- |
+| **Money / amounts** | **Always a string.** Parse it into `Decimal` (package `decimal`), **never `double`**. Send amounts as strings too. | `"97150.00"`, `"0.00067342"` |
+| Amount strings you send | Plain decimal: no exponent, no commas | `"0.0015"` ✅ `"1.5e-3"` ❌ `"50,000"` ❌ |
+| Amount precision you receive | Some are fixed (`"97150.00"`), some full precision (`"0.000673"`) | Always parse; format with the coin's `displayScale` |
+| Dates | ISO-8601 UTC string | `"2026-10-02T10:25:10.100Z"` |
+| IDs | UUID string | `"9b4e20f9-2f1c-4d3e-9a51-0c7d5e1b2a40"` |
+| Asset codes | Lowercase | `ngn`, `btc`, `usdt` |
+| Network ids | Exactly as returned by 5.1/5.2. **Some contain spaces**, e.g. TON is `"ton network"`. URL-encode them in query strings. | `bep20`, `trc20`, `ton network` |
+| `limit` query param | Integer, max 100 | `?limit=50` |
+| **Unknown body fields** | **Rejected with 400** ("property X should not exist"). Send only the documented fields, and don't send `null` for optional fields you aren't setting: leave them out. | |
+| Body size | Max **1 MB** per request | |
+
+## 0.4 Errors
+
+**Normal error body:**
+```json
+{ "statusCode": 400, "message": "Minimum BTC trade is $18.00. This one is worth $12.00.", "error": "Bad Request" }
+```
+
+`message` is **sometimes an array**, when several fields fail validation:
+```json
+{ "statusCode": 400, "message": ["property extra should not exist", "email must be an email"], "error": "Bad Request" }
+```
+
+**Special error bodies.** These have no `statusCode` field, so decide using the HTTP status:
+```json
+{ "code": "ACCOUNT_SUSPENDED", "message": "<reason written by an admin>", "suspendedAt": "2026-10-01T09:00:00.000Z" }
+{ "code": "ACCOUNT_CLOSED", "message": "This account is closed. Contact support." }
+{ "message": "Verification required before you can do this", "requiredTier": "TIER_1", "currentTier": "TIER_0", "kycStatus": "NOT_STARTED" }
+```
+
+**Rules:**
+- Show `message` to the user **as-is**. It's written for people, and it often tells them whether money moved ("…Nothing was deducted from your balance.").
+- **Never write logic based on message text.** Wording can change. Use the status code, plus `code` / `requiredTier` when present.
+
+| Status | Meaning | What the app does |
+| --- | --- | --- |
+| 400 | Request rejected. **Nothing moved.** | Show `message` |
+| 401 | Token missing, expired or invalid ("Missing bearer token" / "Invalid or expired token") | Refresh the token once and retry (§0.5), **except** on the auth routes listed in §0.5 |
+| 403 | Not allowed: KYC too low, account suspended or closed, feature paused or off | If the body has `requiredTier`, open the verification screen. If `code`, the blocked-account screen. Otherwise show `message`. |
+| 404 | Not found, or not yours (the API doesn't tell you which) | Show `message` |
+| 409 | Conflict (see each endpoint) | See each endpoint |
+| 413 | Request body over 1 MB | Make photos smaller (9.3) |
+| 429 | Too many requests. **Not sent today, but it will be.** | Wait for the `Retry-After` seconds, then retry |
+| 500 / 503 | Server or provider problem | "Something went wrong, please try again." **Never** auto-retry money actions without the same Idempotency-Key. |
+
+## 0.5 Tokens and sessions
+
+**Two tokens** come back from register, login and refresh:
+
+| Token | Lifetime | Use |
+| --- | --- | --- |
+| `accessToken` (JWT) | **15 minutes** | Header `Authorization: Bearer <accessToken>` |
+| `refreshToken` (random string) | **30 days, single use** | Body of 2.3 (refresh) and 2.4 (logout) |
+
+Store both in **`flutter_secure_storage`**. Never use `SharedPreferences`.
+
+**Refreshing: ONE refresh at a time.** Each refresh returns a **new** refresh token and kills the old one. If two refreshes run at once with the same token, the server thinks it was stolen and **signs the user out everywhere**. So:
+
+1. A request gets `401`.
+2. If a refresh is already running, **wait for that one**. Otherwise start it (call 2.3).
+3. Success: save **both** new tokens, retry the original request **once**.
+4. Refresh also fails with `401`: clear tokens, go to the sign-in screen.
+
+(Ready-made Dart interceptor in Appendix D.)
+
+**Don't auto-refresh on these routes.** A 401 or 400 there means wrong credentials, not an expired token: 2.1 register, 2.2 login, 2.3 refresh, 2.5 change password, 2.6 / 2.7 reset.
+
+**When the server ends the user's session** (the app must handle all of these):
+
+| Event | What happens | What the app does |
+| --- | --- | --- |
+| Admin **approves or rejects KYC** | All refresh tokens revoked. The access token still works (with the *old* verification level) for up to 15 min. | When 4.1 shows `APPROVED`, show "You're verified, please sign in again", then clear tokens and go to sign-in |
+| User **changes password** (2.5) | All refresh tokens revoked, **including this phone's** | After success, clear tokens and go to sign-in |
+| User **resets password** (2.7) | All refresh tokens revoked | Go to sign-in |
+| Admin **suspends** the user | Refresh tokens revoked; login returns `ACCOUNT_SUSPENDED` | Show the blocked screen with `message` |
+| Refresh token older than 30 days, or reused | Refresh returns 401 | Sign-in |
+
+**Password rules** (check them in the app before sending): **10–128 characters, at least one letter and at least one number.**
+
+## 0.6 KYC gate
+
+Some endpoints need the user to be **verified: TIER_1 with status APPROVED**. In this guide they're marked **KYC: TIER_1**:
+
+7.1 quote · 7.2 execute trade · 6.1 deposit address · 8.2 withdraw crypto · 8.6 verify bank account · 8.7 withdraw naira
+
+If the user isn't verified you get `403` with `requiredTier`, `currentTier` and `kycStatus`. Open the verification screen.
+
+**Important:** the check uses the verification level **inside the access token**. Right after an admin approves a user, their old token still says "not verified" until they **sign in again** (§0.5).
+
+## 0.7 Idempotency-Key
+
+Endpoints that move money (7.2, 8.2, 8.7) **require** the header `Idempotency-Key: <uuid v4>`. It stops a retry from charging the user twice.
+
+- Create a **new UUID when the user taps Confirm**.
+- If the request times out or the connection drops, **retry with the SAME key**. The server returns the original result instead of doing it again.
+- A **new tap** gets a **new key**.
+
+| You get | Meaning | Do |
+| --- | --- | --- |
+| The normal `201` body | Either the first run or a replay of a finished one | Use it |
+| `409` "This request is still processing" | The first attempt is still running | Wait 2–3 s, retry with the **same** key |
+| `409` "This Idempotency-Key was already used with a different request" | Same key, different body: an app bug | Make a new key |
+| `400` "Idempotency-Key header is required for this request" | Header missing | App bug |
+
+## 0.8 Transaction statuses
+
+What to show for each status on trades, withdrawals and deposits:
+
+| Status | Meaning | Show the user |
+| --- | --- | --- |
+| `PENDING` | Accepted, funds held, not finished | "Processing…" |
+| `PROCESSING` | Being completed by the provider (swaps, withdrawals) | "Processing…", and poll |
+| `ON_HOLD` | Naira deposit waiting for review | "Under review" + `reason` |
+| `COMPLETED` | Done, success | Success |
+| `FAILED` | Done, failed. The money is back in the balance. | `reason` |
+| `RECONCILING` | **Result unknown for now.** Money is held safely while the backend checks with the provider. | "We're confirming this with our provider. Your funds are safe." **No retry button. Never say "failed".** |
+
+## 0.9 Image URLs
+
+| Where | URL type | How to load |
+| --- | --- | --- |
+| 13.1 `logoUrl` | **Relative**, e.g. `/v1/site/logo?v=…` | host + path. No token. |
+| 13.1 `socials[].iconUrl` | Absolute | As is. No token. |
+| 9.1 `brands[].imageUrl` | Absolute | As is. No token. Cache forever. |
+| 9.4 `images[]` | **Relative**, e.g. `/v1/giftcards/trades/{id}/images/{imageId}` | host + path, **with** `Authorization` header |
+
+---
+
+# Part 1: Endpoints
+
+## 1. Health
+
+### 1.1 Server health
+
+**Endpoint:** `GET /health` (no `/v1`) · **Auth:** none · **KYC:** none · **Success:** `200`
+
+**What it does**
+Tells you whether the API is up and can reach its database. Use it only for a "can't reach server" check (e.g. a no-connection banner). Never show its fields to users.
+
+**Request**
+No headers, no body.
+```http
+GET /health
+```
+
+**Response** `200`
+```json
+{ "status": "ok", "database": "up", "quidax": "mock", "env": "development", "time": "2026-10-02T10:25:10.100Z" }
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `status` | string | `ok` or `degraded` |
+| `database` | string | `up` or `down` |
+| `quidax` | string | `mock` (test) or `live` |
+| `env` | string | Server environment name |
+| `time` | string (date) | Server time |
+
+---
+
+## 2. Authentication
+
+### 2.1 Register
+
+**Endpoint:** `POST /v1/auth/register` · **Auth:** none · **KYC:** none · **Success:** `201`
+
+**What it does**
+Creates a new user account **and signs them in** (returns tokens, so there's no separate login call). Can attach a referral code. In the background it also sets up the user's crypto wallet and sends a welcome email.
+
+**Request**
+
+| Header | Value |
+| --- | --- |
+| `Content-Type` | `application/json` |
+
+| Field | Type | Required | Rules | Example |
+| --- | --- | --- | --- | --- |
+| `email` | string | ✅ | Valid email, max 254 chars. Saved in lowercase. | `"ada@example.com"` |
+| `password` | string | ✅ | 10–128 chars, ≥ 1 letter, ≥ 1 number | `"correcthorse42"` |
+| `firstName` | string | ✅ | 1–60 chars | `"Ada"` |
+| `lastName` | string | ✅ | 1–60 chars | `"Obi"` |
+| `phone` | string | ❌ | `+` optional, then 7–15 digits. Must not belong to another account. | `"+2348012345678"` |
+| `referralCode` | string | ❌ | Max 16 chars. An invalid code is **ignored**; it never blocks signup. | `"ADA4K9"` |
+
+```http
+POST /v1/auth/register
+Content-Type: application/json
+
+{
+  "email": "ada@example.com",
+  "password": "correcthorse42",
+  "firstName": "Ada",
+  "lastName": "Obi",
+  "phone": "+2348012345678",
+  "referralCode": "ADA4K9"
+}
+```
+
+**Response** `201`
+```json
+{
+  "accessToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOi…",
+  "refreshToken": "q3V9bWx0Z3Z…",
+  "expiresIn": "15m",
+  "userId": "9b4e20f9-2f1c-4d3e-9a51-0c7d5e1b2a40"
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `accessToken` | string | Send as `Authorization: Bearer …` |
+| `refreshToken` | string | Keep it secret; use it for 2.3 and 2.4 |
+| `expiresIn` | string | Access token lifetime, `"15m"` |
+| `userId` | string (UUID) | The new user's id |
+
+**Errors**
+
+| Status | When | `message` |
+| --- | --- | --- |
+| 400 | Email already registered | `"Unable to register with those details"` |
+| 400 | Invalid field | Array, e.g. `["Enter a valid email address", "Password must be at least 10 characters", "Password must contain a number", "Enter a valid phone number"]` |
+| 500 | Phone number already used by another account (backend bug, Appendix F) | Generic. Show "That phone number is already in use." |
+
+**Integration notes**
+- Save both tokens, then call **12.1** to register the phone for push.
+- The new user is **not verified** (`TIER_0`). Send them to the KYC flow (section 4) before trading.
+- Use **10.1** first if the user typed or opened a referral code, to show "Invited by Ada".
+
+---
+
+### 2.2 Log in
+
+**Endpoint:** `POST /v1/auth/login` · **Auth:** none · **KYC:** none · **Success:** `200`
+
+**What it does**
+Signs an existing user in and returns a new pair of tokens. After 5 wrong passwords in a row the account is locked for 15 minutes.
+
+**Request**
+
+| Field | Type | Required | Rules | Example |
+| --- | --- | --- | --- | --- |
+| `email` | string | ✅ | Valid email, max 254 | `"ada@example.com"` |
+| `password` | string | ✅ | Max 128 | `"correcthorse42"` |
+
+```http
+POST /v1/auth/login
+Content-Type: application/json
+
+{ "email": "ada@example.com", "password": "correcthorse42" }
+```
+
+**Response** `200`
+```json
+{ "accessToken": "eyJhbGciOi…", "refreshToken": "q3V9bWx0…", "expiresIn": "15m" }
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `accessToken` | string | Bearer token, valid 15 min |
+| `refreshToken` | string | Single-use refresh token, valid 30 days |
+| `expiresIn` | string | `"15m"` |
+
+**Errors**
+
+| Status | When | Body / `message` |
+| --- | --- | --- |
+| 401 | Wrong email or password | `"Incorrect email or password"` |
+| 403 | Locked after 5 failures | `"Too many failed attempts. Try again after 2026-10-02T10:40:00.000Z"` |
+| 403 | Account suspended | `{ "code": "ACCOUNT_SUSPENDED", "message": "<admin's reason>", "suspendedAt": "…" }` |
+| 403 | Account closed | `{ "code": "ACCOUNT_CLOSED", "message": "This account is closed. Contact support." }` |
+| 400 | Bad email format | `["email must be an email"]` |
+
+**Integration notes**
+- Show `ACCOUNT_SUSPENDED` / `ACCOUNT_CLOSED` on a dedicated screen with `message` verbatim.
+- After login, call **12.1** (register device) and **3.1** (profile).
+
+---
+
+### 2.3 Refresh token
+
+**Endpoint:** `POST /v1/auth/refresh` · **Auth:** none · **KYC:** none · **Success:** `200`
+
+**What it does**
+Swaps a refresh token for a **new access token and a new refresh token**. The old refresh token stops working immediately.
+
+**Request**
+
+| Field | Type | Required | Rules |
+| --- | --- | --- | --- |
+| `refreshToken` | string | ✅ | Max 512 |
+
+```http
+POST /v1/auth/refresh
+Content-Type: application/json
+
+{ "refreshToken": "q3V9bWx0…" }
+```
+
+**Response** `200`: same shape as 2.2.
+```json
+{ "accessToken": "eyJhbGciOi…", "refreshToken": "N7pQ…", "expiresIn": "15m" }
+```
+
+**Errors**
+
+| Status | When | `message` |
+| --- | --- | --- |
+| 401 | Token unknown | `"Invalid refresh token"` |
+| 401 | Token expired, already used, or revoked (password change, KYC decision, suspension) | `"Session expired. Please sign in again."` |
+
+**Integration notes**
+- **Save the new refresh token.** The old one is dead.
+- **Only one refresh at a time** (§0.5). Use the interceptor in Appendix D.
+- If this returns 401, clear tokens and go to sign-in.
+
+---
+
+### 2.4 Log out
+
+**Endpoint:** `POST /v1/auth/logout` · **Auth:** **Bearer** · **KYC:** none · **Success:** `204`
+
+**What it does**
+Kills the given refresh token so it can't be used again.
+
+**Request**
+
+| Header | Value |
+| --- | --- |
+| `Authorization` | `Bearer <accessToken>` |
+
+| Field | Type | Required | Rules |
+| --- | --- | --- | --- |
+| `refreshToken` | string | ✅ | Max 512 |
+
+```http
+POST /v1/auth/logout
+Authorization: Bearer eyJhbGciOi…
+Content-Type: application/json
+
+{ "refreshToken": "q3V9bWx0…" }
+```
+
+**Response** `204`: no body.
+
+**Errors**
+
+| Status | When | `message` |
+| --- | --- | --- |
+| 401 | Access token missing or expired | `"Missing bearer token"` / `"Invalid or expired token"` |
+
+**Integration notes**
+- Order on sign-out: **12.2 unregister device**, then **2.4 logout**, then clear secure storage.
+- If the access token has already expired, it's fine to skip this call and just clear local storage.
+
+---
+
+### 2.5 Change password
+
+**Endpoint:** `POST /v1/auth/change-password` · **Auth:** **Bearer** · **KYC:** none · **Success:** `204`
+
+**What it does**
+Changes the password of a signed-in user. **It signs the user out of every device, including this one.** The user also gets a security email.
+
+**Request**
+
+| Field | Type | Required | Rules | Example |
+| --- | --- | --- | --- | --- |
+| `currentPassword` | string | ✅ | Max 128 | `"correcthorse42"` |
+| `newPassword` | string | ✅ | 10–128, ≥ 1 letter, ≥ 1 number | `"newbattery77x"` |
+
+```http
+POST /v1/auth/change-password
+Authorization: Bearer eyJhbGciOi…
+Content-Type: application/json
+
+{ "currentPassword": "correcthorse42", "newPassword": "newbattery77x" }
+```
+
+**Response** `204`: no body.
+
+**Errors**
+
+| Status | When | `message` |
+| --- | --- | --- |
+| 401 | Current password wrong | `"Current password is incorrect"`. **Don't** treat this as an expired token. |
+| 400 | New password breaks the rules | e.g. `["Password must be at least 10 characters"]` |
+
+**Integration notes**
+- **Exclude this route from the auto-refresh interceptor**, or a wrong current password will log the user out.
+- After `204`: show "Password changed. Please sign in again", clear tokens, and open sign-in with the email pre-filled.
+
+---
+
+### 2.6 Request password-reset code
+
+**Endpoint:** `POST /v1/auth/reset/request` · **Auth:** none · **KYC:** none · **Success:** `200`
+
+**What it does**
+Emails a 6-digit code to the user (valid **10 minutes**). For privacy it **always returns the same answer**, whether or not the email exists.
+
+**Request**
+
+| Field | Type | Required | Rules |
+| --- | --- | --- | --- |
+| `email` | string | ✅ | Valid email, max 254 |
+
+```http
+POST /v1/auth/reset/request
+Content-Type: application/json
+
+{ "email": "ada@example.com" }
+```
+
+**Response** `200` (always)
+```json
+{ "message": "If that email belongs to an account, a six-digit code is on its way to it." }
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `message` | string | Show this to the user |
+
+**Errors**
+
+| Status | When | `message` |
+| --- | --- | --- |
+| 400 | Bad email format | `["Enter a valid email address"]` |
+
+**Integration notes**
+- Always move on to the "enter code" step, even for unknown emails.
+- "Resend code" should wait **60 s**. Faster requests are silently ignored, so no new code is sent.
+
+---
+
+### 2.7 Reset password with code
+
+**Endpoint:** `POST /v1/auth/reset/confirm` · **Auth:** none · **KYC:** none · **Success:** `204`
+
+**What it does**
+Checks the emailed code and sets a new password. Signs the user out everywhere and unlocks a locked account. **It doesn't sign the user in.**
+
+**Request**
+
+| Field | Type | Required | Rules | Example |
+| --- | --- | --- | --- | --- |
+| `email` | string | ✅ | Valid email | `"ada@example.com"` |
+| `code` | string | ✅ | Exactly 6 digits | `"482913"` |
+| `newPassword` | string | ✅ | 10–128, ≥ 1 letter, ≥ 1 number | `"newbattery77x"` |
+
+```http
+POST /v1/auth/reset/confirm
+Content-Type: application/json
+
+{ "email": "ada@example.com", "code": "482913", "newPassword": "newbattery77x" }
+```
+
+**Response** `204`: no body.
+
+**Errors** (all `400`)
+
+| When | `message` |
+| --- | --- |
+| Wrong code | `"That code is not right."` or `"That code is not right. 3 tries left."` |
+| Code older than 10 min | `"That code has expired. Ask for a new one."` |
+| 5 wrong attempts | `"Too many wrong codes. Ask for a new one."` |
+| Same as the old password | `"That is the password you already had. Choose a different one."` |
+| Code not 6 digits | `["The code is six digits"]` |
+
+**Integration notes**
+- Show the "tries left" message verbatim.
+- After `204`, go to sign-in with the email pre-filled.
+
+---
+
+### 2.8 Who am I (from token)
+
+**Endpoint:** `GET /v1/auth/me` · **Auth:** **Bearer** · **KYC:** none · **Success:** `200`
+
+**What it does**
+Returns what's inside the current access token. It doesn't read the database, so it can be up to 15 minutes out of date. For screens, use **3.1** instead.
+
+**Request**
+```http
+GET /v1/auth/me
+Authorization: Bearer eyJhbGciOi…
+```
+
+**Response** `200`
+```json
+{ "id": "9b4e20f9-2f1c-4d3e-9a51-0c7d5e1b2a40", "email": "ada@example.com", "kycTier": "TIER_0", "kycStatus": "NOT_STARTED" }
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string | User id |
+| `email` | string | User email |
+| `kycTier` | string | `TIER_0`…`TIER_3`, as of when the token was issued |
+| `kycStatus` | string | `NOT_STARTED` / `PENDING` / `APPROVED` / `REJECTED` / `EXPIRED`, as of token issue |
+
+---
+
+## 3. Profile & wallets
+
+### 3.1 Get profile
+
+**Endpoint:** `GET /v1/me` · **Auth:** **Bearer** · **KYC:** none · **Success:** `200`
+
+**What it does**
+Returns the signed-in user's profile, their current verification state (live from the database), and whether their crypto wallet is ready.
+
+**Request**
+```http
+GET /v1/me
+Authorization: Bearer eyJhbGciOi…
+```
+
+**Response** `200`
+```json
+{
+  "id": "9b4e20f9-2f1c-4d3e-9a51-0c7d5e1b2a40",
+  "email": "ada@example.com",
+  "firstName": "Ada",
+  "lastName": "Obi",
+  "phone": "+2348012345678",
+  "status": "ACTIVE",
+  "kyc": {
+    "tier": "TIER_1",
+    "status": "APPROVED",
+    "rejectionReason": null,
+    "submittedAt": "2026-10-01T08:00:00.000Z"
+  },
+  "walletReady": true,
+  "createdAt": "2026-09-30T12:00:00.000Z"
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string | User id |
+| `email` | string | |
+| `firstName`, `lastName` | string | |
+| `phone` | string \| null | |
+| `status` | string | `ACTIVE` / `SUSPENDED` / `CLOSED` |
+| `kyc.tier` | string | Current verification level |
+| `kyc.status` | string | Current verification status |
+| `kyc.rejectionReason` | string \| null | Why KYC was rejected (show it) |
+| `kyc.submittedAt` | string \| null | When KYC was last submitted |
+| `walletReady` | boolean | `false` while the crypto wallet is still being set up (usually seconds after signup) |
+| `createdAt` | string | Signup date |
+
+**Integration notes**
+- Call this on app start and after login.
+- `walletReady: false` means: show "Setting up your wallet…" on crypto screens. Nothing is blocked; 6.1 finishes the setup itself if needed.
+
+---
+
+### 3.2 Get wallet balances
+
+**Endpoint:** `GET /v1/wallets` · **Auth:** **Bearer** · **KYC:** none · **Success:** `200`
+
+**What it does**
+Returns the user's balance for **every listed asset**: naira first, then each coin in display order. Zero balances are included.
+
+**Request**
+```http
+GET /v1/wallets
+Authorization: Bearer eyJhbGciOi…
+```
+
+**Response** `200`
+```json
+[
+  { "asset": "ngn",  "name": "Nigerian Naira", "isFiat": true,  "available": "250000.00",  "locked": "0.00",       "total": "250000.00" },
+  { "asset": "btc",  "name": "Bitcoin",        "isFiat": false, "available": "0.00067342", "locked": "0.00000000", "total": "0.00067342" },
+  { "asset": "usdt", "name": "Tether",         "isFiat": false, "available": "0.000000",   "locked": "0.000000",   "total": "0.000000" }
+]
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `asset` | string | Asset code |
+| `name` | string | Display name |
+| `isFiat` | boolean | `true` only for `ngn` |
+| `available` | string | Spendable now |
+| `locked` | string | Held by an in-progress trade or withdrawal |
+| `total` | string | `available + locked` |
+
+**Integration notes**
+- Amounts are already cut (rounded down) to the asset's display decimals. Show them as they are.
+- Show `available` as the spendable balance, and `locked` as "in progress".
+- Refresh after any trade, withdrawal or deposit notification.
+
+---
+
+## 4. KYC (identity verification)
+
+Tier 1 = BVN **or** NIN plus date of birth, **checked by a person** (no automatic check yet). Tiers 2 and 3 aren't available yet.
+
+### 4.1 Get KYC status
+
+**Endpoint:** `GET /v1/kyc` · **Auth:** **Bearer** · **KYC:** none · **Success:** `200`
+
+**What it does**
+Returns the user's verification level and status, any rejection reason, and their **naira limits**: what they can deposit and withdraw today, plus what each tier allows.
+
+**Request**
+```http
+GET /v1/kyc
+Authorization: Bearer eyJhbGciOi…
+```
+
+**Response** `200`
+```json
+{
+  "tier": "TIER_0",
+  "status": "PENDING",
+  "rejectionReason": null,
+  "submittedAt": "2026-10-02T09:00:00.000Z",
+  "bvnLast4": "5678",
+  "documents": [],
+  "limits": {
+    "current": {
+      "deposit":  { "singleNgn": "0.00", "dailyNgn": "0.00", "usedTodayNgn": "0.00", "remainingTodayNgn": "0.00" },
+      "withdraw": { "singleNgn": "0.00", "dailyNgn": "0.00", "usedTodayNgn": "0.00", "remainingTodayNgn": "0.00" }
+    },
+    "tiers": [
+      { "tier": "TIER_0", "depositSingleNgn": "0",      "depositDailyNgn": "0",      "withdrawSingleNgn": "0",      "withdrawDailyNgn": "0" },
+      { "tier": "TIER_1", "depositSingleNgn": "200000", "depositDailyNgn": "500000", "withdrawSingleNgn": "200000", "withdrawDailyNgn": "500000" }
+    ]
+  }
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `tier` | string | Current level, `TIER_0`…`TIER_3` |
+| `status` | string | `NOT_STARTED` / `PENDING` / `APPROVED` / `REJECTED` / `EXPIRED` |
+| `rejectionReason` | string \| null | Show when `REJECTED` |
+| `submittedAt` | string \| null | Last submission |
+| `bvnLast4` | string \| null | Last 4 BVN digits (for "BVN ending 5678") |
+| `documents[]` | array | `{ "type": "PASSPORT", "status": "PENDING", "uploadedAt": "…" }`. Empty for now. |
+| `limits.current.deposit` / `.withdraw` | object | **This user, today** (resets at midnight Lagos time) |
+| `…singleNgn` | string | Max per transaction |
+| `…dailyNgn` | string | Max per day |
+| `…usedTodayNgn` | string | Already used today |
+| `…remainingTodayNgn` | string | Left today |
+| `limits.tiers[]` | array | What each tier allows, for "verify to unlock more" screens. Values aren't padded to 2 decimals. |
+
+**Integration notes**
+- Limits apply to **naira only**.
+- The numbers in `tiers` are set by admins and are all `0` on a fresh install.
+- Show the right screen for each `status`:
+  - `NOT_STARTED`: show the form (4.2).
+  - `PENDING`: "We're reviewing your details". Re-check when the screen opens.
+  - `REJECTED`: show `rejectionReason` and the form again.
+  - `APPROVED` with a token that still says unverified: ask the user to sign in again (§0.5).
+
+---
+
+### 4.2 Submit Tier 1 (BVN or NIN)
+
+**Endpoint:** `POST /v1/kyc/tier1` · **Auth:** **Bearer** · **KYC:** none · **Success:** `201`
+
+**What it does**
+Sends the user's BVN **or** NIN and date of birth for review. Sets the status to `PENDING` and emails the user a confirmation. An admin then approves or rejects it. The BVN/NIN is **not stored** in readable form (only a hash and the last 4 digits).
+
+**Request**
+
+| Field | Type | Required | Rules | Example |
+| --- | --- | --- | --- | --- |
+| `bvn` | string | one of `bvn`/`nin` | Exactly 11 digits | `"22212345678"` |
+| `nin` | string | one of `bvn`/`nin` | Exactly 11 digits | `"12345678901"` |
+| `dateOfBirth` | string | ✅ | ISO date `YYYY-MM-DD` | `"1994-05-20"` |
+
+If you send both `bvn` and `nin`, `bvn` is used.
+
+```http
+POST /v1/kyc/tier1
+Authorization: Bearer eyJhbGciOi…
+Content-Type: application/json
+
+{ "bvn": "22212345678", "dateOfBirth": "1994-05-20" }
+```
+
+**Response** `201`
+```json
+{ "status": "PENDING", "submittedAt": "2026-10-02T09:00:00.000Z" }
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `status` | string | Always `PENDING` after submitting |
+| `submittedAt` | string | Submission time |
+
+**Errors**
+
+| Status | When | `message` |
+| --- | --- | --- |
+| 400 | Neither BVN nor NIN sent | `"Provide either a BVN or a NIN"` |
+| 400 | Not 11 digits | `"BVN and NIN are 11 digits"` or a validation array |
+| 400 | Bad date | `["dateOfBirth must be a valid ISO 8601 date string"]` |
+
+**Integration notes**
+- **Hide this form once the user is `APPROVED`.** Submitting again sets them back to `PENDING` and blocks trading until it's reviewed again.
+
+---
+
+### 4.3 Attach KYC document (⚠️ not ready, don't use)
+
+**Endpoint:** `POST /v1/kyc/documents` · **Auth:** **Bearer** · **KYC:** none · **Success:** `201`
+
+**What it does**
+Today it only **saves information about** a document (type, storage key, file type, size). **It doesn't upload any file**, because file storage isn't built yet. A proper upload endpoint will replace it (Appendix F). It's listed here only so you know it exists.
+
+**Request** (for reference only)
+
+| Field | Type | Rules |
+| --- | --- | --- |
+| `type` | string | One of `BVN, NIN, PASSPORT, DRIVERS_LICENSE, VOTERS_CARD, SELFIE, PROOF_OF_ADDRESS` |
+| `storageKey` | string | Max 500 |
+| `mimeType` | string | Max 100 |
+| `sizeBytes` | integer | |
+
+**Response** `201`
+```json
+{ "id": "3c1e…", "type": "PASSPORT", "status": "PENDING", "uploadedAt": "2026-10-02T09:05:00.000Z" }
+```
+
+---
+
+## 5. Assets & networks
+
+### 5.1 List coins
+
+**Endpoint:** `GET /v1/assets` · **Auth:** none · **KYC:** none · **Success:** `200`
+
+**What it does**
+Lists every **crypto** coin the app supports, in display order, with each coin's blockchain networks and what each network allows. Naira isn't included here (it's in 3.2).
+
+**Request**
+```http
+GET /v1/assets
+```
+
+**Response** `200` (real response, trimmed)
+```json
+[
+  {
+    "code": "btc",
+    "name": "Bitcoin",
+    "displayScale": 8,
+    "networks": [
+      { "id": "btc", "label": "Bitcoin Network", "depositsEnabled": true, "withdrawsEnabled": true, "requiresTag": false, "isDefault": true }
+    ]
+  },
+  {
+    "code": "usdt",
+    "name": "Tether",
+    "displayScale": 6,
+    "networks": [
+      { "id": "arbitrum",    "label": "Arbitrum One",        "depositsEnabled": true, "withdrawsEnabled": false, "requiresTag": false, "isDefault": false },
+      { "id": "bep20",       "label": "Binance Smart Chain", "depositsEnabled": true, "withdrawsEnabled": true,  "requiresTag": false, "isDefault": true  },
+      { "id": "ton network", "label": "Ton Network",         "depositsEnabled": true, "withdrawsEnabled": true,  "requiresTag": true,  "isDefault": false },
+      { "id": "trc20",       "label": "Tron Network",        "depositsEnabled": true, "withdrawsEnabled": true,  "requiresTag": false, "isDefault": false }
+    ]
+  }
+]
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `code` | string | Coin code, used in every other request |
+| `name` | string | Display name |
+| `displayScale` | number | **How many decimals to show** for this coin (BTC 8, USDT 6). Naira is 2. |
+| `networks[].id` | string | Network id to send in 6.1 / 8.1 / 8.2. Can contain spaces. |
+| `networks[].label` | string | Display name of the network |
+| `networks[].depositsEnabled` | boolean | Can receive on this network |
+| `networks[].withdrawsEnabled` | boolean | Can send on this network |
+| `networks[].requiresTag` | boolean | **`true` means a memo / destination tag is mandatory** (XRP, TON…). Without it, funds are lost. |
+| `networks[].isDefault` | boolean | Pre-select this network |
+
+**Integration notes**
+- Supported today: `btc, usdt, usdc, eth, bnb, xrp, ltc, sol, bch, doge, trx, pol, link, ada, sui`. **Don't hard-code this list**, because admins can change it.
+- Cache it for the session; it rarely changes.
+
+---
+
+### 5.2 List a coin's networks (for deposit or withdraw)
+
+**Endpoint:** `GET /v1/assets/{code}/networks?purpose={deposit|withdraw}` · **Auth:** none · **KYC:** none · **Success:** `200`
+
+**What it does**
+Returns only the networks of one coin that are open for **depositing** or for **withdrawing**, with the default first and the number of confirmations each needs.
+
+**Request**
+
+| Param | In | Type | Required | Values |
+| --- | --- | --- | --- | --- |
+| `code` | path | string | ✅ | Coin code, e.g. `usdt` |
+| `purpose` | query | string | ❌ (default `deposit`) | `deposit` or `withdraw` |
+
+```http
+GET /v1/assets/usdt/networks?purpose=withdraw
+```
+
+**Response** `200` (real response, trimmed)
+```json
+[
+  { "id": "bep20",       "label": "Binance Smart Chain", "requiresTag": false, "confirmations": 1,  "isDefault": true  },
+  { "id": "erc20",       "label": "Ethereum Network",    "requiresTag": false, "confirmations": 12, "isDefault": false },
+  { "id": "ton network", "label": "Ton Network",         "requiresTag": true,  "confirmations": 1,  "isDefault": false }
+]
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string | Network id |
+| `label` | string | Display name |
+| `requiresTag` | boolean | Memo / tag mandatory |
+| `confirmations` | number | Block confirmations before a deposit is credited (for "usually takes X confirmations") |
+| `isDefault` | boolean | Pre-select it |
+
+**Errors**
+
+| Status | When | `message` |
+| --- | --- | --- |
+| 404 | Unknown coin | `"Unknown asset: xyz"` |
+
+**Integration notes**
+- **Always ask for the right `purpose`.** Some networks are deposit-only: USDT on `arbitrum` appears for `deposit` but not `withdraw`.
+- Any `purpose` value other than `deposit` is treated as `withdraw`.
+
+---
+
+## 6. Deposits
+
+### 6.1 Get (or create) a deposit address
+
+**Endpoint:** `POST /v1/deposits/address` · **Auth:** **Bearer** · **KYC:** **TIER_1** · **Success:** `201`
+
+**What it does**
+Returns the user's **permanent** deposit address for one coin on one network, creating it the first time. Creating an address takes a few seconds in the background, so **the first call usually returns `address: null`**. Calling again is safe: it never creates a second address.
+
+**Request**
+
+| Field | Type | Required | Rules | Example |
+| --- | --- | --- | --- | --- |
+| `asset` | string | ✅ | Letters/numbers, max 20 | `"usdt"` |
+| `network` | string | ✅ | Network `id` from 5.2 (`purpose=deposit`), max 40 | `"trc20"` |
+
+```http
+POST /v1/deposits/address
+Authorization: Bearer eyJhbGciOi…
+Content-Type: application/json
+
+{ "asset": "usdt", "network": "trc20" }
+```
+
+**Response** `201`, first call (still being generated):
+```json
+{
+  "asset": "usdt",
+  "network": "trc20",
+  "networkLabel": "Tron Network",
+  "status": "PENDING",
+  "address": null,
+  "destinationTag": null,
+  "requiresTag": false,
+  "confirmations": 1,
+  "usable": false
+}
+```
+
+**Response** `201` when ready (example for a coin that needs a tag):
+```json
+{
+  "asset": "xrp",
+  "network": "ripple",
+  "networkLabel": "Ripple Network",
+  "status": "ACTIVE",
+  "address": "rPEPPER7kfTD9w2To4CQk6UCfuHM9c6GDY",
+  "destinationTag": "482910",
+  "requiresTag": true,
+  "confirmations": 1,
+  "usable": true
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `asset` | string | Coin |
+| `network` | string | Network id |
+| `networkLabel` | string | Network display name |
+| `status` | string | `PENDING` (generating) / `ACTIVE` / `FAILED` / `DISABLED` |
+| `address` | string \| null | The address. **`null` while generating.** |
+| `destinationTag` | string \| null | Memo / tag, for networks that need one |
+| `requiresTag` | boolean | If `true`, the user must include `destinationTag` when sending |
+| `confirmations` | number | Confirmations needed before crediting |
+| `usable` | boolean | **Only show the address / QR when this is `true`** |
+
+**Errors**
+
+| Status | When | `message` |
+| --- | --- | --- |
+| 403 | User not verified | KYC body (§0.4) |
+| 403 | Deposits paused by admin | `"Deposits are temporarily paused."` |
+| 404 | Unknown coin | `"Unknown asset: xyz"` |
+| 404 | Coin not on that network | `"USDT is not available on xyz"` |
+| 400 | Deposits switched off on that network | `"Deposits are disabled for USDT on Arbitrum One"` |
+| 400 | Bad asset format | `["Invalid asset code"]` |
+
+**Integration notes**
+- While `usable` is `false`, show a spinner ("Generating your address…") and **call this same endpoint again every 3–5 s**. Stop after ~2 minutes; a push `address.ready` arrives when it's done.
+- **Never show or copy a `null` address.**
+- If `requiresTag` is `true`, show the `destinationTag` as large as the address, with a warning: "You MUST include this tag or your deposit will be lost."
+- When funds arrive the user gets pushes `deposit.detected` and then `deposit.credited`. Refresh 3.2.
+
+---
+
+### 6.2 List my deposit addresses
+
+**Endpoint:** `GET /v1/deposits/addresses` · **Auth:** **Bearer** · **KYC:** none · **Success:** `200`
+
+**What it does**
+Returns every deposit address the user has generated, across all coins and networks.
+
+**Request**
+```http
+GET /v1/deposits/addresses
+Authorization: Bearer eyJhbGciOi…
+```
+
+**Response** `200`: an array of the **same object as 6.1**, sorted by coin then network.
+```json
+[
+  { "asset": "usdt", "network": "trc20", "networkLabel": "Tron Network", "status": "ACTIVE", "address": "TQrY8tryqsYVCYS3MFbtffiPp2ccyn4STm", "destinationTag": null, "requiresTag": false, "confirmations": 1, "usable": true }
+]
+```
+
+---
+
+### 6.3 Deposit history
+
+**Endpoint:** `GET /v1/deposits?limit={n}` · **Auth:** **Bearer** · **KYC:** none · **Success:** `200`
+
+**What it does**
+Lists money that came **into** the user's balance: crypto deposits, naira deposits, and **referral rewards**. Newest first.
+
+**Request**
+
+| Param | In | Type | Required | Rules |
+| --- | --- | --- | --- | --- |
+| `limit` | query | integer | ❌ | Default 50, max 100 |
+
+```http
+GET /v1/deposits?limit=50
+Authorization: Bearer eyJhbGciOi…
+```
+
+**Response** `200`
+```json
+[
+  { "id": "c1d2e3f4-…", "asset": "usdt", "amount": "150",    "status": "COMPLETED", "reason": null, "createdAt": "2026-10-02T08:00:00.000Z", "completedAt": "2026-10-02T08:03:00.000Z" },
+  { "id": "c2e3f4a5-…", "asset": "ngn",  "amount": "1000",   "status": "COMPLETED", "reason": null, "createdAt": "2026-10-01T15:00:00.000Z", "completedAt": "2026-10-01T15:00:00.000Z" },
+  { "id": "c3f4a5b6-…", "asset": "ngn",  "amount": "750000", "status": "ON_HOLD",   "reason": "That would take you past your ₦500,000 daily deposit limit. You have ₦200,000 left today.", "createdAt": "2026-10-01T14:00:00.000Z", "completedAt": null }
+]
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string | Transaction id (works with 7.4) |
+| `asset` | string | Coin or `ngn` |
+| `amount` | string | Full precision; format with the coin's `displayScale` |
+| `status` | string | `PENDING` (confirming) / `ON_HOLD` / `COMPLETED` / `FAILED` |
+| `reason` | string \| null | Why it's on hold or failed |
+| `createdAt` | string | |
+| `completedAt` | string \| null | When it was credited |
+
+**Integration notes**
+- Gift-card payouts are **not** here; they're in 9.4.
+- There's no network, address or blockchain hash per deposit yet (Appendix F).
+- No pages yet: `limit` max 100.
+- Known backend bug: after a **buy**, a `PENDING` "deposit" of the bought coin may appear here. It's not an app bug (Appendix F).
+
+---
+
+## 7. Trading (buy, sell, swap)
+
+Every trade takes **two calls**: (1) **get a quote**, a price valid for **12 seconds**; (2) **execute** that quote.
+
+### 7.1 Get a quote
+
+**Endpoint:** `POST /v1/quotes` · **Auth:** **Bearer** · **KYC:** **TIER_1** · **Success:** `201`
+
+**What it does**
+Prices a buy, sell or swap and returns a **quote valid for 12 seconds**: exactly what the user pays, what they receive, the rate, any fee, and the min/max trade size. It also checks the user has enough balance.
+
+**Request**
+
+| Field | Type | Required | Rules | Example |
+| --- | --- | --- | --- | --- |
+| `side` | string | ✅ | `"buy"`, `"sell"` or `"swap"` (lowercase) | `"buy"` |
+| `fromAsset` | string | ✅ | What the user pays with. 2–20 letters/numbers. | `"ngn"` |
+| `toAsset` | string | ✅ | What the user receives. 2–20 letters/numbers. | `"btc"` |
+| `amount` | string | ✅ | Positive decimal, **always in `fromAsset` units** | `"100000"` |
+
+Both assets are **always required**:
+
+| Trade | `side` | `fromAsset` | `toAsset` | `amount` means |
+| --- | --- | --- | --- | --- |
+| Buy BTC with naira | `buy` | `"ngn"` | `"btc"` | Naira to spend |
+| Sell BTC for naira | `sell` | `"btc"` | `"ngn"` | BTC to sell |
+| Swap USDT to BTC | `swap` | `"usdt"` | `"btc"` | USDT to swap |
+
+```http
+POST /v1/quotes
+Authorization: Bearer eyJhbGciOi…
+Content-Type: application/json
+
+{ "side": "buy", "fromAsset": "ngn", "toAsset": "btc", "amount": "100000" }
+```
+
+**Response** `201` (buy)
+```json
+{
+  "quoteId": "5f0e2c1a-8d3b-4c6e-9f21-7a4b3c2d1e0f",
+  "side": "BUY",
+  "fromAsset": "ngn",
+  "toAsset": "btc",
+  "fromAmount": "99998.40",
+  "toAmount": "0.00067342",
+  "rate": "1485.0000",
+  "fee": "0.00000000",
+  "feeAsset": null,
+  "minimum": "18.00",
+  "maximum": "2000.00",
+  "expiresAt": "2026-10-02T10:00:12.000Z",
+  "ttlSeconds": 12,
+  "availableBalance": "250000.00"
+}
+```
+
+**Response** `201` (swap): note the real fee:
+```json
+{
+  "quoteId": "7a1b…",
+  "side": "SWAP",
+  "fromAsset": "usdt", "toAsset": "btc",
+  "fromAmount": "50.00000000", "toAmount": "0.00071234",
+  "rate": "0.0000",
+  "fee": "0.00002950", "feeAsset": "btc",
+  "minimum": "4.00", "maximum": "2000.00",
+  "expiresAt": "2026-10-02T10:00:12.000Z", "ttlSeconds": 12,
+  "availableBalance": "120.000000"
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `quoteId` | string | Send this to 7.2 |
+| `side` | string | `BUY` / `SELL` / `SWAP` (**uppercase** in the response) |
+| `fromAsset`, `toAsset` | string | |
+| `fromAmount` | string | **What will actually be taken from the balance.** On a buy it can be a little *less* than the amount typed (the coin amount is rounded down, then the naira is re-priced from it). Show this, not the typed amount. NGN 2 decimals, coins 8. |
+| `toAmount` | string | What the user receives (8 decimals for coins, 2 for NGN) |
+| `rate` | string | **Buy/sell:** naira per **US dollar**, with DavoChain's margin included (e.g. "₦1,485 per $1"). **Swap:** `toAsset` per 1 `fromAsset`, but **cut to 4 decimals, so small swap rates come back as `"0.0000"`** (e.g. USDT→BTC). For swaps, show your own rate: `(toAmount + fee) ÷ fromAmount`, or simply "50 USDT → 0.00071234 BTC". |
+| `fee` | string | Buy/sell: always zero (the margin is inside the rate), so show ₦0 or no fee line. Swap: a real fee, already taken out of `toAmount`. **Show it.** |
+| `feeAsset` | string \| null | The coin the swap fee is charged in |
+| `minimum`, `maximum` | string | Allowed trade size **in US dollars**. Changes with price. |
+| `expiresAt` | string | When the quote dies |
+| `ttlSeconds` | number | `12`. Drive the countdown with this. |
+| `availableBalance` | string | User's spendable balance of `fromAsset` |
+
+**Errors**
+
+| Status | When | `message` (example) |
+| --- | --- | --- |
+| 400 | Below the minimum | `"Minimum BTC trade is $18.00. This one is worth $12.00."` |
+| 400 | Above the maximum | `"Maximum single trade is $2000.00."` |
+| 400 | Amount too small for the coin | `"Amount is too small to trade in this coin"` / `"Amount is too small to swap"` |
+| 400 | Not enough balance | `"Insufficient naira balance. You have ₦5000.00."` / `"Insufficient BTC balance. You have 0.0001."` |
+| 400 | Swap below twice its fee | `"Minimum swap is $4.00 worth — the $2.00 fee would take too large a share"` |
+| 400 | Same coin on both sides | `"Choose two different coins"` |
+| 404 | Unknown coin | `"Unknown asset: xyz"` |
+| 404 | Outside the provider's transfer limit (quirk, should be 400) | `"Minimum BTC transfer is 0.00015"` |
+| 403 | Trading paused | `"Trading is temporarily paused. Please try again shortly."` / `"BTC is temporarily unavailable for trading."` |
+| 403 | Not verified | KYC body |
+| 500 | Price provider unreachable | Generic. "Couldn't get a price, try again." |
+
+**Integration notes (important)**
+1. **Debounce the amount field ~400 ms** before asking for a quote.
+2. Show a **12-second countdown**. At 0, **fade and disable Continue** and show "Refresh rate".
+3. **Never refresh the quote automatically** while the user looks at it. Only when they change the amount or tap refresh.
+4. Convert `minimum` / `maximum` into the currency on screen and validate **before** the user taps Continue.
+
+---
+
+### 7.2 Execute a quote (place the trade)
+
+**Endpoint:** `POST /v1/trades` · **Auth:** **Bearer** · **KYC:** **TIER_1** · **Success:** `201`
+
+**What it does**
+Executes a quote from 7.1. **This moves money.** A quote can be used **once**, only by the user it was made for, and only within its 12 seconds. Buys and sells usually finish immediately; swaps finish a little later.
+
+**Request**
+
+| Header | Value |
+| --- | --- |
+| `Authorization` | `Bearer <accessToken>` |
+| `Idempotency-Key` | **Required.** New UUID per tap; the same one on retries (§0.7). |
+
+| Field | Type | Required | Rules |
+| --- | --- | --- | --- |
+| `quoteId` | string | ✅ | From 7.1, max 64 |
+
+```http
+POST /v1/trades
+Authorization: Bearer eyJhbGciOi…
+Idempotency-Key: 3b8f1c2e-6a4d-4f7b-9c1e-2d5a8b7f0e13
+Content-Type: application/json
+
+{ "quoteId": "5f0e2c1a-8d3b-4c6e-9f21-7a4b3c2d1e0f" }
+```
+
+**Response** `201` (buy or sell, finished)
+```json
+{
+  "transactionId": "a71c9e3b-5d2f-4a1e-8c6b-2f9d0e7a3b14",
+  "status": "COMPLETED",
+  "fromAsset": "ngn",
+  "fromAmount": "99998.40",
+  "toAsset": "btc",
+  "toAmount": "0.00067342",
+  "rate": "1485.0000"
+}
+```
+
+**Response** `201` (swap, still finishing)
+```json
+{
+  "transactionId": "b82d…",
+  "status": "PROCESSING",
+  "fromAsset": "usdt", "fromAmount": "50.00000000",
+  "toAsset": "btc", "toAmount": "0.00071234",
+  "rate": "0.00001475"
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `transactionId` | string | Use with 7.4 to check status |
+| `status` | string | `COMPLETED` (done), `PROCESSING` (swap finishing), or `RECONCILING` (outcome being confirmed, funds held safely, §0.8) |
+| `fromAsset`, `fromAmount` | string | What was taken |
+| `toAsset`, `toAmount` | string | What was / will be received |
+| `rate` | string | Rate used. **`"0"` when `RECONCILING`.** |
+
+**Errors**
+
+| Status | When | `message` |
+| --- | --- | --- |
+| 400 | Missing header | `"Idempotency-Key header is required for this request"` |
+| 409 | Key reused with a different body | `"This Idempotency-Key was already used with a different request"` |
+| 409 | Same key still running | `"This request is still processing"` |
+| 404 | Quote doesn't exist / not this user's | `"Quote not found"` |
+| 400 | Quote already used | `"This quote has already been used"` |
+| 400 | Quote expired | `"The rate has expired. Please refresh and try again."`: get a new quote |
+| 400 | Coin out of stock | `"BTC is temporarily unavailable to buy. Please try again shortly."` |
+| 400 | Balance dropped since the quote | `"Insufficient NGN balance: need 99998.4, have 5000"` |
+| 400 | Provider refused the trade | `"<reason>. Nothing was deducted from your balance."` |
+| 409 | Two changes collided | `"Someone else changed this at the same moment. Try again."`: get a **new** quote and key |
+| 403 | Trading paused / not verified | as in 7.1 |
+
+**Integration notes**
+- `COMPLETED`: success screen, refresh 3.2.
+- `PROCESSING` (swaps): progress screen. Poll **7.4** every 5 s while it's open; push `trade.completed` or `trade.failed` arrives at the end.
+- `RECONCILING`: "We're confirming this with our provider. Your funds are safe." **No retry button.**
+- Any `400`: **nothing was deducted**. Show the message.
+- On a timeout, retry with the **same** `Idempotency-Key` (Appendix D has the code).
+
+---
+
+### 7.3 Trade history
+
+**Endpoint:** `GET /v1/trades?limit={n}` · **Auth:** **Bearer** · **KYC:** none · **Success:** `200`
+
+**What it does**
+Lists the user's buys, sells and swaps, newest first.
+
+**Request**
+
+| Param | In | Type | Required | Rules |
+| --- | --- | --- | --- | --- |
+| `limit` | query | integer | ❌ | Default 50, max 100 |
+
+```http
+GET /v1/trades?limit=50
+Authorization: Bearer eyJhbGciOi…
+```
+
+**Response** `200`
+```json
+[
+  {
+    "id": "a71c9e3b-5d2f-4a1e-8c6b-2f9d0e7a3b14",
+    "type": "BUY",
+    "status": "COMPLETED",
+    "fromAsset": "ngn",
+    "fromAmount": "99998.4",
+    "toAsset": "btc",
+    "toAmount": "0.00067342",
+    "rate": "1485.0000",
+    "fee": "0",
+    "reason": null,
+    "createdAt": "2026-10-02T10:00:05.000Z",
+    "completedAt": "2026-10-02T10:00:06.000Z"
+  }
+]
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string | Transaction id |
+| `type` | string | `BUY` / `SELL` / `SWAP` |
+| `status` | string | §0.8 |
+| `fromAsset`, `fromAmount` | string | Paid (full precision) |
+| `toAsset`, `toAmount` | string | Received (full precision) |
+| `rate` | string \| null | 4 decimals |
+| `fee` | string | Always `"0"` here (a swap's fee is already taken out of `toAmount`) |
+| `reason` | string \| null | Set when `FAILED` or `RECONCILING` |
+| `createdAt`, `completedAt` | string / null | |
+
+---
+
+### 7.4 Get one transaction (status polling)
+
+**Endpoint:** `GET /v1/trades/{id}` · **Auth:** **Bearer** · **KYC:** none · **Success:** `200`
+
+**What it does**
+Returns the current state of **any one of the user's transactions** by id: trades, and also withdrawals, deposits and gift-card payouts. Use it to **poll** a swap or withdrawal until it finishes.
+
+**Request**
+
+| Param | In | Type | Required |
+| --- | --- | --- | --- |
+| `id` | path | string | ✅ |
+
+```http
+GET /v1/trades/b82d1f0e-…
+Authorization: Bearer eyJhbGciOi…
+```
+
+**Response** `200`
+```json
+{
+  "id": "b82d1f0e-…",
+  "type": "SWAP",
+  "status": "PROCESSING",
+  "fromAsset": "usdt",
+  "fromAmount": "50",
+  "toAsset": "btc",
+  "toAmount": "0.00071234",
+  "reason": null,
+  "createdAt": "2026-10-02T10:02:00.000Z",
+  "completedAt": null
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string | |
+| `type` | string | `BUY`, `SELL`, `SWAP`, `DEPOSIT`, `WITHDRAWAL` or `GIFT_CARD` |
+| `status` | string | §0.8 |
+| `fromAsset`, `fromAmount` | string \| null | `null` for deposits and gift-card payouts |
+| `toAsset`, `toAmount` | string \| null | |
+| `reason` | string \| null | |
+| `createdAt`, `completedAt` | string / null | |
+
+**Errors**
+
+| Status | When | `message` |
+| --- | --- | --- |
+| 404 | Not found / not this user's | `"No such transaction"` |
+
+**Integration notes**
+- Poll every **5 s** only while the screen is visible, and stop at `COMPLETED` or `FAILED`.
+- For `RECONCILING`, don't poll aggressively. Re-check when the screen opens; a push arrives when it's resolved.
+
+---
+
+## 8. Withdrawals
+
+### 8.1 Crypto withdrawal fee quote
+
+**Endpoint:** `GET /v1/withdrawals/quote?asset={code}&amount={amount}&network={id}` · **Auth:** **Bearer** · **KYC:** none · **Success:** `200`
+
+**What it does**
+Shows what a crypto withdrawal will cost **before** the user confirms: the blockchain network fee and DavoChain's fee as separate lines, and the total that will leave their balance.
+
+**Request**
+
+| Param | In | Type | Required | Rules | Example |
+| --- | --- | --- | --- | --- | --- |
+| `asset` | query | string | ✅ | Coin code | `usdt` |
+| `amount` | query | string | ✅ | **Valid positive decimal.** What the recipient should receive. | `100` |
+| `network` | query | string | ✅ | Network id from 5.2 (`purpose=withdraw`), URL-encoded | `trc20` |
+
+```http
+GET /v1/withdrawals/quote?asset=usdt&amount=100&network=trc20
+Authorization: Bearer eyJhbGciOi…
+```
+
+**Response** `200`
+```json
+{
+  "asset": "usdt",
+  "network": "trc20",
+  "amount": "100.000000",
+  "networkFee": "1.000000",
+  "platformFee": "1.000000",
+  "platformFeeUsd": "1.00",
+  "totalFee": "2.000000",
+  "totalDeducted": "102.000000",
+  "youReceive": "100.000000"
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `asset`, `network` | string | Echo of the request |
+| `amount` | string | Amount the recipient gets |
+| `networkFee` | string | Blockchain fee, in the coin |
+| `platformFee` | string | DavoChain's fee, in the coin |
+| `platformFeeUsd` | string \| null | DavoChain's fee in US dollars (may be `null`) |
+| `totalFee` | string | `networkFee + platformFee` |
+| `totalDeducted` | string | **What leaves the balance:** `amount + totalFee` |
+| `youReceive` | string | Same as `amount` |
+
+**Errors**
+
+| Status | When | `message` |
+| --- | --- | --- |
+| 404 | Unknown coin | `"Unknown asset: xyz"` |
+| 503 | Network fee unavailable | `"Unable to retrieve the network fee. Please try again shortly."` |
+| 500 | `amount` / `asset` missing or not a number | Generic (backend bug). **Always validate before calling.** |
+
+**Integration notes**
+- Show "Network fee" and "DavoChain fee" as **two separate lines**, then "Total deducted".
+- Enable Confirm only when `totalDeducted ≤ available` (from 3.2).
+
+---
+
+### 8.2 Withdraw crypto
+
+**Endpoint:** `POST /v1/withdrawals/crypto` · **Auth:** **Bearer** · **KYC:** **TIER_1** · **Success:** `201`
+
+**What it does**
+Sends crypto from the user's balance to an external wallet address. **This moves money.** The funds are held right away; the withdrawal then completes in the background (minutes). The user gets a "withdrawal requested" email and push immediately.
+
+**Request**
+
+| Header | Value |
+| --- | --- |
+| `Idempotency-Key` | **Required.** New UUID per tap, same one on retries. |
+
+| Field | Type | Required | Rules | Example |
+| --- | --- | --- | --- | --- |
+| `asset` | string | ✅ | Coin code | `"usdt"` |
+| `network` | string | ✅ | Network id with `withdrawsEnabled`, max 40 | `"trc20"` |
+| `amount` | string | ✅ | Positive decimal: **what the recipient receives** | `"100"` |
+| `address` | string | ✅ | Destination address, max 200 | `"TQrY8tryqsYVCYS3MFbtffiPp2ccyn4STm"` |
+| `destinationTag` | string | only if the network `requiresTag` | Max 64 | `"104927"` |
+
+```http
+POST /v1/withdrawals/crypto
+Authorization: Bearer eyJhbGciOi…
+Idempotency-Key: 9d2c4e1a-7b3f-4a8e-b6d1-0f5c2e9a8b47
+Content-Type: application/json
+
+{ "asset": "usdt", "network": "trc20", "amount": "100", "address": "TQrY8tryqsYVCYS3MFbtffiPp2ccyn4STm" }
+```
+
+**Response** `201`
+```json
+{
+  "transactionId": "e4b2d8f1-3a6c-4e9b-b7d2-1c5f8a0e6d39",
+  "status": "PROCESSING",
+  "asset": "usdt",
+  "amount": "100.000000",
+  "address": "TQrY8tryqsYVCYS3MFbtffiPp2ccyn4STm"
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `transactionId` | string | Poll with 7.4 |
+| `status` | string | `PROCESSING` (normal) or `RECONCILING` (§0.8). Later becomes `COMPLETED` or `FAILED`. |
+| `asset` | string | |
+| `amount` | string | What the recipient will receive |
+| `address` | string | Destination |
+
+**Errors**
+
+| Status | When | `message` |
+| --- | --- | --- |
+| 403 | Not verified | KYC body |
+| 403 | Withdrawals paused | `"Withdrawals are temporarily paused."` |
+| 404 | Unknown coin | `"Unknown asset: xyz"` |
+| 400 | Network not offered | `"USDT is not available on xyz"` |
+| 400 | Network withdrawals off | `"Withdrawals are disabled for USDT on Arbitrum One"` |
+| 400 | Tag missing | `"Ton Network requires a destination tag. Without it the funds cannot be credited."` |
+| 400 | Address format wrong | `"That does not look like a valid Tron Network address"` |
+| 400 | Amount zero or negative | `"Enter an amount greater than zero"` |
+| 400 | Not enough balance **including fees** | `"Insufficient USDT balance: need 102, have 80"` |
+| 503 | Fee lookup failed | `"Unable to retrieve the network fee. Please try again shortly."` |
+| 400 | Provider refused | `"<reason>. Nothing was deducted from your balance."` |
+| 400 / 409 | Idempotency problems | §0.7 |
+
+**Integration notes**
+- The balance goes down by `amount + platform fee + network fee`. Always show 8.1 first. The network fee is re-checked at submit, so it can differ very slightly.
+- Pushes: `withdrawal.submitted` now, then `withdrawal.sent` (with the blockchain hash in the text) or `withdrawal.rejected` (money returned).
+- Show a strong warning for the address and tag ("Crypto sent to a wrong address can't be recovered").
+- A "verify it's you" step (OTP/2FA) and saved addresses are planned. Design the confirm screen so they can slot in (Appendix F).
+
+---
+
+### 8.3 Withdrawal history
+
+**Endpoint:** `GET /v1/withdrawals?limit={n}` · **Auth:** **Bearer** · **KYC:** none · **Success:** `200`
+
+**What it does**
+Lists the user's crypto and naira withdrawals, newest first, with the fee breakdown.
+
+**Request**
+
+| Param | In | Type | Required | Rules |
+| --- | --- | --- | --- | --- |
+| `limit` | query | integer | ❌ | Default 50, max 100 |
+
+```http
+GET /v1/withdrawals?limit=50
+Authorization: Bearer eyJhbGciOi…
+```
+
+**Response** `200`
+```json
+[
+  {
+    "id": "e4b2d8f1-3a6c-4e9b-b7d2-1c5f8a0e6d39",
+    "asset": "usdt",
+    "amount": "100.00000000",
+    "totalDebited": "102.00000000",
+    "feeAmount": "1.00000000",
+    "networkFee": "1.00000000",
+    "bankName": null,
+    "accountNumberLast4": null,
+    "status": "PROCESSING",
+    "reason": null,
+    "createdAt": "2026-10-02T11:00:00.000Z",
+    "completedAt": null
+  },
+  {
+    "id": "f5c3…",
+    "asset": "ngn",
+    "amount": "50000.00",
+    "totalDebited": "50100.00",
+    "feeAmount": "100.00",
+    "networkFee": "10.75",
+    "bankName": "Access Bank",
+    "accountNumberLast4": "6789",
+    "status": "COMPLETED",
+    "reason": null,
+    "createdAt": "2026-10-01T11:00:00.000Z",
+    "completedAt": "2026-10-01T11:04:00.000Z"
+  }
+]
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string | Transaction id (works with 7.4) |
+| `asset` | string | Coin or `ngn` |
+| `amount` | string | What the recipient got |
+| `totalDebited` | string | What left the balance |
+| `feeAmount` | string | DavoChain's fee |
+| `networkFee` | string | Blockchain / provider fee. On naira withdrawals this is the provider's own cost, **not** charged to the user, so don't show it as a user fee. |
+| `bankName`, `accountNumberLast4` | string \| null | Naira withdrawals only |
+| `status` | string | §0.8 |
+| `reason` | string \| null | Why it failed |
+| `createdAt`, `completedAt` | string / null | |
+
+**Integration notes**
+- The destination crypto address and the blockchain hash aren't stored per withdrawal yet (Appendix F).
+
+---
+
+> ### ⚠️ Naira (NGN) bank withdrawals: currently switched OFF
+> Endpoints 8.5–8.7 exist in the API's current working branch but **are not in the main branch yet**. They return `403 "Naira withdrawals are not available yet."` until the backend turns the feature on. **Build the screens, but enable the submit button only when 8.4 returns `payoutAvailable: true`.** 8.4 works today.
+
+### 8.4 Naira withdrawal fee quote
+
+**Endpoint:** `GET /v1/withdrawals/quote/ngn?amount={amount}` · **Auth:** **Bearer** · **KYC:** none · **Success:** `200`
+
+**What it does**
+Shows the fee for cashing out naira to a bank, the total that will leave the balance, the user's naira withdrawal limits for today, and **whether bank payouts are switched on** (`payoutAvailable`).
+
+**Request**
+
+| Param | In | Type | Required | Rules | Example |
+| --- | --- | --- | --- | --- | --- |
+| `amount` | query | string | ✅ | Positive decimal (naira) | `50000` |
+
+```http
+GET /v1/withdrawals/quote/ngn?amount=50000
+Authorization: Bearer eyJhbGciOi…
+```
+
+**Response** `200`
+```json
+{
+  "asset": "ngn",
+  "amount": "50000.00",
+  "feeNgn": "100.00",
+  "totalDebited": "50100.00",
+  "youReceive": "50000.00",
+  "band": { "minAmount": "10000.00", "maxAmount": "100000.00" },
+  "feeConfigured": true,
+  "limit": {
+    "allowed": true,
+    "reason": null,
+    "singleLimit": "200000.00",
+    "dailyLimit": "500000.00",
+    "usedToday": "0.00",
+    "remainingToday": "500000.00"
+  },
+  "payoutAvailable": false
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `amount` | string | Amount that reaches the bank |
+| `feeNgn` | string | DavoChain's fee |
+| `totalDebited` | string | `amount + feeNgn` (what leaves the balance) |
+| `youReceive` | string | Same as `amount` |
+| `band` | object \| null | The fee bracket this amount falls in (`maxAmount` `null` = no upper limit). `null` if no fee is set. |
+| `feeConfigured` | boolean | `false` = no fee set (fee is ₦0) |
+| `limit.allowed` | boolean | Whether this amount is within the user's limits |
+| `limit.reason` | string \| null | **Show it when `allowed` is false**, e.g. `"Your account cannot withdraw naira yet. Complete the next verification tier to unlock it."` |
+| `limit.singleLimit`, `limit.dailyLimit` | string | Per-transaction and per-day limits |
+| `limit.usedToday`, `limit.remainingToday` | string | Today's usage |
+| `payoutAvailable` | boolean | **Bank payouts switched on?** Disable the submit button when `false`. |
+
+**Errors**
+
+| Status | When | `message` |
+| --- | --- | --- |
+| 400 | Amount ≤ 0 | `"Enter an amount greater than zero"` |
+| 500 | `amount` missing or not a number | Generic. Validate first. |
+
+---
+
+### 8.5 List banks
+
+**Endpoint:** `GET /v1/withdrawals/ngn/banks` · **Auth:** **Bearer** · **KYC:** none · **Success:** `200`
+
+**What it does**
+Returns the Nigerian banks the user can withdraw naira to.
+
+**Request**
+```http
+GET /v1/withdrawals/ngn/banks
+Authorization: Bearer eyJhbGciOi…
+```
+
+**Response** `200`
+```json
+[
+  { "code": "044", "name": "Access Bank" },
+  { "code": "058", "name": "GTBank" }
+]
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `code` | string | Send as `bankCode` in 8.6 / 8.7 |
+| `name` | string | Display name |
+
+**Errors**
+
+| Status | When | `message` |
+| --- | --- | --- |
+| 403 | Feature off | `"Naira withdrawals are not available yet."` |
+
+**Integration notes**
+- Use a searchable picker; cache the list for the session.
+
+---
+
+### 8.6 Verify a bank account
+
+**Endpoint:** `POST /v1/withdrawals/ngn/verify-account` · **Auth:** **Bearer** · **KYC:** **TIER_1** · **Success:** `201`
+
+**What it does**
+Looks up the **account holder's name** for an account number and bank, so the user can confirm they're paying the right account. Doesn't move money.
+
+**Request**
+
+| Field | Type | Required | Rules | Example |
+| --- | --- | --- | --- | --- |
+| `accountNumber` | string | ✅ | Exactly 10 digits | `"0123456789"` |
+| `bankCode` | string | ✅ | `code` from 8.5, letters/numbers, 1–20 | `"044"` |
+
+```http
+POST /v1/withdrawals/ngn/verify-account
+Authorization: Bearer eyJhbGciOi…
+Content-Type: application/json
+
+{ "accountNumber": "0123456789", "bankCode": "044" }
+```
+
+**Response** `201`
+```json
+{ "accountName": "ADA OBI", "accountNumberLast4": "6789", "bankCode": "044" }
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `accountName` | string | Name on the account. Show it for confirmation. |
+| `accountNumberLast4` | string | Last 4 digits |
+| `bankCode` | string | Echo |
+
+**Errors**
+
+| Status | When | `message` |
+| --- | --- | --- |
+| 400 | Account can't be verified | `"Unable to verify those bank details. Check the account and bank."` |
+| 400 | Format wrong | `["Enter a valid 10-digit Nigerian bank account number"]` / `["Choose a valid bank from the list"]` |
+| 503 | Provider down | `"Bank account verification is temporarily unavailable."` |
+| 403 | Feature off / not verified | as above |
+
+**Integration notes**
+- Call it automatically once 10 digits are entered and a bank is picked. Show `accountName` and require the user to tick "This is my account".
+
+---
+
+### 8.7 Withdraw naira to a bank
+
+**Endpoint:** `POST /v1/withdrawals/ngn` · **Auth:** **Bearer** · **KYC:** **TIER_1** · **Success:** `201`
+
+**What it does**
+Sends naira from the user's balance to a Nigerian bank account. **This moves money.** The amount plus fee is held immediately, and the bank transfer completes in the background.
+
+**Request**
+
+| Header | Value |
+| --- | --- |
+| `Idempotency-Key` | **Required** |
+
+| Field | Type | Required | Rules | Example |
+| --- | --- | --- | --- | --- |
+| `amount` | string | ✅ | Positive decimal (naira that reaches the bank) | `"50000"` |
+| `accountNumber` | string | ✅ | Exactly 10 digits | `"0123456789"` |
+| `bankCode` | string | ✅ | From 8.5 | `"044"` |
+
+```http
+POST /v1/withdrawals/ngn
+Authorization: Bearer eyJhbGciOi…
+Idempotency-Key: 1f7e3a9c-4b2d-4c8e-a6f1-8d0b5c3e2a71
+Content-Type: application/json
+
+{ "amount": "50000", "accountNumber": "0123456789", "bankCode": "044" }
+```
+
+**Response** `201`
+```json
+{
+  "transactionId": "f5c3a1d9-…",
+  "status": "PROCESSING",
+  "asset": "ngn",
+  "amount": "50000.00",
+  "feeNgn": "100.00",
+  "totalDebited": "50100.00",
+  "bankName": "Access Bank",
+  "accountNumberLast4": "6789"
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `transactionId` | string | Poll with 7.4 |
+| `status` | string | `PROCESSING` or `RECONCILING`. Later `COMPLETED` / `FAILED`. |
+| `amount` | string | Reaches the bank |
+| `feeNgn` | string | **Missing when `RECONCILING`** |
+| `totalDebited` | string | **Missing when `RECONCILING`** |
+| `bankName`, `accountNumberLast4` | string | Destination |
+
+**Errors**
+
+| Status | When | `message` |
+| --- | --- | --- |
+| 403 | Feature off | `"Naira withdrawals are not available yet."` |
+| 403 | Withdrawals paused | `"Withdrawals are temporarily paused."` |
+| 400 | Over limit | The same text as 8.4 `limit.reason` |
+| 400 | Bank not supported | `"Choose a supported Nigerian bank"` |
+| 400 | Not enough balance (amount + fee) | `"Insufficient NGN balance: need 50100, have 20000"` |
+| 400 | Provider refused | `"<reason>. Nothing was deducted from your balance."` |
+| 500 | Account details invalid at submit (backend bug) | Generic. **Always run 8.6 first.** |
+
+**Integration notes**
+- Flow: 8.4 (fee & limits) → 8.5 (bank) → 8.6 (confirm name) → 8.7.
+- Pushes: `withdrawal.submitted`, then `withdrawal.sent` or `withdrawal.rejected`.
+
+---
+
+## 9. Gift cards
+
+Users sell gift cards (Amazon, Steam…) for naira. **A person reviews each card**, so no money is paid at submission. The rate shown at submission is locked in.
+
+### 9.1 Gift-card catalogue
+
+**Endpoint:** `GET /v1/giftcards/catalogue` · **Auth:** none · **KYC:** none · **Success:** `200`
+
+**What it does**
+Returns every card the app can buy from users: **categories → brands → card types**, with each type's currency, accepted value range, and naira rate. Only active items are included.
+
+**Request**
+```http
+GET /v1/giftcards/catalogue
+```
+
+**Response** `200`
+```json
+[
+  {
+    "id": "2a6c9e1f-…",
+    "name": "Shopping",
+    "brands": [
+      {
+        "id": "8b3d7f2a-…",
+        "name": "Amazon",
+        "imageUrl": "https://api.example.com/v1/giftcards/brands/8b3d7f2a-…/image?v=1727860000000",
+        "types": [
+          {
+            "id": "c4e8a1b9-…",
+            "name": "E-code",
+            "currency": "USD",
+            "currencySymbol": "$",
+            "currencySymbolFirst": true,
+            "minAmount": "25.00",
+            "maxAmount": "500.00",
+            "rateNgn": "1250.00"
+          }
+        ]
+      }
+    ]
+  }
+]
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id`, `name` | string | Category |
+| `brands[].id`, `.name` | string | Brand |
+| `brands[].imageUrl` | string \| null | Absolute logo URL (public, cache forever). `null` = show the brand name instead. |
+| `types[].id` | string | Send as `typeId` in 9.3 |
+| `types[].name` | string | e.g. "E-code", "Physical" |
+| `types[].currency` | string | Card currency (USD, GBP, EUR…) |
+| `types[].currencySymbol` | string | e.g. `$` |
+| `types[].currencySymbolFirst` | boolean | `true` → "$100"; `false` → "100 kr" |
+| `types[].minAmount`, `maxAmount` | string | Allowed card value range (in the card currency) |
+| `types[].rateNgn` | string | **Naira paid per 1 unit** of the card currency |
+
+**Integration notes**
+- Expected payout = `faceValue × rateNgn`. Show it live as the user types.
+- An empty array means no cards are set up yet.
+
+---
+
+### 9.2 Brand logo
+
+**Endpoint:** `GET /v1/giftcards/brands/{id}/image` · **Auth:** none · **KYC:** none · **Success:** `200`
+
+**What it does**
+Returns the brand's logo image (JPEG/PNG/WebP bytes). Usually you just load `imageUrl` from 9.1, which points here.
+
+**Errors**: `404 "No image"` when no logo is uploaded.
+
+---
+
+### 9.3 Sell a gift card
+
+**Endpoint:** `POST /v1/giftcards/trades` · **Auth:** **Bearer** · **KYC:** none · **Success:** `201`
+
+**What it does**
+Submits a card for review, with photos and/or the card code. The rate is locked at this moment. No money moves until an admin approves it (fully or partly) or rejects it. The card code is encrypted and **never shown again**, not even to the user.
+
+**Request**
+
+| Field | Type | Required | Rules | Example |
+| --- | --- | --- | --- | --- |
+| `typeId` | string (UUID) | ✅ | `types[].id` from 9.1 | `"c4e8a1b9-…"` |
+| `faceValue` | string | ✅ | Positive decimal within the type's `minAmount`–`maxAmount` | `"100"` |
+| `code` | string | one of `code`/`images` | Card code, max 200 | `"AMZN-XXXX-YYYY"` |
+| `images` | string[] | one of `code`/`images` | Up to **5** data URLs `data:image/jpeg;base64,…`. JPEG, PNG or WebP. | see below |
+
+> **Photo size: the real limit is 1 MB for the WHOLE request.** Base64 makes files ~33% bigger. Before sending, resize each photo on the phone to a longest edge of **~1280 px**, JPEG quality **~70**, so each is ~150–250 KB. **Keep the whole body under ~950 KB** (usually 2–3 photos). Too big returns `413`. Code is in Appendix D.
+
+```http
+POST /v1/giftcards/trades
+Authorization: Bearer eyJhbGciOi…
+Content-Type: application/json
+
+{
+  "typeId": "c4e8a1b9-…",
+  "faceValue": "100",
+  "images": ["data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ…"]
+}
+```
+
+**Response** `201`: the new card trade (same object as one item of 9.4):
+```json
+{
+  "id": "6d1f0a9c-2b7e-4f3d-a8c5-9e0b1d2c3f47",
+  "brand": "Amazon",
+  "type": "E-code",
+  "currency": "USD",
+  "currencySymbol": "$",
+  "currencySymbolFirst": true,
+  "faceValue": "100.00",
+  "rateNgn": "1250.00",
+  "expectedNgn": "125000.00",
+  "status": "PENDING",
+  "creditedNgn": null,
+  "approvedValue": null,
+  "reason": null,
+  "images": ["/v1/giftcards/trades/6d1f0a9c-…/images/0e9a…"],
+  "createdAt": "2026-10-02T09:00:00.000Z",
+  "reviewedAt": null
+}
+```
+(Fields explained in 9.4.)
+
+**Errors**
+
+| Status | When | `message` |
+| --- | --- | --- |
+| 400 | Card type inactive / unknown | `"That card is not available to trade right now"` |
+| 400 | Bad value | `"Enter the value of the card"` |
+| 400 | Outside the range | `"Amazon E-code takes between 25.00 and 500.00 USD"` |
+| 400 | No code and no photo | `"Add a photo of the card, or type its code"` |
+| 400 | Codes not accepted right now | `"Card codes cannot be accepted right now. Send a photo instead, or try again shortly."` |
+| 400 | Photo problems | `"That image is empty"` / `"Each image must be 5 MB or smaller"` / `"Images must be JPEG, PNG or WebP"` |
+| 400 | More than 5 photos / bad `typeId` | validation array |
+| 413 | Body over 1 MB | `"request entity too large"`: shrink the photos |
+
+**Integration notes**
+- Show upload progress; this is a large request.
+- Pushes: `deposit.detected` ("Card submitted"), then `deposit.credited` (paid) or `deposit.failed` (rejected). See Appendix A.
+
+---
+
+### 9.4 My gift-card trades
+
+**Endpoint:** `GET /v1/giftcards/trades` · **Auth:** **Bearer** · **KYC:** none · **Success:** `200`
+
+**What it does**
+Lists the user's last 100 card submissions, newest first, with their review result.
+
+**Request**
+```http
+GET /v1/giftcards/trades
+Authorization: Bearer eyJhbGciOi…
+```
+
+**Response** `200`
+```json
+[
+  {
+    "id": "6d1f0a9c-2b7e-4f3d-a8c5-9e0b1d2c3f47",
+    "brand": "Amazon",
+    "type": "E-code",
+    "currency": "USD",
+    "currencySymbol": "$",
+    "currencySymbolFirst": true,
+    "faceValue": "100.00",
+    "rateNgn": "1250.00",
+    "expectedNgn": "125000.00",
+    "status": "PARTIALLY_APPROVED",
+    "creditedNgn": "75000.00",
+    "approvedValue": "60.00",
+    "reason": "The card had $60 remaining.",
+    "images": ["/v1/giftcards/trades/6d1f0a9c-…/images/0e9a…"],
+    "createdAt": "2026-10-02T09:00:00.000Z",
+    "reviewedAt": "2026-10-02T09:20:00.000Z"
+  }
+]
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string | Card trade id |
+| `brand`, `type` | string | Names |
+| `currency`, `currencySymbol`, `currencySymbolFirst` | string / boolean | For formatting `faceValue` |
+| `faceValue` | string | Value the user entered |
+| `rateNgn` | string | Rate locked at submission |
+| `expectedNgn` | string | `faceValue × rateNgn`: what the user was shown |
+| `status` | string | `PENDING` / `APPROVED` / `PARTIALLY_APPROVED` / `REJECTED` |
+| `creditedNgn` | string \| null | Naira actually paid. `null` until paid, and stays `null` on rejection. |
+| `approvedValue` | string \| null | The card value accepted (less than `faceValue` on a partial approval) |
+| `reason` | string \| null | Reviewer's explanation. **Show it verbatim.** |
+| `images` | string[] | **Relative, private** photo paths: host + path, **with** the `Authorization` header (9.6) |
+| `createdAt`, `reviewedAt` | string / null | |
+
+---
+
+### 9.5 One gift-card trade
+
+**Endpoint:** `GET /v1/giftcards/trades/{id}` · **Auth:** **Bearer** · **KYC:** none · **Success:** `200`
+
+**What it does**
+Returns one of the user's card trades (same object as 9.4).
+
+**Request**
+```http
+GET /v1/giftcards/trades/6d1f0a9c-2b7e-4f3d-a8c5-9e0b1d2c3f47
+Authorization: Bearer eyJhbGciOi…
+```
+
+**Response** `200`: one object, as in 9.4.
+
+**Errors**: `404 "No such card"`.
+
+---
+
+### 9.6 Gift-card photo
+
+**Endpoint:** `GET /v1/giftcards/trades/{id}/images/{imageId}` · **Auth:** **Bearer** · **KYC:** none · **Success:** `200`
+
+**What it does**
+Returns one of the photos the user uploaded (image bytes). Only the owner can fetch it.
+
+**Request**
+```http
+GET /v1/giftcards/trades/6d1f0a9c-…/images/0e9a…
+Authorization: Bearer eyJhbGciOi…
+```
+
+**Response** `200`: image bytes (`image/jpeg`, `image/png` or `image/webp`).
+
+**Errors**: `404 "No image"`.
+
+**Integration notes**
+- `Image.network(host + path, headers: {'Authorization': 'Bearer $token'})`.
+
+---
+
+## 10. Referrals
+
+### 10.1 Check a referral code
+
+**Endpoint:** `GET /v1/referrals/code/{code}` · **Auth:** none · **KYC:** none · **Success:** `200`
+
+**What it does**
+Checks a referral code on the sign-up screen. Returns whose code it is (first name only) and the bonus the new user would get.
+
+**Request**
+
+| Param | In | Type | Required | Notes |
+| --- | --- | --- | --- | --- |
+| `code` | path | string | ✅ | Case-insensitive |
+
+```http
+GET /v1/referrals/code/ADA4K9
+```
+
+**Response** `200`
+```json
+{ "valid": true, "referrerFirstName": "Ada", "bonusNgn": "1000.00" }
+```
+Unknown code (real response):
+```json
+{ "valid": false, "referrerFirstName": null, "bonusNgn": "0.00" }
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `valid` | boolean | Code exists **and** the referral programme is on |
+| `referrerFirstName` | string \| null | For "Invited by Ada" |
+| `bonusNgn` | string | Naira bonus for the new user |
+
+**Integration notes**
+- Referral links look like `https://<website>/r/<CODE>`. On a deep link, take `<CODE>`, check it here, and send it as `referralCode` in 2.1.
+
+---
+
+### 10.2 Referral dashboard
+
+**Endpoint:** `GET /v1/referrals/me` · **Auth:** **Bearer** · **KYC:** none · **Success:** `200`
+
+**What it does**
+Everything for the "Invite friends" screen: the user's code and share link, the current offer, what they've earned, what's still pending, and each person they invited. **Opening it also pays out any rewards that have just become due.**
+
+**Request**
+```http
+GET /v1/referrals/me
+Authorization: Bearer eyJhbGciOi…
+```
+
+**Response** `200`
+```json
+{
+  "code": "ADA4K9",
+  "link": "https://davochain.com/r/ADA4K9",
+  "username": null,
+  "canSetUsername": true,
+  "offer": {
+    "isEnabled": true,
+    "headline": "Invite friends, earn naira",
+    "terms": null,
+    "theyGetNgn": "1000.00",
+    "youGetNgn": "2000.00",
+    "unlockTier": "TIER_1",
+    "tradeVolumeNgn": "50000.00"
+  },
+  "totals": { "earnedNgn": "4000.00", "pendingNgn": "2000.00", "referrals": 3, "completed": 2 },
+  "signupBonus": {
+    "amountNgn": "1000.00",
+    "blockedReason": "Complete TIER 1 verification and trade ₦50000.00 to unlock — ₦0.00 so far"
+  },
+  "referrals": [
+    { "name": "Chidi Eze", "joinedAt": "2026-09-30T12:00:00.000Z", "status": "pending", "amountNgn": "2000.00", "note": "Waiting for them to reach TIER 1" }
+  ]
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `code` | string | The user's referral code (their username if they set one) |
+| `link` | string | Ready-to-share link |
+| `username` | string \| null | Chosen username, if any |
+| `canSetUsername` | boolean | `true` = show "Choose a custom code" (allowed once) |
+| `offer.isEnabled` | boolean | Programme on/off |
+| `offer.headline`, `offer.terms` | string / null | Text to show |
+| `offer.theyGetNgn` | string | What an invited friend gets |
+| `offer.youGetNgn` | string | What this user gets per friend |
+| `offer.unlockTier` | string | Tier the friend must reach |
+| `offer.tradeVolumeNgn` | string | Naira the **friend** must trade to unlock *their own* bonus (`"0.00"` = none) |
+| `totals.earnedNgn` | string | Already paid into the naira balance |
+| `totals.pendingNgn` | string | **Promised, not paid yet.** Never add it to the balance. |
+| `totals.referrals`, `totals.completed` | number | Counts |
+| `signupBonus` | object \| null | This user's own signup bonus, if they joined with a code: `amountNgn` + `blockedReason` (what's left to do) |
+| `referrals[].name` | string | Invited person |
+| `referrals[].joinedAt` | string | |
+| `referrals[].status` | string | `"pending"` or `"completed"` (lowercase) |
+| `referrals[].amountNgn` | string | Reward for this person |
+| `referrals[].note` | string \| null | What it's waiting for (`null` once paid) |
+
+**Integration notes**
+- Paid rewards show up in 6.3 deposit history as naira deposits.
+- Label `pendingNgn` and `signupBonus` clearly as "pending".
+
+---
+
+### 10.3 Set a custom referral username
+
+**Endpoint:** `PUT /v1/referrals/username` · **Auth:** **Bearer** · **KYC:** none · **Success:** `200`
+
+**What it does**
+Replaces the user's generated code with one they choose. **It can be done only once and never changed**, because shared links must keep pointing to the same person.
+
+**Request**
+
+| Field | Type | Required | Rules | Example |
+| --- | --- | --- | --- | --- |
+| `username` | string | ✅ | 3–7 characters, letters and numbers only, at least one letter. Saved in **UPPERCASE**. Some words are reserved (ADMIN, API, APP…). | `"ada"` |
+
+```http
+PUT /v1/referrals/username
+Authorization: Bearer eyJhbGciOi…
+Content-Type: application/json
+
+{ "username": "ada" }
+```
+
+**Response** `200`
+```json
+{ "code": "ADA" }
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `code` | string | The new referral code (uppercase) |
+
+**Errors**
+
+| Status | When | `message` |
+| --- | --- | --- |
+| 400 | Too short | `"A username needs at least 3 characters."` |
+| 400 | Too long | `"A username can be at most 7 characters."` |
+| 400 | Bad characters | `"Letters and numbers only — no spaces, accents or punctuation."` |
+| 400 | No letter | `"A username needs at least one letter."` |
+| 400 | Reserved | `"That one is reserved. Try another."` |
+| 409 | Taken | `"That username is taken. Try another."` |
+| 409 | Already set | `"Your username is already ADA and cannot be changed — links you have shared point at it."` |
+
+**Integration notes**
+- Validate the rules as the user types, and **ask for confirmation** ("This can't be changed later").
+
+---
+
+## 11. Notifications
+
+### 11.1 Notification feed
+
+**Endpoint:** `GET /v1/notifications?limit={n}` · **Auth:** **Bearer** · **KYC:** none · **Success:** `200`
+
+**What it does**
+Returns the in-app notification list (newest first) and the number of unread items. Every push notification is also stored here.
+
+**Request**
+
+| Param | In | Type | Required | Rules |
+| --- | --- | --- | --- | --- |
+| `limit` | query | integer | ❌ | Default 50, max 100 |
+
+```http
+GET /v1/notifications?limit=50
+Authorization: Bearer eyJhbGciOi…
+```
+
+**Response** `200`
+```json
+{
+  "unread": 2,
+  "items": [
+    {
+      "id": "0f3e7a2d-…",
+      "type": "trade.completed",
+      "title": "Bought 0.00067342 BTC",
+      "body": "Rate: ₦1485.00 per $1",
+      "transactionId": "a71c9e3b-5d2f-4a1e-8c6b-2f9d0e7a3b14",
+      "readAt": null,
+      "createdAt": "2026-10-02T10:00:06.000Z"
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `unread` | number | Badge count |
+| `items[].id` | string | Notification id (for 11.2) |
+| `items[].type` | string | What happened (Appendix A) |
+| `items[].title`, `.body` | string | Text to show |
+| `items[].transactionId` | string \| null | Open that transaction (7.4) |
+| `items[].readAt` | string \| null | `null` = unread |
+| `items[].createdAt` | string | |
+
+---
+
+### 11.2 Mark notifications as read
+
+**Endpoint:** `POST /v1/notifications/read` · **Auth:** **Bearer** · **KYC:** none · **Success:** `201`
+
+**What it does**
+Marks some notifications, or all of them, as read.
+
+**Request**
+
+| Field | Type | Required | Rules |
+| --- | --- | --- | --- |
+| `ids` | string[] | ❌ | Notification ids. **Leave the field out to mark ALL as read.** |
+
+```http
+POST /v1/notifications/read
+Authorization: Bearer eyJhbGciOi…
+Content-Type: application/json
+
+{ "ids": ["0f3e7a2d-…"] }
+```
+Mark all: send `{}`.
+
+**Response** `201`
+```json
+{ "updated": 1 }
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `updated` | number | How many were changed |
+
+---
+
+## 12. Devices (push tokens)
+
+### 12.1 Register this device for push
+
+**Endpoint:** `POST /v1/devices` · **Auth:** **Bearer** · **KYC:** none · **Success:** `201`
+
+**What it does**
+Saves this phone's Firebase (FCM) token so the user receives push notifications here. It's safe to call repeatedly. If the same token was registered by another user on this phone, it moves to the current user.
+
+**Request**
+
+| Field | Type | Required | Rules | Example |
+| --- | --- | --- | --- | --- |
+| `token` | string | ✅ | FCM registration token, max 500 | `"fXk2…:APA91b…"` |
+| `platform` | string | ✅ | `"ANDROID"` or `"IOS"` | `"ANDROID"` |
+| `appVersion` | string | ❌ | Max 40 | `"1.0.3+12"` |
+
+```http
+POST /v1/devices
+Authorization: Bearer eyJhbGciOi…
+Content-Type: application/json
+
+{ "token": "fXk2…:APA91b…", "platform": "ANDROID", "appVersion": "1.0.3+12" }
+```
+
+**Response** `201`
+```json
+{ "id": "d7a1c3e5-…", "platform": "ANDROID", "createdAt": "2026-10-02T09:00:00.000Z" }
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string | Device record id |
+| `platform` | string | |
+| `createdAt` | string | |
+
+**Errors**
+
+| Status | When | `message` |
+| --- | --- | --- |
+| 400 | Bad platform | `["platform must be one of the following values: ANDROID, IOS, WEB"]` |
+
+**Integration notes**
+- Call it after **login / register**, and in `FirebaseMessaging.instance.onTokenRefresh`.
+
+---
+
+### 12.2 Unregister this device
+
+**Endpoint:** `DELETE /v1/devices` · **Auth:** **Bearer** · **KYC:** none · **Success:** `200`
+
+**What it does**
+Stops push notifications to this phone for this user. **Call it before logging out**, so the next person using the phone doesn't get this user's alerts.
+
+**Request** (this DELETE **has a JSON body**; Dio supports `data:` on delete)
+
+| Field | Type | Required | Rules |
+| --- | --- | --- | --- |
+| `token` | string | ✅ | Same FCM token as 12.1, max 500 |
+
+```http
+DELETE /v1/devices
+Authorization: Bearer eyJhbGciOi…
+Content-Type: application/json
+
+{ "token": "fXk2…:APA91b…" }
+```
+
+**Response** `200`
+```json
+{ "unregistered": true }
+```
+
+---
+
+### 12.3 List my devices
+
+**Endpoint:** `GET /v1/devices` · **Auth:** **Bearer** · **KYC:** none · **Success:** `200`
+
+**What it does**
+Lists the devices registered for push for this user (for a "my devices" settings screen).
+
+**Request**
+```http
+GET /v1/devices
+Authorization: Bearer eyJhbGciOi…
+```
+
+**Response** `200`
+```json
+[
+  { "id": "d7a1c3e5-…", "platform": "ANDROID", "appVersion": "1.0.3+12", "lastSeenAt": "2026-10-02T09:00:00.000Z", "disabledAt": null }
+]
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `id` | string | |
+| `platform` | string | `ANDROID` / `IOS` / `WEB` |
+| `appVersion` | string \| null | |
+| `lastSeenAt` | string | Last registration |
+| `disabledAt` | string \| null | Set when Firebase reported the token dead |
+
+---
+
+## 13. Site settings & content
+
+### 13.1 Site settings
+
+**Endpoint:** `GET /v1/site` · **Auth:** none · **KYC:** none · **Success:** `200`
+
+**What it does**
+Returns app-wide settings set by admins: **maintenance mode**, the **latest app versions** (for update prompts), support contacts, social links and the logo. Call it on app start.
+
+**Request**
+```http
+GET /v1/site
+```
+
+**Response** `200` (real response from a fresh install)
+```json
+{
+  "companyName": "Davochain",
+  "supportEmail": "support@davochain.com",
+  "phone": null,
+  "address": null,
+  "apps": { "iosVersion": null, "androidVersion": null, "iosStoreUrl": null, "androidStoreUrl": null },
+  "maintenance": { "active": false, "message": null },
+  "socials": [],
+  "logoUrl": null
+}
+```
+With values filled in:
+```json
+{
+  "companyName": "Davochain",
+  "supportEmail": "support@davochain.com",
+  "phone": "+234 916 001 2046",
+  "address": "Lagos, Nigeria",
+  "apps": { "iosVersion": "1.2.0", "androidVersion": "1.2.0", "iosStoreUrl": "https://apps.apple.com/…", "androidStoreUrl": "https://play.google.com/…" },
+  "maintenance": { "active": true, "message": "We're upgrading. Back by 2pm." },
+  "socials": [
+    { "label": "X", "url": "https://x.com/davochain", "iconUrl": "https://api.example.com/v1/site/social/3a…/icon?v=1727860000000", "glyph": "&#120143;" }
+  ],
+  "logoUrl": "/v1/site/logo?v=1727860000000"
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `companyName`, `supportEmail` | string | For the support/contact screen |
+| `phone`, `address` | string \| null | |
+| `apps.iosVersion`, `apps.androidVersion` | string \| null | **Latest published version.** If the installed version is lower, show an update prompt. |
+| `apps.iosStoreUrl`, `apps.androidStoreUrl` | string \| null | Store links for the update button |
+| `maintenance.active` | boolean | **`true` = show a full-screen "under maintenance" page**, with `message` |
+| `maintenance.message` | string \| null | |
+| `socials[].label`, `.url` | string | Social network name and link |
+| `socials[].iconUrl` | string \| null | Absolute icon URL. If `null`, show `label`. |
+| `socials[].glyph` | string | Fallback short text. **May be an HTML entity** (e.g. `&#120143;`); decode it or ignore it. |
+| `logoUrl` | string \| null | **Relative** path, so prefix the host |
+
+**Integration notes**
+- **The API doesn't block requests during maintenance**; the app must check `maintenance.active` and stop itself.
+
+---
+
+### 13.2 Logo
+
+**Endpoint:** `GET /v1/site/logo?v={version}` · **Auth:** none · **Success:** `200`
+
+**What it does**
+Returns the company logo image. Use `logoUrl` from 13.1; the `v` value changes when the logo changes, so you can cache forever.
+**Errors**: `404 "No logo set"`.
+
+### 13.3 Social icon
+
+**Endpoint:** `GET /v1/site/social/{id}/icon?v={version}` · **Auth:** none · **Success:** `200`
+
+**What it does**
+Returns one social network's icon. Use `socials[].iconUrl` from 13.1.
+**Errors**: `404 "No icon set"`.
+
+---
+
+### 13.4 List content pages
+
+**Endpoint:** `GET /v1/content/pages` · **Auth:** none · **KYC:** none · **Success:** `200`
+
+**What it does**
+Lists the published information pages (About us, Terms, Privacy, plus any an admin adds), for a "Legal" or "About" menu.
+
+**Request**
+```http
+GET /v1/content/pages
+```
+
+**Response** `200` (real response)
+```json
+[
+  { "slug": "about-us",             "title": "About us",             "excerpt": "Who we are and what we do.",               "updatedAt": "2026-09-30T08:35:12.450Z" },
+  { "slug": "terms-and-conditions", "title": "Terms and conditions", "excerpt": "The agreement between you and us.",        "updatedAt": "2026-09-30T08:35:12.474Z" },
+  { "slug": "privacy-policy",       "title": "Privacy policy",       "excerpt": "What we collect, and what we do with it.", "updatedAt": "2026-09-30T08:35:12.512Z" }
+]
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `slug` | string | Use it in 13.5 |
+| `title` | string | Menu label |
+| `excerpt` | string | One-line summary |
+| `updatedAt` | string | "Last updated" |
+
+**Integration notes**
+- `about-us`, `terms-and-conditions` and `privacy-policy` always exist. Link Sign-up's "I agree to the Terms" to `terms-and-conditions`.
+
+---
+
+### 13.5 Get one content page
+
+**Endpoint:** `GET /v1/content/pages/{slug}` · **Auth:** none · **KYC:** none · **Success:** `200`
+
+**What it does**
+Returns the full content of one page as **HTML** (for rich display) and **plain text** (fallback).
+
+**Request**
+```http
+GET /v1/content/pages/terms-and-conditions
+```
+
+**Response** `200`
+```json
+{
+  "slug": "terms-and-conditions",
+  "title": "Terms and conditions",
+  "excerpt": "The agreement between you and us.",
+  "html": "<h2>1. Introduction</h2><p>These terms…</p>",
+  "text": "1. Introduction\nThese terms…",
+  "updatedAt": "2026-09-30T08:35:12.474Z"
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `slug`, `title`, `excerpt` | string | |
+| `html` | string | Page body as HTML (already cleaned by the server). Render with e.g. `flutter_widget_from_html`. |
+| `text` | string | Same content as plain text |
+| `updatedAt` | string | |
+
+**Errors**: `404 "Page not found"` (unknown or unpublished).
+
+---
+
+### 13.6 FAQs
+
+**Endpoint:** `GET /v1/content/faqs` · **Auth:** none · **KYC:** none · **Success:** `200`
+
+**What it does**
+Returns published FAQs grouped by category, for a help screen.
+
+**Request**
+```http
+GET /v1/content/faqs
+```
+
+**Response** `200`
+```json
+{
+  "total": 1,
+  "groups": [
+    {
+      "category": "Deposits",
+      "items": [
+        { "id": "f1a2…", "question": "How long do deposits take?", "answerHtml": "<p>Usually a few minutes…</p>", "answerText": "Usually a few minutes…" }
+      ]
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `total` | number | Number of FAQs |
+| `groups[].category` | string | Section heading (`"General"` if none set) |
+| `groups[].items[].id` | string | |
+| `.question` | string | |
+| `.answerHtml` | string | Answer as HTML |
+| `.answerText` | string | Answer as plain text |
+
+---
+
+# Part 2: Appendices
+
+## Appendix A: Push notifications
+
+Push uses **Firebase Cloud Messaging** and is **off until the backend adds Firebase credentials** (Appendix E). Every push is also saved in the feed (11.1), so the feed is the source of truth.
+
+**What a push looks like**
+```jsonc
+{
+  "notification": { "title": "Bought 0.00067342 BTC", "body": "Rate: ₦1485.00 per $1" },
+  "data": {
+    "type": "trade.completed",   // always present
+    "notificationId": "0f3e…",   // always present: the feed item id
+    "transactionId": "a71c…",    // present when it's about a transaction
+    "broadcastId": "b1…"         // only on admin announcements
+  },
+  "android": { "priority": "high", "notification": { "channelId": "davochain" } },
+  "apns": { "payload": { "aps": { "sound": "default" } } }
+}
+```
+
+**Setup**
+- **Android:** create a notification channel with id **`davochain`** when the app starts.
+- **iOS:** the backend must upload the APNs key to Firebase, or iOS gets nothing.
+
+**Types and where to send the user on tap**
+
+| `data.type` | Sent when | `transactionId`? | On tap open |
+| --- | --- | --- | --- |
+| `address.ready` | Deposit address finished generating | no | Deposit screen |
+| `deposit.detected` | Crypto deposit seen, waiting for confirmations. **Also: gift card submitted.** | crypto: yes / gift card: no | Activity / gift-card history |
+| `deposit.credited` | Deposit credited, held deposit released, referral reward paid. **Also: gift card paid** (`transactionId` type `GIFT_CARD`). | yes | Transaction (7.4); for `GIFT_CARD`, gift-card history |
+| `deposit.on_hold` | Naira deposit held for review | yes | Activity |
+| `deposit.failed` | Deposit rejected. **Also: gift card rejected.** | crypto: yes / gift card: no | Activity / gift-card history |
+| `trade.completed` | Buy, sell or swap finished | yes | Trade detail |
+| `trade.failed` | Trade failed, nothing deducted | yes | Trade detail |
+| `withdrawal.submitted` | Withdrawal accepted | yes | Withdrawal detail |
+| `withdrawal.sent` | Withdrawal completed | yes | Withdrawal detail |
+| `withdrawal.rejected` | Withdrawal returned to the balance | yes | Withdrawal detail |
+| `admin.broadcast.<id>` | Announcement | no (`broadcastId`) | Notification feed |
+
+**Rules**
+- Match `admin.broadcast.` as a **prefix**.
+- A `deposit.*` push **without** `transactionId` is a gift-card event.
+- Unknown types: just open the notification feed (new types will be added).
+
+---
+
+## Appendix B: Enum values
+
+| Name | Values |
+| --- | --- |
+| KYC tier | `TIER_0` (signed up) · `TIER_1` (BVN/NIN) · `TIER_2` (ID + selfie, not available yet) · `TIER_3` (proof of address, not available yet) |
+| KYC status | `NOT_STARTED` · `PENDING` · `APPROVED` · `REJECTED` · `EXPIRED` (not used yet) |
+| User status | `ACTIVE` · `SUSPENDED` · `CLOSED` |
+| Transaction status | `PENDING` · `PROCESSING` · `ON_HOLD` · `COMPLETED` · `FAILED` · `RECONCILING` |
+| Trade type (7.3) | `BUY` · `SELL` · `SWAP` |
+| Transaction type (7.4) | `BUY` · `SELL` · `SWAP` · `DEPOSIT` · `WITHDRAWAL` · `GIFT_CARD` |
+| Quote side | Request: `buy` `sell` `swap` · Response: `BUY` `SELL` `SWAP` |
+| Deposit address status | `PENDING` · `ACTIVE` · `FAILED` · `DISABLED` |
+| Gift-card trade status | `PENDING` · `APPROVED` · `PARTIALLY_APPROVED` · `REJECTED` |
+| Device platform | `ANDROID` · `IOS` · `WEB` |
+| Referral row status | `pending` · `completed` (lowercase) |
+| KYC document type | `BVN` · `NIN` · `PASSPORT` · `DRIVERS_LICENSE` · `VOTERS_CARD` · `SELFIE` · `PROOF_OF_ADDRESS` |
+
+Parse enums safely: map unknown values to an "unknown" case instead of crashing.
+
+---
+
+## Appendix C: Screen flows
+
+| Screen | Calls, in order |
+| --- | --- |
+| **App start** | 13.1 (maintenance? update?) → tokens saved? → 3.1 → 3.2, 11.1 (badge) |
+| **Sign up** | (10.1 if code) → 2.1 → 12.1 → KYC |
+| **Sign in** | 2.2 → 12.1 → 3.1 |
+| **Verify (KYC)** | 4.1 → 4.2 → (wait) 4.1 shows `APPROVED` → "sign in again" → 2.2 |
+| **Home / wallet** | 3.2, 5.1 |
+| **Deposit crypto** | 5.2 (`deposit`) → 6.1 → poll 6.1 until `usable` → show address/QR/tag |
+| **Buy / sell** | 7.1 (debounced, 12 s countdown) → 7.2 (new Idempotency-Key) → 3.2 |
+| **Swap** | 7.1 (`swap`) → 7.2 → poll 7.4 while `PROCESSING` |
+| **Withdraw crypto** | 5.2 (`withdraw`) → 8.1 → 8.2 → poll 7.4 / push |
+| **Withdraw naira** | 8.4 (`payoutAvailable`?) → 8.5 → 8.6 → 8.7 |
+| **Activity** | 7.3, 6.3, 8.3 (merge and sort by `createdAt` in the app) |
+| **Sell gift card** | 9.1 → (resize photos) → 9.3 → 9.4 |
+| **Referrals** | 10.2 → (10.3 once) |
+| **Notifications** | 11.1 → 11.2 |
+| **Legal / help** | 13.4 → 13.5, 13.6 |
+| **Settings** | 2.5 change password, 12.3 devices, 13.1 support details |
+| **Sign out** | 12.2 → 2.4 → clear secure storage |
+
+---
+
+## Appendix D: Dart starter code
+
+Packages: `dio`, `flutter_secure_storage`, `decimal`, `uuid`, `firebase_messaging`, `flutter_image_compress`, `flutter_widget_from_html`.
+
+### D.1 Money
+
+```dart
+import 'package:decimal/decimal.dart';
+
+// Reading: never double.parse
+final available = Decimal.parse(json['available'] as String);
+
+// Sending: Decimal.toString() gives a plain number string ("0.00067342")
+final body = {'side': 'buy', 'fromAsset': 'ngn', 'toAsset': 'btc', 'amount': amount.toString()};
+
+// Showing: cut DOWN to the coin's displayScale (5.1); naira = 2
+String show(Decimal v, int scale) => v.floor(scale: scale).toStringAsFixed(scale);
+```
+
+### D.2 API client with safe token refresh
+
+```dart
+import 'package:dio/dio.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+
+class TokenStore {
+  final _s = const FlutterSecureStorage();
+  Future<String?> access() => _s.read(key: 'at');
+  Future<String?> refresh() => _s.read(key: 'rt');
+  Future<void> save(String at, String rt) async {
+    await _s.write(key: 'at', value: at);
+    await _s.write(key: 'rt', value: rt);
+  }
+  Future<void> clear() => _s.deleteAll();
+}
+
+class Api {
+  Api(this.host, this.tokens) {
+    dio = Dio(BaseOptions(baseUrl: host, contentType: 'application/json'));
+    dio.interceptors.add(InterceptorsWrapper(
+      onRequest: (o, h) async {
+        final t = await tokens.access();
+        if (t != null) o.headers['Authorization'] = 'Bearer $t';
+        h.next(o);
+      },
+      onError: (e, h) async {
+        final is401 = e.response?.statusCode == 401;
+        final retried = e.requestOptions.extra['retried'] == true;
+        if (!is401 || retried || _noRefresh.contains(e.requestOptions.path)) return h.next(e);
+        try {
+          final fresh = await _refreshOnce();               // all 401s share ONE refresh
+          final o = e.requestOptions
+            ..headers['Authorization'] = 'Bearer $fresh'
+            ..extra['retried'] = true;
+          h.resolve(await dio.fetch(o));
+        } catch (_) {
+          await tokens.clear();
+          onSignedOut();                                    // navigate to sign-in
+          h.next(e);
+        }
+      },
+    ));
+  }
+
+  final String host;                 // e.g. http://10.0.2.2:3000 (no /v1)
+  final TokenStore tokens;
+  late final Dio dio;
+  void Function() onSignedOut = () {};
+  Future<String>? _refreshing;
+
+  Future<String> _refreshOnce() =>
+      _refreshing ??= _doRefresh().whenComplete(() => _refreshing = null);
+
+  Future<String> _doRefresh() async {
+    final rt = await tokens.refresh();
+    if (rt == null) throw StateError('no refresh token');
+    final r = await Dio(BaseOptions(baseUrl: host))          // bare Dio: skips the interceptor
+        .post('/v1/auth/refresh', data: {'refreshToken': rt});
+    await tokens.save(r.data['accessToken'], r.data['refreshToken']);   // save BOTH
+    return r.data['accessToken'] as String;
+  }
+
+  // A 401 here means wrong credentials, not an expired token.
+  static const _noRefresh = {
+    '/v1/auth/login', '/v1/auth/refresh', '/v1/auth/register',
+    '/v1/auth/change-password', '/v1/auth/reset/request', '/v1/auth/reset/confirm',
+  };
+}
+```
+
+### D.3 Reading errors
+
+```dart
+class ApiError implements Exception {
+  ApiError(this.status, this.message, {this.code, this.requiredTier});
+  final int status;
+  final String message;
+  final String? code;          // ACCOUNT_SUSPENDED / ACCOUNT_CLOSED
+  final String? requiredTier;  // set on KYC 403
+
+  factory ApiError.from(DioException e) {
+    final s = e.response?.statusCode ?? 0;
+    final d = e.response?.data;
+    if (d is Map) {
+      final m = d['message'];
+      final text = m is List ? m.join('\n') : (m?.toString() ?? 'Something went wrong');
+      return ApiError(s, text, code: d['code'] as String?, requiredTier: d['requiredTier'] as String?);
+    }
+    return ApiError(s, 'Something went wrong. Please try again.');
+  }
+
+  bool get needsKyc => status == 403 && requiredTier != null;
+  bool get suspended => code == 'ACCOUNT_SUSPENDED';
+  bool get closed => code == 'ACCOUNT_CLOSED';
+}
+```
+
+### D.4 Trade with Idempotency-Key and safe retry
+
+```dart
+import 'package:uuid/uuid.dart';
+
+Future<Map<String, dynamic>> executeTrade(Api api, String quoteId) async {
+  final key = const Uuid().v4();                       // ONE key for this tap
+  for (var attempt = 0; attempt < 3; attempt++) {
+    try {
+      final r = await api.dio.post('/v1/trades',
+          data: {'quoteId': quoteId},
+          options: Options(headers: {'Idempotency-Key': key}));
+      return r.data as Map<String, dynamic>;
+    } on DioException catch (e) {
+      final s = e.response?.statusCode;
+      final networkProblem = e.response == null;        // timeout / no connection
+      final stillRunning = s == 409 &&
+          (e.response?.data?['message']?.toString().contains('still processing') ?? false);
+      if (!(networkProblem || stillRunning)) throw ApiError.from(e);
+      await Future.delayed(const Duration(seconds: 2));  // then retry with the SAME key
+    }
+  }
+  throw ApiError(0, 'We could not confirm your trade. Check your activity before trying again.');
+}
+```
+
+### D.5 Gift-card photo resizing (fit under the 1 MB request limit)
+
+```dart
+import 'dart:convert';
+import 'package:flutter_image_compress/flutter_image_compress.dart';
+
+Future<String> toDataUrl(String path) async {
+  final bytes = await FlutterImageCompress.compressWithFile(
+    path, minWidth: 1280, minHeight: 1280, quality: 70, format: CompressFormat.jpeg,
+  );
+  return 'data:image/jpeg;base64,${base64Encode(bytes!)}';
+}
+
+// Before sending: make sure the whole JSON is under ~950 KB
+bool fitsLimit(Map<String, dynamic> body) => utf8.encode(jsonEncode(body)).length < 950 * 1024;
+```
+
+### D.6 Quote countdown
+
+```dart
+import 'dart:async';
+
+// Start when a quote arrives; on 0 disable Continue (never auto-requote).
+Timer? _timer;
+void startCountdown(Map q, void Function(int left) onTick) {
+  _timer?.cancel();
+  final expires = DateTime.parse(q['expiresAt'] as String);
+  _timer = Timer.periodic(const Duration(milliseconds: 250), (_) {
+    final left = expires.difference(DateTime.now().toUtc()).inSeconds
+        .clamp(0, q['ttlSeconds'] as int);
+    onTick(left);
+    if (left == 0) _timer?.cancel();
+  });
+}
+```
+
+---
+
+## Appendix E: Testing on the local backend
+
+Locally the API uses a **fake ("mock") version of Quidax**, the crypto provider. No real money, no real blockchain.
+
+**Getting a test account ready (ask the backend team):**
+1. Register in the app (2.1).
+2. A backend dev **approves your KYC** in the admin dashboard. Then **sign in again**.
+3. A backend dev **adds test naira** with `npm run dev-credit -- --email you@example.com --asset ngn --amount 500000`. There's no in-app top-up yet.
+4. For naira limits, a backend dev sets them in admin → **System → KYC limits**. They start at ₦0.
+5. Reset codes (2.6) are printed in the API log if email isn't set up. Ask a backend dev.
+
+**What works on the mock**
+
+| Flow | Result |
+| --- | --- |
+| Register, login, refresh, reset | ✅ |
+| KYC submit + admin approval | ✅ |
+| Deposit address | ✅ becomes `usable` after **~15 seconds** |
+| Quote + **buy** | ✅ `COMPLETED` immediately |
+| **Sell** | ✅ but only for coins **bought** since the API last restarted. Coins added with `dev-credit` can't be sold (you get a 400). |
+| **Swap** | ⚠️ stays **`PROCESSING` forever**. Test the progress UI; ask the backend to simulate completion. |
+| **Crypto withdrawal** | ⚠️ stays **`PROCESSING` forever** (same reason) |
+| Incoming crypto deposit | ⚠️ can't happen; the backend can simulate one |
+| Naira withdrawal | ⚠️ off unless the backend enables `NGN_WITHDRAWALS_ENABLED` |
+| Gift cards, referrals, in-app notifications | ✅ |
+| Push | ⚠️ only if the backend set up Firebase |
+
+**Images from the Android emulator:** brand and social icon URLs are built from the server's `PUBLIC_API_URL`, which defaults to `http://localhost:3000`, unreachable from the emulator. Ask the backend to set `PUBLIC_API_URL=http://10.0.2.2:3000` (or the laptop's LAN IP).
+
+**Swagger UI:** `http://<host>/docs`.
+
+---
+
+## Appendix F: Known limitations & upcoming changes
+
+| # | Today | What's coming / what to do |
+| --- | --- | --- |
+| 1 | **No in-app naira top-up** | A funding endpoint is coming. Add a "Fund wallet" placeholder. |
+| 2 | **Naira bank withdrawals** switched off (8.5–8.7) | Gate on `payoutAvailable` from 8.4 |
+| 3 | **KYC document upload** not built (4.3); Tier 2/3 unavailable | A proper upload flow will replace 4.3 |
+| 4 | **Gift-card photos** limited by the 1 MB request size | A separate upload endpoint is planned |
+| 5 | **No email verification** after signup | Will be added. Plan for a "verify your email" step after 2.1. |
+| 6 | **Withdrawals need only a token** | An OTP/2FA confirm step, saved addresses and a new-address waiting period are planned. Leave room in the confirm screen. |
+| 7 | **No rate limiting** | `429` + `Retry-After` will start on login, reset and quotes |
+| 8 | **No deposit/withdrawal detail endpoints**, no tx hash or address in history | Use the lists + 7.4. Detail endpoints are planned. |
+| 9 | **No pagination** beyond `limit=100` | Cursor paging will be added |
+| 10 | **Phantom deposit after a buy** (a `PENDING` "deposit" of the bought coin + a "BTC added" notification) | Backend bug, fix pending. Not an app bug. |
+| 11 | 8.1 / 8.4 return **500** if `amount` is missing or invalid | Validate before calling |
+| 12 | Provider transfer-limit errors in 7.1 return **404** instead of 400 | Show `message`. Will become 400. |
+| 13 | Registering with a phone already in use returns **500** | Will become a clear 409 |
+| 14 | 8.7 returns **500** if the account details are invalid at submit | Always call 8.6 first |
+| 15 | Maintenance mode isn't enforced by the API | The app must check 13.1 |
+| 16 | Error **wording** may change | Never write logic on message text |
+| 17 | Swap quote `rate` (7.1) is cut to 4 decimals, so it often reads `"0.0000"` | Compute the display rate from the amounts. Will be fixed to full precision. |
+
+---
+
+## Appendix G: Endpoint index
+
+| # | Method | Path | Token | KYC | Idempotency-Key | Success |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1.1 | GET | `/health` | — | — | — | 200 |
+| 2.1 | POST | `/v1/auth/register` | — | — | — | 201 |
+| 2.2 | POST | `/v1/auth/login` | — | — | — | 200 |
+| 2.3 | POST | `/v1/auth/refresh` | — | — | — | 200 |
+| 2.4 | POST | `/v1/auth/logout` | ✅ | — | — | 204 |
+| 2.5 | POST | `/v1/auth/change-password` | ✅ | — | — | 204 |
+| 2.6 | POST | `/v1/auth/reset/request` | — | — | — | 200 |
+| 2.7 | POST | `/v1/auth/reset/confirm` | — | — | — | 204 |
+| 2.8 | GET | `/v1/auth/me` | ✅ | — | — | 200 |
+| 3.1 | GET | `/v1/me` | ✅ | — | — | 200 |
+| 3.2 | GET | `/v1/wallets` | ✅ | — | — | 200 |
+| 4.1 | GET | `/v1/kyc` | ✅ | — | — | 200 |
+| 4.2 | POST | `/v1/kyc/tier1` | ✅ | — | — | 201 |
+| 4.3 | POST | `/v1/kyc/documents` ⚠️ | ✅ | — | — | 201 |
+| 5.1 | GET | `/v1/assets` | — | — | — | 200 |
+| 5.2 | GET | `/v1/assets/{code}/networks?purpose=` | — | — | — | 200 |
+| 6.1 | POST | `/v1/deposits/address` | ✅ | TIER_1 | — | 201 |
+| 6.2 | GET | `/v1/deposits/addresses` | ✅ | — | — | 200 |
+| 6.3 | GET | `/v1/deposits?limit=` | ✅ | — | — | 200 |
+| 7.1 | POST | `/v1/quotes` | ✅ | TIER_1 | — | 201 |
+| 7.2 | POST | `/v1/trades` | ✅ | TIER_1 | **required** | 201 |
+| 7.3 | GET | `/v1/trades?limit=` | ✅ | — | — | 200 |
+| 7.4 | GET | `/v1/trades/{id}` | ✅ | — | — | 200 |
+| 8.1 | GET | `/v1/withdrawals/quote?asset=&amount=&network=` | ✅ | — | — | 200 |
+| 8.2 | POST | `/v1/withdrawals/crypto` | ✅ | TIER_1 | **required** | 201 |
+| 8.3 | GET | `/v1/withdrawals?limit=` | ✅ | — | — | 200 |
+| 8.4 | GET | `/v1/withdrawals/quote/ngn?amount=` | ✅ | — | — | 200 |
+| 8.5 | GET | `/v1/withdrawals/ngn/banks` 🔒 | ✅ | — | — | 200 |
+| 8.6 | POST | `/v1/withdrawals/ngn/verify-account` 🔒 | ✅ | TIER_1 | — | 201 |
+| 8.7 | POST | `/v1/withdrawals/ngn` 🔒 | ✅ | TIER_1 | **required** | 201 |
+| 9.1 | GET | `/v1/giftcards/catalogue` | — | — | — | 200 |
+| 9.2 | GET | `/v1/giftcards/brands/{id}/image` | — | — | — | 200 |
+| 9.3 | POST | `/v1/giftcards/trades` | ✅ | — | — | 201 |
+| 9.4 | GET | `/v1/giftcards/trades` | ✅ | — | — | 200 |
+| 9.5 | GET | `/v1/giftcards/trades/{id}` | ✅ | — | — | 200 |
+| 9.6 | GET | `/v1/giftcards/trades/{id}/images/{imageId}` | ✅ | — | — | 200 |
+| 10.1 | GET | `/v1/referrals/code/{code}` | — | — | — | 200 |
+| 10.2 | GET | `/v1/referrals/me` | ✅ | — | — | 200 |
+| 10.3 | PUT | `/v1/referrals/username` | ✅ | — | — | 200 |
+| 11.1 | GET | `/v1/notifications?limit=` | ✅ | — | — | 200 |
+| 11.2 | POST | `/v1/notifications/read` | ✅ | — | — | 201 |
+| 12.1 | POST | `/v1/devices` | ✅ | — | — | 201 |
+| 12.2 | DELETE | `/v1/devices` | ✅ | — | — | 200 |
+| 12.3 | GET | `/v1/devices` | ✅ | — | — | 200 |
+| 13.1 | GET | `/v1/site` | — | — | — | 200 |
+| 13.2 | GET | `/v1/site/logo` | — | — | — | 200 |
+| 13.3 | GET | `/v1/site/social/{id}/icon` | — | — | — | 200 |
+| 13.4 | GET | `/v1/content/pages` | — | — | — | 200 |
+| 13.5 | GET | `/v1/content/pages/{slug}` | — | — | — | 200 |
+| 13.6 | GET | `/v1/content/faqs` | — | — | — | 200 |
+
+⚠️ = exists but not ready to use · 🔒 = returns 403 while naira payouts are switched off
+
+**Everything under `/v1/admin/*` is for the staff dashboard only. The app must never call it**, and user tokens are rejected there.
