@@ -1,11 +1,9 @@
 import {
   BadRequestException,
-  ForbiddenException,
   Injectable,
   Logger,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { FeeKind, TxStatus, TxType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuidaxClient } from '../quidax/quidax.client';
@@ -39,7 +37,6 @@ export class WithdrawalsService {
     private readonly kycLimits: KycLimitsService,
     private readonly flags: SystemFlagsService,
     private readonly notifications: NotificationsService,
-    private readonly config: ConfigService,
   ) {}
 
   /**
@@ -155,10 +152,10 @@ export class WithdrawalsService {
    * loses. Banded on the dollar equivalent so all four ladders break on one
    * axis and a $100 step means the same thing everywhere.
    *
-   * The payout itself is not built: Davochain does not have a naira payout
-   * provider yet, and Quidax's bank endpoints are deliberately unused (see
-   * TODO.md). This prices it so the ladder can be set, agreed and shown before
-   * the rail exists, rather than being invented on the day it arrives.
+   * Payouts run from the Quidax main account and are switched on and off by
+   * NGN_WITHDRAWALS_ENABLED, overridable live from the dashboard (System →
+   * Withdrawals). This quote works either way, so the fee and the user's limits
+   * can be shown before payouts are on; `payoutAvailable` says whether they are.
    */
   async quoteNgnWithdrawalFee(userId: string, ngnAmount: string) {
     const amount = dec(ngnAmount);
@@ -217,15 +214,13 @@ export class WithdrawalsService {
         usedToday: str(limit.usedToday, 2),
         remainingToday: str(limit.remainingToday.lt(0) ? ZERO : limit.remainingToday, 2),
       },
-      /** Enable only after main-account liquidity and webhook reconciliation are ready. */
-      payoutAvailable: this.config.get<boolean>('NGN_WITHDRAWALS_ENABLED') ?? false,
+      /** Mirrors the switch (System → Withdrawals). The app disables payout while false. */
+      payoutAvailable: await this.flags.ngnWithdrawalsEnabled(),
     };
   }
 
   async ngnBanks() {
-    if (!(this.config.get<boolean>('NGN_WITHDRAWALS_ENABLED') ?? false)) {
-      throw new ForbiddenException('Naira withdrawals are not available yet.');
-    }
+    await this.flags.assertNgnWithdrawalsAllowed();
     const banks = await this.quidax.fetchBanks();
     return banks
       .filter((bank) => bank.country.toLowerCase() === 'nigeria' && bank.currency.toLowerCase() === 'ngn')
@@ -233,9 +228,7 @@ export class WithdrawalsService {
   }
 
   async verifyNgnBankAccount(input: { accountNumber: string; bankCode: string }) {
-    if (!(this.config.get<boolean>('NGN_WITHDRAWALS_ENABLED') ?? false)) {
-      throw new ForbiddenException('Naira withdrawals are not available yet.');
-    }
+    await this.flags.assertNgnWithdrawalsAllowed();
     let accountName: string;
     try {
       ({ account_name: accountName } = await this.quidax.verifyBankAccount(input));
@@ -256,9 +249,7 @@ export class WithdrawalsService {
     userId: string,
     input: { amount: string; accountNumber: string; bankCode: string },
   ) {
-    if (!(this.config.get<boolean>('NGN_WITHDRAWALS_ENABLED') ?? false)) {
-      throw new ForbiddenException('Naira withdrawals are not available yet.');
-    }
+    await this.flags.assertNgnWithdrawalsAllowed();
     await this.flags.assertWithdrawalsAllowed();
 
     const amount = dec(input.amount);

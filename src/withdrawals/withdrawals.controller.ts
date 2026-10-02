@@ -31,9 +31,8 @@ export class WithdrawalsController {
   /**
    * What cashing out naira to a bank would cost.
    *
-   * Prices the fee only. `payoutAvailable: false` comes back because the naira
-   * rail is not built — the ladder can be agreed and shown before the provider
-   * is chosen, which beats inventing a number on the day it arrives.
+   * Prices the fee and checks the user's limits. `payoutAvailable` mirrors the
+   * naira withdrawal switch, so the app can disable payout while it is off.
    */
   @Get('quote/ngn')
   quoteNgn(@CurrentUser('sub') userId: string, @Query('amount') amount: string) {
