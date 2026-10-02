@@ -1,5 +1,6 @@
 import { ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import type { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
 /** The admin override for naira bank withdrawals. No row means "use the server setting". */
@@ -92,15 +93,32 @@ export class SystemFlagsService {
    * on — a row hand-edited into "true" or 1 fails safe rather than paying out.
    */
   async ngnWithdrawalsEnabled(): Promise<boolean> {
-    const override = await this.get<unknown>(NGN_WITHDRAWALS_FLAG, null);
-    if (override === null) return this.ngnServerSetting();
-    return override === true;
+    return this.ngnRule(await this.get<unknown>(NGN_WITHDRAWALS_FLAG, null));
   }
 
   async assertNgnWithdrawalsAllowed(): Promise<void> {
     if (!(await this.ngnWithdrawalsEnabled())) {
       throw new ForbiddenException(NGN_WITHDRAWALS_OFF_MESSAGE);
     }
+  }
+
+  /**
+   * The same check, uncached, through a payout's own transaction — the last
+   * word before money is locked. A request can sit on Quidax for many seconds
+   * after the first check, with no PENDING row an admin's in-progress count
+   * could see; this is what stops it once the switch has gone off.
+   */
+  async assertNgnWithdrawalsAllowedIn(t: Pick<Prisma.TransactionClient, 'systemFlag'>): Promise<void> {
+    const row = await t.systemFlag.findUnique({ where: { key: NGN_WITHDRAWALS_FLAG } });
+    if (!this.ngnRule(row?.value ?? null)) {
+      throw new ForbiddenException(NGN_WITHDRAWALS_OFF_MESSAGE);
+    }
+  }
+
+  /** No override → the server setting; otherwise only a literal `true` is on. */
+  private ngnRule(override: unknown): boolean {
+    if (override === null) return this.ngnServerSetting();
+    return override === true;
   }
 
   async setNgnWithdrawalsOverride(enabled: boolean, by: string): Promise<void> {

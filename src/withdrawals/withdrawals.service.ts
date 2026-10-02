@@ -279,6 +279,8 @@ export class WithdrawalsService {
     const totalDebit = amount.plus(platformFee);
     const reference = this.quidax.newReference('ngnwd');
     const tx = await this.prisma.serializable(async (t) => {
+      // An admin may have switched payouts off while Quidax was answering.
+      await this.flags.assertNgnWithdrawalsAllowedIn(t);
       await this.ledger.lock(t, userId, 'ngn', totalDebit);
       const user = await t.user.findUnique({
         where: { id: userId },

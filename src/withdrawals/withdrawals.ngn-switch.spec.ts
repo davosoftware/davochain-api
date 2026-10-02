@@ -13,13 +13,17 @@ import { dec } from '../common/money';
  * switch that decides, not a stub of it.
  */
 function build(opts: { override?: boolean; serverSetting?: boolean } = {}) {
+  // The stored override row, shared by the service's reads and the transaction's,
+  // so a test can flip it mid-request the way an admin would.
+  const row: { value: boolean | undefined } = { value: opts.override };
+  const systemFlag = {
+    findUnique: async ({ where }: { where: { key: string } }) =>
+      where.key === NGN_WITHDRAWALS_FLAG && row.value !== undefined
+        ? { key: NGN_WITHDRAWALS_FLAG, value: row.value }
+        : null,
+  };
   const flags = new SystemFlagsService(
-    {
-      systemFlag: {
-        findUnique: async () =>
-          opts.override === undefined ? null : { key: NGN_WITHDRAWALS_FLAG, value: opts.override },
-      },
-    } as never,
+    { systemFlag } as never,
     { get: (k: string) => (k === 'NGN_WITHDRAWALS_ENABLED' ? (opts.serverSetting ?? false) : undefined) } as never,
   );
 
@@ -29,36 +33,47 @@ function build(opts: { override?: boolean; serverSetting?: boolean } = {}) {
       { code: 'GH1', name: 'Ghana Bank', country: 'Ghana', currency: 'GHS' },
     ]),
     verifyBankAccount: jest.fn().mockResolvedValue({ account_name: 'ADA OBI' }),
-    createNgnBankWithdrawal: jest.fn(),
+    createNgnBankWithdrawal: jest.fn().mockResolvedValue({ id: 'qx-1', status: 'pending' }),
+    newReference: jest.fn().mockReturnValue('ngnwd-test'),
   };
   const prisma = {
     user: { findUnique: jest.fn().mockResolvedValue({ kycTier: 'TIER_1' }) },
     serializable: jest.fn(),
   };
+  const allowed = {
+    allowed: true,
+    singleLimit: dec(200000),
+    dailyLimit: dec(500000),
+    usedToday: dec(0),
+    remainingToday: dec(500000),
+  };
   const kycLimits = {
-    check: jest.fn().mockResolvedValue({
-      allowed: true,
-      singleLimit: dec(200000),
-      dailyLimit: dec(500000),
-      usedToday: dec(0),
-      remainingToday: dec(500000),
-    }),
+    check: jest.fn().mockResolvedValue(allowed),
+    checkInTransaction: jest.fn().mockResolvedValue(allowed),
   };
   const feeBands = { resolve: jest.fn().mockResolvedValue(null) };
+  const ledger = { lock: jest.fn().mockResolvedValue(undefined) };
+  // What the payout's serializable transaction sees: the same stored switch.
+  const tx = {
+    systemFlag,
+    user: { findUnique: jest.fn().mockResolvedValue({ kycTier: 'TIER_1' }) },
+    transaction: { create: jest.fn().mockResolvedValue({ id: 'tx-1' }) },
+    settlementLeg: { create: jest.fn().mockResolvedValue({}) },
+  };
 
   const service = new WithdrawalsService(
     prisma as never,
     quidax as never,
-    {} as never, // ledger
+    ledger as never,
     {} as never, // assets
     {} as never, // settlement
     {} as never, // rates
     feeBands as never,
     kycLimits as never,
     flags,
-    { notify: jest.fn() } as never,
+    { notify: jest.fn().mockResolvedValue(undefined) } as never,
   );
-  return { service, quidax, prisma };
+  return { service, quidax, prisma, ledger, tx, row };
 }
 
 const ACCOUNT = { accountNumber: '0123456789', bankCode: '044' };
@@ -109,5 +124,26 @@ describe('naira withdrawals switched ON', () => {
   it('an admin override switches them off over a server setting that is on', async () => {
     const { service } = build({ override: false, serverSetting: true });
     await expect(service.ngnBanks()).rejects.toThrow(NGN_WITHDRAWALS_OFF_MESSAGE);
+  });
+});
+
+describe('switched OFF while a payout request is already past the first check', () => {
+  // The admin switches off during a provider outage while this request waits
+  // on Quidax. It has no PENDING row yet, so the admin's in-progress count
+  // cannot see it — the request itself must notice before any money moves.
+  it('refuses inside the transaction, before any balance is locked or payout sent', async () => {
+    const { service, quidax, prisma, ledger, tx, row } = build({ override: true });
+    prisma.serializable.mockImplementation((fn: (t: unknown) => unknown) => fn(tx));
+    quidax.verifyBankAccount.mockImplementation(async () => {
+      row.value = false; // the admin's switch-off lands while Quidax is answering
+      return { account_name: 'ADA OBI' };
+    });
+
+    await expect(service.withdrawNgn('user-1', { amount: '5000', ...ACCOUNT })).rejects.toThrow(
+      NGN_WITHDRAWALS_OFF_MESSAGE,
+    );
+    expect(ledger.lock).not.toHaveBeenCalled();
+    expect(tx.transaction.create).not.toHaveBeenCalled();
+    expect(quidax.createNgnBankWithdrawal).not.toHaveBeenCalled();
   });
 });
