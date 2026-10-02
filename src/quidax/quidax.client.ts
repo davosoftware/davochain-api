@@ -332,8 +332,15 @@ export class QuidaxClient {
 
   // ── NGN bank payouts ────────────────────────────────────────
 
+  /**
+   * Every bank, across every page. Quidax pages all list endpoints (50 by
+   * default) and Nigeria has far more banks than that — one page would hide
+   * most of them from the bank picker.
+   */
   async fetchBanks(): Promise<QuidaxBank[]> {
-    return (await this.get<QuidaxBank[]>('/banks')).data;
+    const banks: QuidaxBank[] = [];
+    for await (const bank of this.paginate<QuidaxBank>('/banks')) banks.push(bank);
+    return banks;
   }
 
   /** Read-only account-name resolution; the POST does not move money. */
