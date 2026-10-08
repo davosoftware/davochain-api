@@ -36,7 +36,7 @@
 | 3 | [Profile & wallets](#3-profile--wallets) | 3.1 Get profile · 3.2 Get wallet balances |
 | 4 | [KYC](#4-kyc-identity-verification) | 4.1 Get KYC status · 4.2 Submit Tier 1 · 4.3 Attach document (not ready) |
 | 5 | [Assets](#5-assets--networks) | 5.1 List coins · 5.2 List a coin's networks |
-| 6 | [Deposits](#6-deposits) | 6.1 Get deposit address · 6.2 List my addresses · 6.3 Deposit history |
+| 6 | [Deposits](#6-deposits) | 6.1 Get deposit address · 6.2 List my addresses · 6.3 Deposit history · 6.4 Naira account · 6.5 Open naira account |
 | 7 | [Trading](#7-trading-buy-sell-swap) | 7.1 Get a quote · 7.2 Execute a quote · 7.3 Trade history · 7.4 Get one transaction |
 | 8 | [Withdrawals](#8-withdrawals) | 8.1 Crypto fee quote · 8.2 Withdraw crypto · 8.3 Withdrawal history · 8.4 Naira fee quote · 8.5 Bank list · 8.6 Verify bank account · 8.7 Withdraw naira |
 | 9 | [Gift cards](#9-gift-cards) | 9.1 Catalogue · 9.2 Brand logo · 9.3 Sell a card · 9.4 My card trades · 9.5 One card trade · 9.6 Card photo |
@@ -1064,6 +1064,99 @@ Authorization: Bearer eyJhbGciOi…
 - There's no network, address or blockchain hash per deposit yet (Appendix F).
 - No pages yet: `limit` max 100.
 - Known backend bug: after a **buy**, a `PENDING` "deposit" of the bought coin may appear here. It's not an app bug (Appendix F).
+
+---
+
+### 6.4 Get my naira deposit account
+
+**Endpoint:** `GET /v1/deposits/ngn/account` · **Auth:** **Bearer** · **KYC:** none (see `eligible`) · **Success:** `200`
+
+**What it does**
+Returns the user's permanent naira account number. A bank transfer into it from any Nigerian bank lands in their naira balance, usually within a minute. A user has at most one, and it doesn't expire.
+
+**Request**
+```http
+GET /v1/deposits/ngn/account
+Authorization: Bearer eyJhbGciOi…
+```
+
+**Response** `200`
+```json
+{ "accountNumber": "0067100155", "accountName": "Ada Obi", "bankName": "Flutterwave MFB", "status": "ACTIVE" }
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `accountNumber` | string | 10 digits. Show it with a copy button. |
+| `accountName` | string | The name the sender's banking app shows when they type the number |
+| `bankName` | string | The bank to pick in the sender's app |
+| `status` | string | `ACTIVE`, or `INACTIVE` while the account is switched off (for example during a suspension). Never show an `INACTIVE` number as something to pay into. |
+
+**Errors**
+
+| Status | `code` | Meaning |
+| --- | --- | --- |
+| 404 | `NO_VIRTUAL_ACCOUNT` | No account yet. `eligible` says whether 6.5 will work; `reason` says why not. |
+
+```json
+{ "statusCode": 404, "code": "NO_VIRTUAL_ACCOUNT", "eligible": false, "reason": "Verify your identity (Tier 1) to get a naira account.", "message": "You have no naira deposit account yet." }
+```
+
+**Integration notes**
+- Call it when the naira deposit screen opens. On 404 with `eligible: true`, offer "Get my account number" (6.5). With `eligible: false`, show `reason`.
+- A deposit shows up in 6.3 and as a `deposit.credited` push. A deposit over the user's KYC limit shows as `ON_HOLD` (push `deposit.on_hold`) until an admin reviews it.
+
+---
+
+### 6.5 Open my naira deposit account
+
+**Endpoint:** `POST /v1/deposits/ngn/account` · **Auth:** **Bearer** · **KYC:** Tier 1 approved (checked server-side) · **Success:** `201`, `200` or `202`
+
+**What it does**
+Creates the user's permanent naira account at Flutterwave, DavoChain's payment provider. The user re-enters the BVN or NIN they verified with in 4.2. It is checked against what DavoChain holds, sent once to Flutterwave, and never stored.
+
+**Request**
+
+| Field | In | Type | Required | Rules |
+| --- | --- | --- | --- | --- |
+| `bvn` | body | string | one of the two | Exactly 11 digits |
+| `nin` | body | string | one of the two | Exactly 11 digits |
+
+Send exactly one, and the same kind the user verified with in 4.2.
+
+```http
+POST /v1/deposits/ngn/account
+Authorization: Bearer eyJhbGciOi…
+Content-Type: application/json
+
+{ "bvn": "22222223883" }
+```
+
+**Responses**
+
+| Status | Body | Meaning |
+| --- | --- | --- |
+| `201` | the 6.4 object | Created |
+| `200` | the 6.4 object | The user already had one; nothing new was created |
+| `202` | `{ "status": "PENDING", "message": "We're setting up your account. Try again in a few minutes." }` | Flutterwave didn't confirm in time. Poll 6.4 every 30 seconds for a few minutes. If it still answers 404, let the user try 6.5 again. |
+
+**Errors**
+
+| Status | `code` | Meaning |
+| --- | --- | --- |
+| 400 | — | A field isn't 11 digits. `message` is an array of validation messages, as everywhere (0.4). |
+| 400 | `ONE_IDENTITY_NUMBER` | Both or neither were sent |
+| 400 | `IDENTITY_TYPE_MISMATCH` | The user verified with the other kind of number |
+| 400 | `IDENTITY_MISMATCH` | Not the number the user verified with |
+| 400 | `PROVIDER_REJECTED` | Flutterwave refused the number |
+| 403 | `NOT_ELIGIBLE` | Show `message` (the same text as `reason` in 6.4) |
+| 409 | `ALREADY_CREATING` | A request is already in progress; wait a minute |
+| 429 | `TOO_MANY_ATTEMPTS` | Five attempts in 24 hours; try tomorrow |
+| 503 | `DEPOSITS_UNAVAILABLE` | Temporarily unavailable; try later |
+
+**Integration notes**
+- Never keep the BVN or NIN on the device. Send it once and clear the field.
+- Every attempt counts toward the five a day, including a wrong number.
 
 ---
 
@@ -2917,6 +3010,8 @@ Locally the API uses a **fake ("mock") version of Quidax**, the crypto provider.
 | 6.1 | POST | `/v1/deposits/address` | ✅ | TIER_1 | — | 201 |
 | 6.2 | GET | `/v1/deposits/addresses` | ✅ | — | — | 200 |
 | 6.3 | GET | `/v1/deposits?limit=` | ✅ | — | — | 200 |
+| 6.4 | GET | `/v1/deposits/ngn/account` | ✅ | — | — | 200 |
+| 6.5 | POST | `/v1/deposits/ngn/account` | ✅ | TIER_1 | — | 201 |
 | 7.1 | POST | `/v1/quotes` | ✅ | TIER_1 | — | 201 |
 | 7.2 | POST | `/v1/trades` | ✅ | TIER_1 | **required** | 201 |
 | 7.3 | GET | `/v1/trades?limit=` | ✅ | — | — | 200 |
