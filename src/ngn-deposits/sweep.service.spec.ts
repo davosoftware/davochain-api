@@ -72,6 +72,26 @@ describe('SweepService.sweep', () => {
     await expect(svc.sweep()).resolves.toMatchObject({ status: 'PARTIAL' });
     expect(alerts.raise).toHaveBeenCalledWith('FLUTTERWAVE_CONFIG', 'config', expect.any(String), expect.any(Array));
   });
+
+  it('stops at the wall-clock budget and reports PARTIAL', async () => {
+    const { client, svc } = setup();
+    client.listTransactions.mockResolvedValue({ items: [], totalPages: 5 });
+    const nowSpy = jest.spyOn(Date, 'now');
+    let callCount = 0;
+    nowSpy.mockImplementation(() => {
+      callCount++;
+      if (callCount === 1) return 0; // start
+      return 21 * MINUTE; // 21 minutes later
+    });
+    try {
+      const result = await svc.sweep();
+      expect(result.status).toBe('PARTIAL');
+      expect(result.pages).toBeLessThan(5);
+      expect(result.error).toContain('20-minute budget');
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
 });
 
 describe('SweepService.recheck', () => {
@@ -112,5 +132,56 @@ describe('SweepService crons', () => {
     expect(client.listTransactions).toHaveBeenCalledTimes(1);
     expect(accounts.syncStatuses).toHaveBeenCalledTimes(1);
     expect(leases.run.mock.calls.map((c) => c[0])).toEqual(['flutterwave-sweep', 'flutterwave-recheck', 'virtual-account-sync']);
+  });
+
+  it('alerts after two consecutive partial sweeps, not after one', async () => {
+    const { db, client, leases, alerts, svc } = setup();
+    const plainError = new Error('connection reset');
+    client.listTransactions.mockRejectedValue(plainError);
+
+    // Make rail in use
+    await db.virtualAccountRequest.create({ data: { userId: 'u1', state: 'IDLE' } });
+
+    // Make leases.run call through
+    leases.run.mockImplementation(async (_name: string, _ttl: number, fn: () => Promise<unknown>) => ({
+      ran: true,
+      result: await fn(),
+    }));
+
+    // First partial sweep: no alert
+    await svc.sweepCron();
+    expect(alerts.raise).not.toHaveBeenCalled();
+
+    // Second partial sweep: alert should be raised
+    await svc.sweepCron();
+    expect(alerts.raise).toHaveBeenCalledWith('NGN_RECONCILIATION', 'flutterwave-sweep-partial', expect.any(String), expect.any(Array));
+  });
+
+  it('a complete sweep resets the partial count', async () => {
+    const { db, client, leases, alerts, svc } = setup();
+
+    // Make rail in use
+    await db.virtualAccountRequest.create({ data: { userId: 'u1', state: 'IDLE' } });
+
+    // Make leases.run call through
+    leases.run.mockImplementation(async (_name: string, _ttl: number, fn: () => Promise<unknown>) => ({
+      ran: true,
+      result: await fn(),
+    }));
+
+    // First: partial (counts as 1)
+    client.listTransactions.mockRejectedValueOnce(new Error('fail'));
+    await svc.sweepCron();
+    expect(alerts.raise).not.toHaveBeenCalled();
+
+    // Second: OK (resets counter to 0)
+    client.listTransactions.mockResolvedValueOnce({ items: [], totalPages: 0 });
+    await svc.sweepCron();
+    expect(alerts.raise).not.toHaveBeenCalled();
+
+    // Third: partial (counter back to 1, no alert yet)
+    client.listTransactions.mockRejectedValueOnce(new Error('fail'));
+    await svc.sweepCron();
+    expect(alerts.raise).not.toHaveBeenCalled();
   });
 });

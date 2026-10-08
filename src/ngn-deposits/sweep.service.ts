@@ -14,6 +14,7 @@ import { VirtualAccountsService } from './virtual-accounts.service';
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
 const MAX_PAGES = 500;
+const SWEEP_BUDGET_MS = 20 * MINUTE;
 const NUMERIC_ID = /^\d{1,19}$/;
 
 export interface SweepResult {
@@ -36,6 +37,7 @@ export interface SweepResult {
 @Injectable()
 export class SweepService {
   private readonly log = new Logger(SweepService.name);
+  private consecutivePartials = 0;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -50,7 +52,22 @@ export class SweepService {
   async sweepCron(): Promise<void> {
     try {
       if (!(await this.railInUse())) return;
-      await this.leases.run('flutterwave-sweep', 25 * MINUTE, () => this.sweep());
+      const out = await this.leases.run('flutterwave-sweep', 25 * MINUTE, () => this.sweep());
+      if (out.ran) {
+        if (out.result.status === 'PARTIAL') {
+          this.consecutivePartials++;
+          if (this.consecutivePartials >= 2) {
+            await this.alerts.raise(
+              AlertType.NGN_RECONCILIATION,
+              'flutterwave-sweep-partial',
+              'The Flutterwave missed-webhook sweep is not completing',
+              [out.result.error ?? 'unknown', 'Deposits whose webhook was missed may stay uncredited until it completes; the settlement backstop is the net.'],
+            );
+          }
+        } else {
+          this.consecutivePartials = 0;
+        }
+      }
     } catch (err) {
       this.log.error(`Sweep failed: ${redactIds((err as Error).message)}`);
     }
@@ -80,9 +97,15 @@ export class SweepService {
     let pages = 0;
     let seen = 0;
     let queued = 0;
+    const started = Date.now();
     try {
       let totalPages = 1;
       for (let page = 1; page <= Math.min(totalPages, MAX_PAGES); page++) {
+        if (page > 1 && Date.now() - started > SWEEP_BUDGET_MS) {
+          const error = `Stopped at the 20-minute budget after ${pages} page(s)`;
+          this.log.warn(error);
+          return { status: 'PARTIAL', pages, seen, queued, error };
+        }
         const res = await this.client.listTransactions({ from, to, page, status: 'successful', currency: 'NGN' });
         pages++;
         totalPages = res.totalPages;
