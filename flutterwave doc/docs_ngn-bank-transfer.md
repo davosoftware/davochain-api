@@ -1,0 +1,241 @@
+---
+agentTools:
+  projectIndex: https://developer.flutterwave.com/llms.txt
+---
+
+# NGN Bank Transfer
+
+Learn how to collect payment directly from your Nigerian customer’s via bank transfer.
+
+> 📘 Getting Started
+>
+> We recommend checking out the [introductory section](/v3.0.0/docs/introduction-4)  to understand the basics of direct charge first. This guide assumes you’ve read that.
+
+## The Process
+
+Collecting payments via bank transfer charge is straightforward:
+
+* You call the [bank transfer charge endpoint](/v3.0.0/reference/charge-via-bank-transfer) to create a charge and generate account details for the customer to pay into.
+* The customer transfers to the generated account.
+* We send you a webhook notifying you that we've received the payment.
+* You verify the payment and complete the customer's order.
+
+[block:image]
+{
+  "images": [
+    {
+      "image": [
+        "https://files.readme.io/9f2c5c9520af9078dbb70fa60aacb187c70aed0965dd3585cb095a4d2e2b8853-pwbt.png",
+        "",
+        ""
+      ],
+      "align": "center"
+    }
+  ]
+}
+[/block]
+
+## Initiating the Charge
+
+To initiate the charge, you'll call the [bank transfer charge endpoint](/v3.0.0/reference/charge-via-bank-transfer), which is supported in some of our [backend SDKs](/v3.0.0/docs/directory). You'll need to specify:
+
+* `tx_ref`: A unique reference code that you'll generate for each transaction.
+* `amount`: The amount to be charged for the transaction.
+* `currency`: The currency to be used for the charge (currently always "NGN").
+* `email`: The customer's email address.
+
+```javascript Node.js
+// Install with: npm i flutterwave-node-v3
+
+const Flutterwave = require('flutterwave-node-v3');
+const flw = new Flutterwave(
+	process.env.FLW_PUBLIC_KEY,
+	process.env.FLW_SECRET_KEY
+);
+
+const details = {
+	tx_ref: 'UNIQUE_TRANSACTION_REFERENCE',
+	amount: '1500',
+	currency: 'NGN',
+	email: 'developers@flutterwavego.com',
+	fullname: 'Flutterwave Developers',
+	phone_number: '+2349012345678',
+};
+const response = await flw.Charge.bank_transfer(details);
+```
+```ruby
+# Install with: gem install flutterwave_sdk
+
+require './flutterwave_sdk'
+
+flw = Flutterwave.new(ENV["FLW_PUBLIC_KEY"], ENV["FLW_SECRET_KEY"], ENV["FLW_ENCRYPTION_KEY"])
+charge_transfer = BankTransfer.new(flw)
+
+payload = {
+    "tx_ref" => "UNIQUE_TRANSACTION_REFERENCE",
+    "amount" => "1500",
+    "currency" => "NGN",
+    "email" => "developers@flutterwavego.com",
+    "fullname": "Flutterwave Developers",
+    "phone_number" => "+2349012345678"
+}
+response = charge_transfer.initiate_charge(payload)
+```
+```shell cURL
+curl --request POST \
+   --url https://api.flutterwave.com/v3/charges?type=bank_transfer \
+   --header 'Authorization: Bearer FLW_SECRET_KEY' \
+   --header 'content-type: application/json' \
+   --data '{
+      "tx_ref": "UNIQUE_TRANSACTION_REFERENCE",
+      "amount": "1500",
+      "currency": "NGN",
+      "email": "developers@flutterwavego.com",
+      "fullname": "Flutterwave Developers",
+      "phone_number": "+2349012345678"
+    }'
+```
+
+> 📘
+>
+> You can also specify a list of subaccounts to split the payment into. See [split payments](/v3.0.0/docs/split-payments) for details.
+
+There are more options available when initiating a bank transfer charge, such as the payment expiry, customer's `phone_number` and additional `meta`. See the [endpoint](/v3.0.0/reference/charge-via-bank-transfer) docs for details.
+
+```json Split with Subaccounts
+{
+  "tx_ref": "UNIQUE_TRANSACTION_REFERENCE",
+  "amount": "1500",
+  "currency": "NGN",
+  "email": "developers@flutterwavego.com",
+  "fullname": "Flutterwave Developers",
+  "phone_number": "+2349012345678",
+  "subaccounts": [
+    {
+      "id": "RS_D87A9EE339AE28BFA2AE86041C6DE70E"
+    }
+  ]
+}
+```
+```json Specify Payment Expiry
+{
+	"tx_ref": "UNIQUE_TRANSACTION_REFERENCE",
+	"amount": "1500",
+	"currency": "NGN",
+	"email": "developers@flutterwavego.com",
+	"fullname": "Flutterwave Developers",
+	"phone_number": "+2349012345678",
+	"bank_transfer_options": {
+		"expires": 3600
+	}
+}
+```
+
+If the charge is created successfully, you'll get a successful response containing the generated account details.
+
+```json Success
+{
+    "status": "success",
+    "message": "Charge initiated",
+    "meta": {
+        "authorization": {
+            "transfer_reference": "ZZSS4548178111081675127069",
+            "transfer_account": "9755152912",
+            "transfer_bank": "Flutterwave MFB",
+            "account_expiration": "2026-06-10 19:00:16",
+            "transfer_note": "Please make a bank transfer to Tester FLW",
+            "transfer_amount": "102.00",
+            "mode": "banktransfer"
+        }
+    }
+}
+```
+
+<br />
+
+### Generating specific bank accounts
+
+You can choose which bank issues the virtual account for your PWBT payments. Simply provide the `bank_code` when creating the virtual account, and the account details will be generated by the selected bank.
+
+```json Example
+{
+   "tx_ref":"YOUR_TRANSACTION_REFERENCE",
+   "amount":"1500",
+   "email":"user@gmail.com",
+   "phone_number":"054709929220",
+   "currency":"NGN",
+   "client_ip":"154.123.220.1",
+   "device_fingerprint":"62wd23423rq324323qew1",
+   "narration":"All star college salary for May",
+   "is_permanent":false,
+   "bank_code":"090567"
+}
+```
+
+Supported values for `bank_code` include:
+
+| Bank name       | Code     | Supported Region |
+| :-------------- | :------- | :--------------- |
+| Flutterwave MFB | `090567` | Nigeria          |
+
+<br />
+
+## Completing the Payment
+
+The `meta.authorization` object contains the account details for the transfer: the bank name (`transfer_bank`), account number (`transfer_account`), and amount (`transfer_amount`). Pass the details on to your customer, and they can make a transfer into the account (for instance, from their bank app).
+
+> 🧪 Testing Tip
+>
+> In [Test Mode](/v3.0.0/docs/testing), all bank transfers will automatically be paid after a few seconds.
+
+## Webhooks
+
+When payment is made, we'll send you a webhook with a payload like this:
+
+```json
+{
+  "event": "charge.completed",
+  "data": {
+    "id": 2028146660,
+    "tx_ref": "UNIQUE_TRANChgTdlIfONff_REFERENCE",
+    "flw_ref": "100004260420103413157701995493",
+    "device_fingerprint": "N/A",
+    "amount": 100,
+    "currency": "NGN",
+    "charged_amount": 102,
+    "app_fee": 2,
+    "merchant_fee": 0,
+    "processor_response": "success",
+    "auth_model": "AUTH",
+    "ip": "54.154.184.168",
+    "narration": "FOR TESTING PURPOSE",
+    "status": "successful",
+    "payment_type": "bank_transfer",
+    "created_at": "2026-04-20T10:34:22.000Z",
+    "account_id": 96753,
+    "customer": {
+      "id": 1334422040,
+      "name": "Flutterwave Developers",
+      "phone_number": "08012345678",
+      "email": "developers@flutterwavego.com",
+      "created_at": "2026-04-16T21:31:36.000Z"
+    }
+  },
+  "meta_data": {
+    "originatorname": "ADEDOTUN OBATOMI",
+    "bankname": "OPAY",
+    "bankcode": "100004",
+    "originatoramount": "N/A",
+    "originatoraccountnumber": "813*******00"
+  },
+  "event.type": "BANK_TRANSFER_TRANSACTION"
+}
+```
+
+> 📘 **How to Retrieve the Session ID.**
+>
+> The Session ID is used to reconcile and track PWBT transactions. It is returned in the Webhook response as the **flw\_ref**. You should store this value in your database alongside your internal transaction record.
+
+Now, your webhook endpoint can handle the event and complete the customer's order. For help setting up webhooks, see our [guide to webhooks](/v3.0.0/docs/webhooks).
+
+In your webhook handler, you can then verify the payment and credit your customers with whatever they paid for. See our guide to [transaction verification](/v3.0.0/docs/transaction-verification-1) for details.
