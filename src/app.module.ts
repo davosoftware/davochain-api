@@ -18,6 +18,7 @@ import { RatesModule } from './rates/rates.module';
 import { QuotesModule } from './quotes/quotes.module';
 import { TradesModule } from './trades/trades.module';
 import { DepositsModule } from './deposits/deposits.module';
+import { NgnDepositsModule } from './ngn-deposits/ngn-deposits.module';
 import { WithdrawalsModule } from './withdrawals/withdrawals.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { NotificationsModule } from './notifications/notifications.module';
@@ -49,6 +50,7 @@ import { HealthController } from './common/health.controller';
     QuotesModule,
     TradesModule,
     DepositsModule,
+    NgnDepositsModule,
     WithdrawalsModule,
     WebhooksModule,
     NotificationsModule,
