@@ -127,12 +127,15 @@ export class FlutterwaveWebhookController {
     const reason = hadHeader ? 'wrong' : 'missing';
     this.log.warn(`Rejected a Flutterwave webhook: ${reason} verif-hash`);
     try {
-      let payload: unknown;
+      // Determine if the body is valid JSON without storing it
+      let json = false;
       try {
-        payload = parseJsonExact(raw.toString('utf8')) ?? {};
+        parseJsonExact(raw.toString('utf8'));
+        json = true;
       } catch {
-        payload = { unparsable: true, bytes: raw.length };
+        // Body is not valid JSON
       }
+      const payload = { bytes: raw.length, reason, json };
       await this.prisma.webhookEvent.create({
         data: {
           eventName: 'flutterwave.unauthenticated',

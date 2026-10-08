@@ -70,6 +70,19 @@ describe('POST /webhooks/flutterwave', () => {
     expect(payIn.enqueue).not.toHaveBeenCalled();
   });
 
+  it('stores only metadata, never the body, for an unauthenticated webhook', async () => {
+    const { db, send } = setup();
+    const sensitiveBody = { event: 'charge.completed', data: { id: '123', customer: { email: 'leak@example.com' } } };
+    const bodyJson = JSON.stringify(sensitiveBody);
+    const bodyBytes = Buffer.byteLength(bodyJson, 'utf8');
+    expect(await status(send(bodyJson, 'wrong-hash'))).toBe(401);
+    const stored = db.rows('webhookEvent')[0];
+    expect(stored).toBeDefined();
+    expect(stored.eventName).toBe('flutterwave.unauthenticated');
+    expect(stored.payload).toEqual({ bytes: bodyBytes, reason: 'wrong', json: true });
+    expect(JSON.stringify(stored.payload)).not.toContain('leak@example.com');
+  });
+
   it('stores a repeated delivery once and still answers 200', async () => {
     const { db, payIn, send } = setup();
     await send(fixture('webhook-legacy-charge.json'), HASH);
