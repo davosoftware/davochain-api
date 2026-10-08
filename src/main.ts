@@ -5,8 +5,12 @@ import helmet from 'helmet';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { setupSwagger } from './common/swagger';
+import { assertExactJsonSupported } from './common/exact-json';
 
 async function bootstrap(): Promise<void> {
+  // Money is parsed from exact JSON text; an older runtime must not start.
+  assertExactJsonSupported();
+
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     // REQUIRED. The Quidax webhook signature is computed over the RAW bytes;
     // Nest's body parser re-serialises JSON and re-stringifying will not
