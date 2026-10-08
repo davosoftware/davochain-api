@@ -9,6 +9,7 @@ import { PayInService } from './pay-in.service';
 import { ReadinessService } from './readiness.service';
 import { VirtualAccountsController } from './virtual-accounts.controller';
 import { VirtualAccountsService } from './virtual-accounts.service';
+import { FlutterwaveWebhookController } from './flutterwave-webhook.controller';
 
 /**
  * Naira deposits through Flutterwave: virtual accounts, webhook intake,
@@ -16,7 +17,7 @@ import { VirtualAccountsService } from './virtual-accounts.service';
  */
 @Module({
   imports: [FlutterwaveModule, KycModule, LedgerModule, RatesModule],
-  controllers: [VirtualAccountsController],
+  controllers: [VirtualAccountsController, FlutterwaveWebhookController],
   providers: [OpsAlertsService, ReadinessService, VirtualAccountsService, PayInService, PayInProcessor],
   exports: [OpsAlertsService, ReadinessService, VirtualAccountsService, PayInService],
 })

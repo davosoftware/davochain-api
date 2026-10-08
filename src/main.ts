@@ -47,7 +47,7 @@ async function bootstrap(): Promise<void> {
     credentials: true,
   });
   app.setGlobalPrefix(config.get<string>('API_PREFIX') ?? 'v1', {
-    exclude: ['health', 'webhooks/quidax'],
+    exclude: ['health', 'webhooks/quidax', 'webhooks/flutterwave'],
   });
   app.useGlobalPipes(
     new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
