@@ -1,8 +1,8 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { KycStatus, KycTier } from '@prisma/client';
-import { createHash } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { KycLimitsService } from './kyc-limits.service';
+import { KycHashService } from './kyc-hash';
 import { ZERO, type Decimal } from '../common/money';
 import { TemplatedMailService } from '../cms/templated-mail.service';
 
@@ -17,11 +17,8 @@ export class KycService {
     private readonly prisma: PrismaService,
     private readonly limits: KycLimitsService,
     private readonly mail: TemplatedMailService,
+    private readonly hasher: KycHashService,
   ) {}
-
-  private digest(value: string): string {
-    return createHash('sha256').update(value.trim()).digest('hex');
-  }
 
   /**
    * Where this user stands, and what a tier is worth.
@@ -97,16 +94,16 @@ export class KycService {
         status: KycStatus.PENDING,
         dateOfBirth: new Date(input.dateOfBirth),
         ...(input.bvn
-          ? { bvnHash: this.digest(input.bvn), bvnLast4: input.bvn.slice(-4) }
-          : { ninHash: this.digest(input.nin!), ninLast4: input.nin!.slice(-4) }),
+          ? { bvnHash: this.hasher.hash(input.bvn), bvnLast4: input.bvn.slice(-4) }
+          : { ninHash: this.hasher.hash(input.nin!), ninLast4: input.nin!.slice(-4) }),
         submittedAt: new Date(),
       },
       update: {
         status: KycStatus.PENDING,
         dateOfBirth: new Date(input.dateOfBirth),
         ...(input.bvn
-          ? { bvnHash: this.digest(input.bvn), bvnLast4: input.bvn.slice(-4) }
-          : { ninHash: this.digest(input.nin!), ninLast4: input.nin!.slice(-4) }),
+          ? { bvnHash: this.hasher.hash(input.bvn), bvnLast4: input.bvn.slice(-4) }
+          : { ninHash: this.hasher.hash(input.nin!), ninLast4: input.nin!.slice(-4) }),
         submittedAt: new Date(),
         rejectionReason: null,
       },
