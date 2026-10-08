@@ -191,7 +191,7 @@ export const envSchema = z
         ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['FLW_SECRET_KEY'], message: problem });
       }
     }
-    if (env.KYC_HASH_KEY !== undefined && env.KYC_HASH_KEY.length < 32) {
+    if (env.KYC_HASH_KEY && env.KYC_HASH_KEY.length < 32) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['KYC_HASH_KEY'],

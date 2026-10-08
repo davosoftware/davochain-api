@@ -36,6 +36,8 @@ describe('Flutterwave environment rules', () => {
     expect(issues({ NODE_ENV: 'production', FLW_USE_MOCK: 'false' }, 'KYC_HASH_KEY')[0]).toMatch(/required in staging and production/);
     expect(issues({ NODE_ENV: 'development', KYC_HASH_KEY: 'short' }, 'KYC_HASH_KEY')[0]).toMatch(/at least 32/);
     expect(issues({ NODE_ENV: 'production', FLW_USE_MOCK: 'false', KYC_HASH_KEY: 'k'.repeat(32) }, 'KYC_HASH_KEY')).toEqual([]);
+    expect(issues({ NODE_ENV: 'development', KYC_HASH_KEY: '' }, 'KYC_HASH_KEY')).toEqual([]);
+    expect(issues({ NODE_ENV: 'production', FLW_USE_MOCK: 'false', KYC_HASH_KEY: '' }, 'KYC_HASH_KEY')[0]).toMatch(/required in staging and production/);
   });
 
   it('requires https for Flutterwave in staging and production', () => {
