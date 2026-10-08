@@ -158,6 +158,36 @@ describe('VirtualAccountsService.openForUser', () => {
     await expect(svc.findOwner(TX_REF, orphan!.account_number)).resolves.toEqual({ userId: USER, via: 'TX_REF', accountKnown: false });
   });
 
+  it('answers 202 and keeps the order ref for ops when recording a created account fails', async () => {
+    const { svc, db, alerts } = await setup();
+    db.failNext('virtualAccount', 'create', new Error('database unavailable'));
+    const res = await svc.openForUser(USER, { bvn: BVN });
+    expect(res).toEqual({ httpStatus: 202, body: { status: 'PENDING', message: expect.any(String) } });
+    expect(db.rows('virtualAccount')).toHaveLength(0);
+    expect(db.rows('virtualAccountRequest')[0]).toMatchObject({ state: 'UNKNOWN', lastError: 'database unavailable' });
+    expect(alerts.raise).toHaveBeenCalledWith(
+      'VIRTUAL_ACCOUNT_SYNC', expect.stringMatching(/^va-unrecorded:URF_MOCK_/), expect.any(String),
+      expect.arrayContaining([expect.stringMatching(/^Order ref: URF_MOCK_/)]), expect.any(Number),
+    );
+    expect(JSON.stringify(alerts.raise.mock.calls)).not.toContain(BVN);
+  });
+
+  it('hands back an account that appeared while the request waited, without claiming or calling Flutterwave', async () => {
+    const { svc, db, client, readiness } = await setup();
+    const create = jest.spyOn(client, 'createStaticVirtualAccount');
+    readiness.report.mockImplementationOnce(async () => {
+      // the user's other request finishes while this one checks eligibility
+      await db.virtualAccount.create({
+        data: { userId: USER, orderRef: 'URF_RACE', accountNumber: '9000000099', accountName: 'Ada Obi', bankName: 'Flutterwave MFB', txRef: TX_REF, isPrimary: true, source: 'CREATED', providerStatus: 'active' },
+      });
+      return { depositsEnabled: true, canCreateAccounts: true };
+    });
+    const res = await svc.openForUser(USER, { bvn: BVN });
+    expect(res).toEqual({ httpStatus: 200, body: expect.objectContaining({ accountNumber: '9000000099', status: 'ACTIVE' }) });
+    expect(create).not.toHaveBeenCalled();
+    expect(db.rows('virtualAccountRequest')).toHaveLength(0);
+  });
+
   it('blocks a second request while one is in flight, but not a stale one', async () => {
     const { svc, db } = await setup();
     await db.virtualAccountRequest.create({

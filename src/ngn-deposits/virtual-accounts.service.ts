@@ -140,7 +140,8 @@ export class VirtualAccountsService {
 
     // 3. One attempt at a time, five a day. Every attempt counts, including a
     //    wrong number: it is also what stops anyone guessing at the hash.
-    await this.claim(userId);
+    const appeared = await this.claim(userId);
+    if (appeared) return { httpStatus: 200, body: this.view(appeared) };
 
     let state: 'IDLE' | 'UNKNOWN' = 'IDLE';
     let lastError: string | null = null;
@@ -191,7 +192,22 @@ export class VirtualAccountsService {
 
       // Flutterwave has it. If recording fails, the first deposit still routes by tx_ref.
       state = 'UNKNOWN';
-      const account = await this.record(userId, created, narration, identityType);
+      let account: VirtualAccount;
+      try {
+        account = await this.record(userId, created, narration, identityType);
+      } catch (err) {
+        // Flutterwave has the account; we failed to write it down. Keep what ops needs to manage it.
+        lastError = redactIds((err as Error).message).slice(0, 500);
+        this.log.error(`Flutterwave opened account ${created.account_number} (order ${created.order_ref}) for ${userId}, but recording it failed: ${lastError}`);
+        await this.alerts.raise(
+          AlertType.VIRTUAL_ACCOUNT_SYNC,
+          `va-unrecorded:${created.order_ref}`,
+          `Virtual account ${created.account_number} was opened but not recorded`,
+          [`User: ${userId}`, `Order ref: ${created.order_ref}`, `Account number: ${created.account_number}`, `Error: ${lastError}`],
+          SIX_HOURS,
+        );
+        return { httpStatus: 202, body: { status: 'PENDING', message: PENDING_MESSAGE } };
+      }
       state = 'IDLE';
       if (account.isPrimary) return { httpStatus: 201, body: this.view(account) };
       const primary = await this.primaryFor(userId);
@@ -382,10 +398,12 @@ export class VirtualAccountsService {
     };
   }
 
-  private async claim(userId: string): Promise<void> {
+  private async claim(userId: string): Promise<VirtualAccount | null> {
     const conflict = "We're already setting up your account. Try again in a minute.";
-    await this.prisma.serializable(
+    return this.prisma.serializable(
       async (t) => {
+        const existing = await t.virtualAccount.findFirst({ where: { userId, isPrimary: true }, orderBy: { createdAt: 'asc' } });
+        if (existing) return existing; // opened while this request waited: hand it back, claim nothing
         const now = new Date();
         const row = await t.virtualAccountRequest.findUnique({ where: { userId } });
         if (row?.state === 'CREATING' && now.getTime() - row.stateSince.getTime() < CREATING_LOCK_MS) {
@@ -414,6 +432,7 @@ export class VirtualAccountsService {
           lastError: null,
         };
         await t.virtualAccountRequest.upsert({ where: { userId }, create: { userId, ...data }, update: data });
+        return null;
       },
       { conflict },
     );
