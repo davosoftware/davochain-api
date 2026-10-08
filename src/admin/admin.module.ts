@@ -20,6 +20,8 @@ import { ReconciliationModule } from '../reconciliation/reconciliation.module';
 import { RatesModule } from '../rates/rates.module';
 import { LedgerModule } from '../ledger/ledger.module';
 import { GiftCardsModule } from '../giftcards/giftcards.module';
+import { NgnDepositsModule } from '../ngn-deposits/ngn-deposits.module';
+import { FlutterwaveModule } from '../flutterwave/flutterwave.module';
 import { QUEUES } from '../common/queues';
 
 @Module({
@@ -34,6 +36,8 @@ import { QUEUES } from '../common/queues';
     // Releasing a held deposit writes the ledger entry the webhook never got to.
     LedgerModule,
     GiftCardsModule,
+    NgnDepositsModule,
+    FlutterwaveModule,
   ],
   controllers: [AdminController, AdminAuthController],
   providers: [AdminService, UsersAdminService, AdminsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService, AdminSessionsService, AdminOtpService, NgnWithdrawalsService, AdminGuard],

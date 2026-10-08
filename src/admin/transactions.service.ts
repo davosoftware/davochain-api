@@ -1,7 +1,9 @@
 import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
-import { LedgerAccount, Prisma, TxStatus, TxType } from '@prisma/client';
+import { CollectionOutcome, LedgerAccount, PaymentProvider, Prisma, TxStatus, TxType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LedgerService } from '../ledger/ledger.service';
+import type { LedgerLeg } from '../ledger/ledger.service';
+import { DepositLegsError, depositLegs } from '../ngn-deposits/deposit-legs';
 import { NotificationsService } from '../notifications/notifications.service';
 import { KycLimitsService } from '../kyc/kyc-limits.service';
 import { Decimal, ZERO, dec, str } from '../common/money';
@@ -550,6 +552,9 @@ export class AdminTransactionsService {
       throw new BadRequestException('That deposit has no amount to credit');
     }
 
+    // A Flutterwave deposit posts the same three entries crediting would have (A3).
+    const legs = tx.provider === PaymentProvider.FLUTTERWAVE ? this.flutterwaveLegs(tx, amount) : null;
+
     await this.prisma.serializable(
       async (t) => {
         const current = await t.transaction.findUniqueOrThrow({
@@ -560,14 +565,31 @@ export class AdminTransactionsService {
           throw new ConflictException('That deposit was already dealt with');
         }
 
-        await this.ledger.credit(t, {
-          userId: tx.userId,
-          assetCode: 'ngn',
-          amount,
-          counterparty: LedgerAccount.EXTERNAL,
-          transactionId: tx.id,
-          memo: `held deposit released ${tx.reference}`,
-        });
+        if (legs) {
+          // Released only from HELD: never while a refund to the sender is under way.
+          const collection = await t.flutterwaveCollection.findUnique({ where: { transactionId: id } });
+          if (collection?.outcome !== CollectionOutcome.HELD) {
+            throw new ConflictException(
+              collection?.outcome === CollectionOutcome.REFUND_PENDING
+                ? 'A refund to the sender is in progress for this deposit, so it cannot be released'
+                : 'That deposit was already dealt with',
+            );
+          }
+          await this.ledger.post(t, legs, tx.id);
+          await t.flutterwaveCollection.update({
+            where: { transactionId: id },
+            data: { outcome: CollectionOutcome.CREDITED, previousOutcome: CollectionOutcome.HELD },
+          });
+        } else {
+          await this.ledger.credit(t, {
+            userId: tx.userId,
+            assetCode: 'ngn',
+            amount,
+            counterparty: LedgerAccount.EXTERNAL,
+            transactionId: tx.id,
+            memo: `held deposit released ${tx.reference}`,
+          });
+        }
 
         await t.transaction.update({
           where: { id },
@@ -600,6 +622,35 @@ export class AdminTransactionsService {
     return this.one(id);
   }
 
+  /** The entries for a held Flutterwave deposit, from the figures stored when it arrived. */
+  private flutterwaveLegs(
+    tx: {
+      userId: string;
+      reference: string;
+      providerFee: Prisma.Decimal | null;
+      providerSettledAmount: Prisma.Decimal | null;
+    },
+    amount: Decimal,
+  ): LedgerLeg[] {
+    if (tx.providerFee === null || tx.providerSettledAmount === null) {
+      throw new ConflictException(
+        'This Flutterwave deposit has no recorded fee or settled amount, so it cannot be released here',
+      );
+    }
+    try {
+      return depositLegs({
+        userId: tx.userId,
+        amount,
+        settled: dec(tx.providerSettledAmount),
+        fee: dec(tx.providerFee),
+        memo: `held deposit released ${tx.reference}`,
+      });
+    } catch (err) {
+      if (err instanceof DepositLegsError) throw new ConflictException(`This deposit cannot be released: ${err.message}`);
+      throw err;
+    }
+  }
+
   /**
    * Refuse a held naira deposit.
    *
@@ -610,6 +661,11 @@ export class AdminTransactionsService {
    */
   async reject(id: string, reason: string): Promise<TxRow> {
     const tx = await this.held(id);
+    if (tx.provider === PaymentProvider.FLUTTERWAVE) {
+      throw new ConflictException(
+        'Use reject and refund: a Flutterwave deposit has to go back to its sender, not just be refused.',
+      );
+    }
     const trimmed = reason.trim();
     if (!trimmed) throw new BadRequestException('Say why — the user is shown this');
 

@@ -1,11 +1,13 @@
 import {
   BadRequestException,
   Body,
+  ConflictException,
   ForbiddenException,
   Controller,
   Delete,
   Get,
   HttpCode,
+  NotFoundException,
   Param,
   Patch,
   Post,
@@ -24,6 +26,7 @@ import {
   ReferralStatus,
   TxStatus,
   TxType,
+  VirtualAccountStatus,
 } from '@prisma/client';
 import { AdminService, type AdminJwtPayload } from './admin.service';
 import { UsersAdminService } from './users-admin.service';
@@ -85,6 +88,8 @@ import {
   SetGateDto,
   ResetNgnWithdrawalsDto,
   SetNgnWithdrawalsDto,
+  SimulatePayInDto,
+  VirtualAccountStatusDto,
 } from './dto';
 import { Public } from '../auth/public.decorator';
 import { PrismaService } from '../prisma/prisma.service';
@@ -98,6 +103,12 @@ import { EmailTemplateService } from '../cms/email-template.service';
 import { isEmailTemplateKey } from '../cms/email-templates';
 import { SocialLinksService, KNOWN_NETWORKS, ICON_PIXELS } from '../cms/social-links.service';
 import { NgnWithdrawalsService } from './ngn-withdrawals.service';
+import { ReadinessService } from '../ngn-deposits/readiness.service';
+import { VirtualAccountsService } from '../ngn-deposits/virtual-accounts.service';
+import { txRefForUser } from '../ngn-deposits/tx-ref';
+import { FlutterwaveClient } from '../flutterwave/flutterwave.client';
+import { FlutterwaveConfig } from '../flutterwave/flutterwave.config';
+import { FlutterwaveMockClient } from '../flutterwave/flutterwave.mock';
 import {
   CreateFaqDto,
   CreatePageDto,
@@ -158,6 +169,10 @@ export class AdminController {
     private readonly templates: EmailTemplateService,
     private readonly socials: SocialLinksService,
     private readonly ngnSwitch: NgnWithdrawalsService,
+    private readonly flwReadiness: ReadinessService,
+    private readonly virtualAccounts: VirtualAccountsService,
+    private readonly flutterwave: FlutterwaveClient,
+    private readonly flwConfig: FlutterwaveConfig,
   ) {}
 
   // ── gates ─────────────────────────────────────────────────
@@ -979,6 +994,90 @@ export class AdminController {
     const result = await this.users.reinstate(adminId, id);
     await this.admin.audit(adminId, 'user.reinstate', 'User', id, null, null);
     return result;
+  }
+
+  // ── naira deposit accounts (Flutterwave) ──────────────────
+
+  /** System → Flutterwave: is the naira rail safe to open accounts on? Cached a minute unless refresh=true. */
+  @Get('flutterwave/readiness')
+  @RequirePermissions('settings.manage')
+  flutterwaveReadiness(@Query('refresh') refresh?: string) {
+    return this.flwReadiness.report(refresh === 'true');
+  }
+
+  @Get('users/:id/virtual-accounts')
+  @RequirePermissions('users.view')
+  userVirtualAccounts(@Param('id') id: string) {
+    return this.virtualAccounts.listForUser(id);
+  }
+
+  @Post('users/:id/virtual-accounts/:vaId/deactivate')
+  @HttpCode(200)
+  @RequirePermissions('users.manage')
+  async deactivateVirtualAccount(
+    @CurrentAdmin('sub') adminId: string,
+    @Param('id') id: string,
+    @Param('vaId') vaId: string,
+    @Body() dto: VirtualAccountStatusDto,
+    @Req() req: Request,
+  ) {
+    const { before, after } = await this.virtualAccounts.setDesired(id, vaId, VirtualAccountStatus.INACTIVE);
+    await this.admin.audit(adminId, 'virtual_account.deactivate', 'VirtualAccount', vaId, before, { ...after, reason: dto.reason.trim() }, req.ip);
+    return after;
+  }
+
+  @Post('users/:id/virtual-accounts/:vaId/reactivate')
+  @HttpCode(200)
+  @RequirePermissions('users.manage')
+  async reactivateVirtualAccount(
+    @CurrentAdmin('sub') adminId: string,
+    @Param('id') id: string,
+    @Param('vaId') vaId: string,
+    @Body() dto: VirtualAccountStatusDto,
+    @Req() req: Request,
+  ) {
+    const { before, after } = await this.virtualAccounts.setDesired(id, vaId, VirtualAccountStatus.ACTIVE);
+    await this.admin.audit(adminId, 'virtual_account.reactivate', 'VirtualAccount', vaId, before, { ...after, reason: dto.reason.trim() }, req.ip);
+    return after;
+  }
+
+  /**
+   * Development only: a customer's bank transfer into a virtual account, made
+   * by the mock, which then sends its webhook to this API, so the real intake
+   * path runs. 404 anywhere else, so it cannot exist in production.
+   */
+  @Post('dev/flutterwave/simulate-payin')
+  @HttpCode(200)
+  @RequirePermissions('settings.manage')
+  async simulateFlutterwavePayIn(@Body() dto: SimulatePayInDto) {
+    const mock = this.devFlutterwaveMock();
+    const primary = (await this.virtualAccounts.listForUser(dto.userId)).find((a) => a.isPrimary);
+    if (!primary) throw new ConflictException('That user has no naira deposit account yet');
+    const result = await mock.simulatePayIn({
+      txRef: txRefForUser(dto.userId),
+      amount: dto.amount,
+      accountNumber: primary.accountNumber,
+      payerName: dto.payerName,
+      status: dto.status,
+      format: dto.format,
+    });
+    return { flwTransactionId: result.id, webhookStatus: result.webhookStatus };
+  }
+
+  /** Development only: send a simulated payment's webhook again, as Flutterwave's retries do. */
+  @Post('dev/flutterwave/redeliver/:flwId')
+  @HttpCode(200)
+  @RequirePermissions('settings.manage')
+  async redeliverFlutterwaveWebhook(@Param('flwId') flwId: string, @Query('format') format?: string) {
+    const webhookStatus = await this.devFlutterwaveMock().redeliverWebhook(flwId, format === 'v3' ? 'v3' : 'legacy');
+    return { flwTransactionId: flwId, webhookStatus };
+  }
+
+  private devFlutterwaveMock(): FlutterwaveMockClient {
+    if (!(this.flutterwave instanceof FlutterwaveMockClient) || this.flwConfig.nodeEnv !== 'development') {
+      throw new NotFoundException();
+    }
+    return this.flutterwave;
   }
 
   // ── broadcasts ────────────────────────────────────────────

@@ -1,9 +1,10 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { BroadcastAudience, NotificationChannel, Prisma, UserStatus } from '@prisma/client';
+import { BroadcastAudience, NotificationChannel, Prisma, UserStatus, VirtualAccountStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { TemplatedMailService } from '../cms/templated-mail.service';
+import { VirtualAccountsService } from '../ngn-deposits/virtual-accounts.service';
 import { dec, str, ZERO } from '../common/money';
 import { JOBS, QUEUES, jobId } from '../common/queues';
 
@@ -33,6 +34,7 @@ export class UsersAdminService {
     private readonly prisma: PrismaService,
     @InjectQueue(QUEUES.NOTIFICATIONS) private readonly queue: Queue,
     private readonly mail: TemplatedMailService,
+    private readonly virtualAccounts: VirtualAccountsService,
   ) {}
 
   /**
@@ -261,6 +263,12 @@ export class UsersAdminService {
       }),
     ]);
 
+    // Their naira deposit account stops taking money too. Flutterwave is told in
+    // the background, and the 10-minute sync retries, so it can't slow this down.
+    await this.virtualAccounts
+      .setDesiredForUser(userId, VirtualAccountStatus.INACTIVE, { background: true })
+      .catch(() => undefined);
+
     // Their sessions are already revoked, so the app cannot tell them. Email is
     // the only channel left that reaches a suspended account.
     await this.mail.send({
@@ -291,6 +299,12 @@ export class UsersAdminService {
         suspendedBy: null,
       },
     });
+
+    if (user.status === UserStatus.SUSPENDED) {
+      await this.virtualAccounts
+        .setDesiredForUser(userId, VirtualAccountStatus.ACTIVE, { background: true })
+        .catch(() => undefined);
+    }
 
     // Only worth an email if they were actually locked out. Reinstating an
     // active account is a no-op, and telling somebody their suspension is over

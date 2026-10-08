@@ -3,6 +3,7 @@ import { AdminRole, FeeKind, KycTier } from '@prisma/client';
 import {
   IsArray,
   IsEnum,
+  IsIn,
   ValidateNested,
   IsBoolean,
   IsEmail,
@@ -10,6 +11,7 @@ import {
   IsNumberString,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   Max,
   MaxLength,
@@ -264,4 +266,19 @@ export class ResetNgnWithdrawalsDto {
   @IsString() @MinLength(1) @MaxLength(128) password!: string;
   @IsOptional() @IsString() @MaxLength(500) reason?: string;
   @IsOptional() @IsBoolean() confirmInFlight?: boolean;
+}
+
+/** Why an admin switched a naira deposit account off or on. Audited. */
+export class VirtualAccountStatusDto {
+  @IsString() @MinLength(3) @MaxLength(500) reason!: string;
+}
+
+/** Development only: a pretend bank transfer into a user's virtual account (the mock). */
+export class SimulatePayInDto {
+  @IsUUID() userId!: string;
+  @Matches(/^\d{1,9}(\.\d{1,2})?$/, { message: 'amount is naira as text, e.g. "1500" or "1500.50"' })
+  amount!: string;
+  @IsOptional() @IsString() @MaxLength(100) payerName?: string;
+  @IsOptional() @IsIn(['successful', 'pending', 'failed']) status?: 'successful' | 'pending' | 'failed';
+  @IsOptional() @IsIn(['legacy', 'v3']) format?: 'legacy' | 'v3';
 }
