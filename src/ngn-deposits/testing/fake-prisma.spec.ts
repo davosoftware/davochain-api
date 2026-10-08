@@ -109,5 +109,21 @@ describe('FakePrisma', () => {
     await db.alert.create({ data: { type: 'NGN_RECONCILIATION', payload: { a: 1 } } });
     expect(db.allWrites()).toEqual([{ type: 'NGN_RECONCILIATION', payload: { a: 1 } }]);
     await expect(db.alert.findMany({ where: { NOT: { type: 'X' } } })).rejects.toThrow(/NOT is not supported/);
+    await expect(db.alert.findMany({ where: { type: { equals: 'X', mode: 'insensitive' } } })).rejects.toThrow(/mode/);
+  });
+
+  it('keeps decimal columns exact through increment, decrement and set', async () => {
+    const db = new FakePrisma();
+    await db.flutterwaveCollection.create({ data: { flwTransactionId: '1', firstSource: 'SWEEP', amount: '1500.10' } });
+    await db.flutterwaveCollection.update({ where: { flwTransactionId: '1' }, data: { amount: { increment: '0.20' } } });
+    let row = db.rows('flutterwaveCollection')[0];
+    expect(row.amount).toBeInstanceOf(Prisma.Decimal);
+    expect((row.amount as Prisma.Decimal).toFixed()).toBe('1500.3');
+    await db.flutterwaveCollection.update({ where: { flwTransactionId: '1' }, data: { amount: { decrement: '0.3' } } });
+    row = db.rows('flutterwaveCollection')[0];
+    expect((row.amount as Prisma.Decimal).toFixed()).toBe('1500');
+    await db.flutterwaveCollection.update({ where: { flwTransactionId: '1' }, data: { amount: { set: '7.25' } } });
+    row = db.rows('flutterwaveCollection')[0];
+    expect((row.amount as Prisma.Decimal).toFixed()).toBe('7.25');
   });
 });

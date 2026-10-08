@@ -5,9 +5,10 @@ import { Prisma } from '@prisma/client';
  * An in-memory stand-in for PrismaService, for unit tests of the naira-deposit
  * services. It implements only what those services call: a handful of models,
  * the common where operators with SQL's NULL rules, unique keys that fail with
- * Prisma's own P2002, and `serializable` that rolls every table back when its
- * callback throws. Anything else fails loudly, so a test cannot pass by
- * accident. Never imported by production code.
+ * Prisma's own P2002, and `serializable` / callback-form `$transaction` that
+ * roll every table back when the callback throws (the array form cannot: its
+ * operations have already run). Anything else fails loudly, so a test cannot
+ * pass by accident. Never imported by production code.
  */
 export type Row = Record<string, unknown>;
 
@@ -151,6 +152,10 @@ function cmp(a: unknown, b: unknown): number {
 
 function matchValue(value: unknown, cond: unknown): boolean {
   if (!isOperatorObject(cond)) return same(value, cond);
+  // Check for unsupported operators first, before any matching logic
+  for (const op of Object.keys(cond)) {
+    if (op === 'mode') throw new Error('FakePrisma: mode (case-insensitive matching) is not supported');
+  }
   const isNull = value === null || value === undefined;
   for (const [op, arg] of Object.entries(cond)) {
     switch (op) {
@@ -192,6 +197,7 @@ function matchValue(value: unknown, cond: unknown): boolean {
         if (typeof value !== 'string' || !value.includes(String(arg))) return false;
         break;
       case 'mode':
+        // Already checked above, but keep this for completeness
         break;
     }
   }
@@ -355,9 +361,21 @@ class FakeModel {
       if (value === undefined) continue;
       if (isPlain(value) && Object.keys(value).length === 1 && ATOMIC.has(Object.keys(value)[0])) {
         const [op, arg] = Object.entries(value)[0];
-        if (op === 'set') row[key] = arg;
-        else if (op === 'increment') row[key] = Number(row[key] ?? 0) + Number(arg);
-        else row[key] = Number(row[key] ?? 0) - Number(arg);
+        if (this.spec.decimals.includes(key)) {
+          // Decimal arithmetic for decimal columns
+          if (op === 'set') {
+            row[key] = new Prisma.Decimal(String(arg));
+          } else if (op === 'increment') {
+            row[key] = new Prisma.Decimal(String(row[key] ?? 0)).plus(String(arg));
+          } else {
+            row[key] = new Prisma.Decimal(String(row[key] ?? 0)).minus(String(arg));
+          }
+        } else {
+          // Number arithmetic for non-decimal columns
+          if (op === 'set') row[key] = arg;
+          else if (op === 'increment') row[key] = Number(row[key] ?? 0) + Number(arg);
+          else row[key] = Number(row[key] ?? 0) - Number(arg);
+        }
       } else if (this.spec.decimals.includes(key) && value !== null) {
         row[key] = new Prisma.Decimal(String(value));
       } else {
@@ -433,6 +451,7 @@ export class FakePrisma {
   }
 
   async $transaction(arg: ((tx: FakePrisma) => Promise<unknown>) | Array<Promise<unknown>>): Promise<unknown> {
+    // Array form cannot roll back: its operations have already run. Only callback form is atomic.
     if (Array.isArray(arg)) return Promise.all(arg);
     return this.atomically(arg);
   }
