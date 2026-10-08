@@ -1043,9 +1043,9 @@ Authorization: Bearer eyJhbGciOi…
 **Response** `200`
 ```json
 [
-  { "id": "c1d2e3f4-…", "asset": "usdt", "amount": "150",    "status": "COMPLETED", "reason": null, "createdAt": "2026-10-02T08:00:00.000Z", "completedAt": "2026-10-02T08:03:00.000Z" },
-  { "id": "c2e3f4a5-…", "asset": "ngn",  "amount": "1000",   "status": "COMPLETED", "reason": null, "createdAt": "2026-10-01T15:00:00.000Z", "completedAt": "2026-10-01T15:00:00.000Z" },
-  { "id": "c3f4a5b6-…", "asset": "ngn",  "amount": "750000", "status": "ON_HOLD",   "reason": "That would take you past your ₦500,000 daily deposit limit. You have ₦200,000 left today.", "createdAt": "2026-10-01T14:00:00.000Z", "completedAt": null }
+  { "id": "c1d2e3f4-…", "asset": "usdt", "amount": "150",    "status": "COMPLETED", "reason": null, "provider": "QUIDAX",      "counterpartyBank": null,          "createdAt": "2026-10-02T08:00:00.000Z", "completedAt": "2026-10-02T08:03:00.000Z" },
+  { "id": "c2e3f4a5-…", "asset": "ngn",  "amount": "1000",   "status": "COMPLETED", "reason": null, "provider": "FLUTTERWAVE", "counterpartyBank": "Access Bank", "createdAt": "2026-10-01T15:00:00.000Z", "completedAt": "2026-10-01T15:00:00.000Z" },
+  { "id": "c3f4a5b6-…", "asset": "ngn",  "amount": "750000", "status": "ON_HOLD",   "reason": "That would take you past your ₦500,000 daily deposit limit. You have ₦200,000 left today.", "provider": "FLUTTERWAVE", "counterpartyBank": "GTBank", "createdAt": "2026-10-01T14:00:00.000Z", "completedAt": null }
 ]
 ```
 
@@ -1056,6 +1056,8 @@ Authorization: Bearer eyJhbGciOi…
 | `amount` | string | Full precision; format with the coin's `displayScale` |
 | `status` | string | `PENDING` (confirming) / `ON_HOLD` / `COMPLETED` / `FAILED` |
 | `reason` | string \| null | Why it's on hold or failed |
+| `provider` | string | `FLUTTERWAVE` for a bank transfer into the naira account (6.4); `QUIDAX` otherwise |
+| `counterpartyBank` | string \| null | The sending bank, for a naira bank transfer |
 | `createdAt` | string | |
 | `completedAt` | string \| null | When it was credited |
 

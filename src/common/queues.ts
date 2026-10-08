@@ -22,6 +22,8 @@ export const QUEUES = {
   RECONCILIATION: 'reconciliation',
   /** Chain list + transfer limit sync from Quidax. */
   SYNC: 'sync',
+  /** Naira deposits through Flutterwave: verify each payment, then credit it exactly once. */
+  FLUTTERWAVE: 'flutterwave',
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
@@ -39,6 +41,7 @@ export const JOBS = {
   SWEEP_WEBHOOK_GAPS: 'sweep-webhook-gaps',
   SYNC_NETWORKS: 'sync-networks',
   DAILY_DIGEST: 'daily-digest',
+  PROCESS_FLW_PAYIN: 'process-flw-payin',
 } as const;
 
 /** Retry with backoff. Anything touching money keeps trying rather than dropping. */

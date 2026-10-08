@@ -1,7 +1,11 @@
 import { Module } from '@nestjs/common';
 import { FlutterwaveModule } from '../flutterwave/flutterwave.module';
 import { KycModule } from '../kyc/kyc.module';
+import { LedgerModule } from '../ledger/ledger.module';
+import { RatesModule } from '../rates/rates.module';
 import { OpsAlertsService } from './ops-alerts.service';
+import { PayInProcessor } from './pay-in.processor';
+import { PayInService } from './pay-in.service';
 import { ReadinessService } from './readiness.service';
 import { VirtualAccountsController } from './virtual-accounts.controller';
 import { VirtualAccountsService } from './virtual-accounts.service';
@@ -11,9 +15,9 @@ import { VirtualAccountsService } from './virtual-accounts.service';
  * verification and crediting, the missed-webhook sweep, and readiness.
  */
 @Module({
-  imports: [FlutterwaveModule, KycModule],
+  imports: [FlutterwaveModule, KycModule, LedgerModule, RatesModule],
   controllers: [VirtualAccountsController],
-  providers: [OpsAlertsService, ReadinessService, VirtualAccountsService],
-  exports: [OpsAlertsService, ReadinessService, VirtualAccountsService],
+  providers: [OpsAlertsService, ReadinessService, VirtualAccountsService, PayInService, PayInProcessor],
+  exports: [OpsAlertsService, ReadinessService, VirtualAccountsService, PayInService],
 })
 export class NgnDepositsModule {}
