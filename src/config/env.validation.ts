@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { keyModeProblem } from '../flutterwave/key-mode';
 
 /**
  * Startup fails on anything missing or malformed. There is no Quidax sandbox,
@@ -145,6 +146,15 @@ export const envSchema = z
 
     TRADING_ENABLED: bool(true),
     NGN_WITHDRAWALS_ENABLED: bool(false),
+    // ── Flutterwave (the naira rail) ──
+    FLW_USE_MOCK: bool(true),
+    FLW_BASE_URL: z.string().url().default('https://api.flutterwave.com/v3'),
+    FLW_SECRET_KEY: z.string().optional(),
+    FLW_SECRET_HASH: z.string().optional(),
+    FLW_RATE_LIMIT_PER_MINUTE: int(120),
+    NGN_DEPOSITS_ENABLED: bool(false),
+    /** HMAC key for BVN/NIN hashes. Rotating it means users re-enter their number. */
+    KYC_HASH_KEY: z.string().optional(),
     MAX_TRADE_USD: num(2000),
     MAX_USER_DAILY_USD: num(5000),
     MAX_PLATFORM_DAILY_USD: num(50000),
@@ -164,6 +174,43 @@ export const envSchema = z
         code: z.ZodIssueCode.custom,
         path: ['QUIDAX_WEBHOOK_SECRET'],
         message: 'QUIDAX_WEBHOOK_SECRET is required when QUIDAX_USE_MOCK=false',
+      });
+    }
+    // The Flutterwave mock accepts any deposit; it must never run where real people are.
+    if (env.FLW_USE_MOCK && !['development', 'test'].includes(env.NODE_ENV)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['FLW_USE_MOCK'],
+        message: 'FLW_USE_MOCK=true is only allowed in development and test',
+      });
+    }
+    // Live keys only in production; test keys everywhere else.
+    if (!env.FLW_USE_MOCK && env.FLW_SECRET_KEY) {
+      const problem = keyModeProblem(env.FLW_SECRET_KEY, env.NODE_ENV);
+      if (problem) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['FLW_SECRET_KEY'], message: problem });
+      }
+    }
+    if (env.KYC_HASH_KEY !== undefined && env.KYC_HASH_KEY.length < 32) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['KYC_HASH_KEY'],
+        message: 'KYC_HASH_KEY must be at least 32 characters',
+      });
+    }
+    if ((env.NODE_ENV === 'staging' || env.NODE_ENV === 'production') && !env.KYC_HASH_KEY) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['KYC_HASH_KEY'],
+        message: 'KYC_HASH_KEY is required in staging and production',
+      });
+    }
+    // The secret key rides in every request's Authorization header (spec §12.9).
+    if ((env.NODE_ENV === 'staging' || env.NODE_ENV === 'production') && !env.FLW_BASE_URL.startsWith('https://')) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['FLW_BASE_URL'],
+        message: 'FLW_BASE_URL must use https in staging and production',
       });
     }
     // Production must never quietly run against fixtures.
