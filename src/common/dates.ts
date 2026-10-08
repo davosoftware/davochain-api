@@ -22,3 +22,13 @@ export function formatLagos(date: Date): string {
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? '';
   return `${get('day')} ${get('month')} ${get('year')} at ${get('hour')}:${get('minute')} WAT`;
 }
+
+/** The calendar date in Lagos as YYYY-MM-DD — the format Flutterwave's date filters take. */
+export function lagosDate(date: Date): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: LAGOS,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
