@@ -326,7 +326,11 @@ export class PayInService {
 
     if (result.kind === 'NOOP') {
       const now = await this.prisma.flutterwaveCollection.findUnique({ where: { flwTransactionId: id } });
-      return { outcome: now?.outcome ?? CollectionOutcome.UNVERIFIED, changed: false };
+      // A clash on anything but a finished deposit (say, a balance-row race) must retry, not complete the job.
+      if (!now || !SETTLED_OUTCOMES.includes(now.outcome)) {
+        throw new Error(`Flutterwave payment ${id} is not settled after a conflict; retrying`);
+      }
+      return { outcome: now.outcome, changed: false };
     }
     if (result.kind === 'FEE_MISMATCH') {
       await this.alerts.raise(

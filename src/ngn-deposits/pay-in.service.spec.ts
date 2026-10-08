@@ -270,9 +270,30 @@ describe('PayInService.processPayment', () => {
     const { svc, db, posts, notifications, pay } = await setup();
     const id = pay();
     db.failNext('transaction', 'create', p2002(['reference']));
-    await expect(svc.processPayment(id)).resolves.toMatchObject({ changed: false });
+    // The winner's commit lands after our attempt rolls back.
+    const real = db.serializable.bind(db);
+    jest.spyOn(db, 'serializable').mockImplementationOnce((async (fn: never) => {
+      try {
+        return await real(fn);
+      } catch (err) {
+        await db.flutterwaveCollection.updateMany({ where: { flwTransactionId: id }, data: { outcome: 'CREDITED' } });
+        throw err;
+      }
+    }) as never);
+    await expect(svc.processPayment(id)).resolves.toEqual({ outcome: 'CREDITED', changed: false });
+    expect(db.rows('flutterwaveCollection')[0].outcome).toBe('CREDITED');
     expect(posts).toHaveLength(0);
     expect(notifications.notify).not.toHaveBeenCalled();
+  });
+
+  it('retries (throws) when a conflict leaves the payment unsettled', async () => {
+    const { svc, db, posts, notifications, pay } = await setup();
+    const id = pay();
+    db.failNext('transaction', 'create', p2002(['reference']));
+    await expect(svc.processPayment(id)).rejects.toThrow(/not settled/);
+    expect(posts).toHaveLength(0);
+    expect(notifications.notify).not.toHaveBeenCalled();
+    expect(db.rows('flutterwaveCollection')[0].outcome).not.toBe('CREDITED');
   });
 
   it("credits, but flags, a deposit from someone whose name isn't the user's", async () => {
