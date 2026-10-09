@@ -97,6 +97,23 @@ describe('FlutterwaveClient', () => {
     expect(seen).toHaveLength(4);
   });
 
+  it('a balance probe asks once, without retrying', async () => {
+    replies.push({ status: 503, body: '{"status":"error"}' }, ok({ currency: 'NGN', available_balance: 1, ledger_balance: 1 }));
+    await expect(client().getBalance('NGN', { probe: true })).rejects.toBeInstanceOf(FlutterwaveUnknownError);
+    expect(seen).toHaveLength(1);
+  });
+
+  it('a balance probe gives up at its own short deadline', async () => {
+    replies.push({ ...ok({ currency: 'NGN', available_balance: 1, ledger_balance: 1 }), delayMs: 1_000 });
+    const c = new FlutterwaveClient(
+      { baseUrl: base, rateLimitPerMinute: 100_000, secretKey: async () => 'FLWSECK_TEST-unit-X' } as never,
+      { backoffMs: [0, 0, 0], timeoutMs: 5_000, probeTimeoutMs: 100 },
+    );
+    const started = Date.now();
+    await expect(c.getBalance('NGN', { probe: true })).rejects.toBeInstanceOf(FlutterwaveUnknownError);
+    expect(Date.now() - started).toBeLessThan(900);
+  });
+
   it('retries a read after a rate limit', async () => {
     replies.push(
       { status: 429, body: '{"status":"error","message":"slow down"}' },

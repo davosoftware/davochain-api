@@ -1,6 +1,6 @@
 import { request } from 'undici';
 import { Decimal, dec } from '../common/money';
-import { FlutterwaveClient } from './flutterwave.client';
+import { FlutterwaveClient, ReadOptions } from './flutterwave.client';
 import { FlutterwaveConfig } from './flutterwave.config';
 import { FlutterwaveError, redactIds } from './flutterwave.errors';
 import type {
@@ -138,7 +138,7 @@ export class FlutterwaveMockClient extends FlutterwaveClient {
     };
   }
 
-  async getBalance(currency: string): Promise<FlwBalance> {
+  async getBalance(currency: string, _read: ReadOptions = {}): Promise<FlwBalance> {
     this.maybeFail('getBalance');
     return { currency: currency.toUpperCase(), available_balance: '0', ledger_balance: '0' };
   }

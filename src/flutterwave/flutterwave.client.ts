@@ -19,10 +19,18 @@ export interface FlutterwaveClientOptions {
   backoffMs?: number[];
   /** Per-request timeout: longer than Flutterwave's own 28 s, so its 503 arrives first. */
   timeoutMs?: number;
+  /** Deadline for a probe: one quick look that must not hold a caller up. */
+  probeTimeoutMs?: number;
+}
+
+export interface ReadOptions {
+  /** One attempt, a short deadline, no retries: for checks a person is waiting on. */
+  probe?: boolean;
 }
 
 const DEFAULT_BACKOFF_MS = [1_000, 2_000, 4_000];
 const DEFAULT_TIMEOUT_MS = 35_000;
+const DEFAULT_PROBE_TIMEOUT_MS = 5_000;
 const NUMERIC_ID = /^\d{1,19}$/;
 const ORDER_REF = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -31,6 +39,7 @@ interface CallOptions {
   query?: Record<string, string | number | undefined>;
   /** Writes are sent once. Only reads are retried. */
   write: boolean;
+  probe?: boolean;
 }
 
 /**
@@ -48,6 +57,7 @@ export class FlutterwaveClient {
   private readonly bucket: TokenBucket;
   private readonly backoffMs: number[];
   private readonly timeoutMs: number;
+  private readonly probeTimeoutMs: number;
 
   constructor(
     protected readonly cfg: FlutterwaveConfig,
@@ -56,6 +66,7 @@ export class FlutterwaveClient {
     this.bucket = TokenBucket.perMinute(cfg.rateLimitPerMinute, 'flutterwave');
     this.backoffMs = options.backoffMs ?? DEFAULT_BACKOFF_MS;
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.probeTimeoutMs = options.probeTimeoutMs ?? DEFAULT_PROBE_TIMEOUT_MS;
   }
 
   // ── virtual accounts ──────────────────────────────────────
@@ -106,9 +117,9 @@ export class FlutterwaveClient {
 
   // ── balances ──────────────────────────────────────────────
 
-  async getBalance(currency: string): Promise<FlwBalance> {
+  async getBalance(currency: string, read: ReadOptions = {}): Promise<FlwBalance> {
     const path = `/balances/${encodeURIComponent(currency.toUpperCase())}`;
-    return this.requireData(await this.call<FlwBalance>('GET', path, { write: false }), 'GET', path);
+    return this.requireData(await this.call<FlwBalance>('GET', path, { write: false, probe: read.probe }), 'GET', path);
   }
 
   // ── transport ─────────────────────────────────────────────
@@ -123,7 +134,8 @@ export class FlutterwaveClient {
     for (const [k, v] of Object.entries(opts.query ?? {})) {
       if (v !== undefined && v !== '') url.searchParams.set(k, String(v));
     }
-    const attempts = opts.write ? 1 : this.backoffMs.length + 1;
+    const attempts = opts.write || opts.probe ? 1 : this.backoffMs.length + 1;
+    const timeoutMs = opts.probe ? Math.min(this.probeTimeoutMs, this.timeoutMs) : this.timeoutMs;
     let last: FlutterwaveError | FlutterwaveUnknownError | null = null;
 
     for (let attempt = 1; attempt <= attempts; attempt++) {
@@ -140,10 +152,10 @@ export class FlutterwaveClient {
             accept: 'application/json',
           },
           body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-          headersTimeout: this.timeoutMs,
-          bodyTimeout: this.timeoutMs,
+          headersTimeout: timeoutMs,
+          bodyTimeout: timeoutMs,
           // undici checks its own timeouts on a coarse tick; this is the exact deadline.
-          signal: AbortSignal.timeout(this.timeoutMs),
+          signal: AbortSignal.timeout(timeoutMs),
         });
         httpStatus = res.statusCode;
         const text = await res.body.text();

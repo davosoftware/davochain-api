@@ -43,6 +43,8 @@ export interface ReadinessReport {
 @Injectable()
 export class ReadinessService {
   private cached: { at: number; report: ReadinessReport } | null = null;
+  /** The check under way, if any: concurrent callers share it instead of each asking Flutterwave. */
+  private building: Promise<ReadinessReport> | null = null;
 
   constructor(
     private readonly cfg: FlutterwaveConfig,
@@ -58,9 +60,17 @@ export class ReadinessService {
 
   async report(force = false): Promise<ReadinessReport> {
     if (!force && this.cached && Date.now() - this.cached.at < CACHE_MS) return this.cached.report;
-    const report = await this.build();
-    this.cached = { at: Date.now(), report };
-    return report;
+    if (!this.building) {
+      this.building = this.build()
+        .then((report) => {
+          this.cached = { at: Date.now(), report };
+          return report;
+        })
+        .finally(() => {
+          this.building = null;
+        });
+    }
+    return this.building;
   }
 
   private async build(): Promise<ReadinessReport> {
@@ -77,7 +87,9 @@ export class ReadinessService {
     let reachableDetail: string | null = null;
     if (keyUsable) {
       try {
-        const b = await this.client.getBalance('NGN');
+        // A probe: one attempt, a few seconds at most, so a slow Flutterwave can't
+        // hold the account screen or spend the rate limit deposits need.
+        const b = await this.client.getBalance('NGN', { probe: true });
         balance = { currency: b.currency, available: b.available_balance, ledger: b.ledger_balance };
       } catch (err) {
         reachableDetail = redactIds((err as Error).message);

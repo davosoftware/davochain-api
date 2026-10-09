@@ -46,6 +46,20 @@ describe('ReadinessService', () => {
     expect(r.checks.filter((c) => c.required).every((c) => c.ok)).toBe(true);
   });
 
+  it('probes the balance once, without retries, so a slow Flutterwave cannot stall the screen', async () => {
+    const { svc, client } = setup();
+    await svc.report();
+    expect(client.getBalance).toHaveBeenCalledWith('NGN', { probe: true });
+  });
+
+  it('shares one check between concurrent requests', async () => {
+    const { svc, client } = setup();
+    const reports = await Promise.all([svc.report(), svc.report(), svc.report(true)]);
+    expect(client.getBalance).toHaveBeenCalledTimes(1);
+    expect(reports[0]).toBe(reports[1]);
+    expect(reports[1]).toBe(reports[2]);
+  });
+
   it('says LIVE in production', async () => {
     expect((await setup({ env: 'production' }).svc.report()).mode).toBe('LIVE');
   });
