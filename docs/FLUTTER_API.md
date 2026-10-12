@@ -147,7 +147,7 @@ Every endpoint has a request limit. Going over it returns **`429`** with a `Retr
 - **Limits per IP are shared** by everyone behind the same IP (an office Wi-Fi, some mobile networks). A user can see `429` without having done much themselves. The message tells them how long to wait.
 - **Refresh (2.3) on `429`:** the session is **not** expired. Wait `Retry-After` seconds and refresh again. Don't sign the user out.
 - **A `503` on the auth routes is temporary.** Show the message and let the user try again. It is not a wrong password, and it does **not** count toward the 5-failure lock.
-- **The account lock (2.2) is separate from rate limits:** 5 wrong passwords in a row lock the account for 15 minutes (`403`, with the unlock time). A correct sign-in or a password reset clears it.
+- **The account lock (2.2) is separate from rate limits:** 5 wrong passwords in a row lock the account for 15 minutes (`403`, with the unlock time). While locked, even the right password gets the `403`. A password reset (2.6 / 2.7) clears it; otherwise it lifts at the time shown.
 
 ## 0.5 Tokens and sessions
 
