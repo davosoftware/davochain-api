@@ -13,6 +13,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PasswordService } from './password.service';
+import { recordFailedLogin } from './failed-logins';
 import { TemplatedMailService } from '../cms/templated-mail.service';
 import { formatLagos } from '../common/dates';
 import { UserOtpService } from './user-otp.service';
@@ -37,9 +38,6 @@ interface SessionContext {
   userAgent?: string;
   ip?: string;
 }
-
-const MAX_FAILED_LOGINS = 5;
-const LOCKOUT_MINUTES = 15;
 
 @Injectable()
 export class AuthService {
@@ -165,7 +163,7 @@ export class AuthService {
 
     const ok = await this.passwords.verify(password, user.passwordHash);
     if (!ok) {
-      await this.recordFailedLogin(user.id, user.failedLogins);
+      await recordFailedLogin(this.prisma, 'users', user.id);
       throw new UnauthorizedException('Incorrect email or password');
     }
 
@@ -208,18 +206,6 @@ export class AuthService {
     await this.prisma.user.update({ where: { id: user.id }, data });
 
     return this.issueTokens(user.id, ctx);
-  }
-
-  private async recordFailedLogin(userId: string, current: number): Promise<void> {
-    const next = current + 1;
-    await this.prisma.user.update({
-      where: { id: userId },
-      data: {
-        failedLogins: next,
-        lockedUntil:
-          next >= MAX_FAILED_LOGINS ? new Date(Date.now() + LOCKOUT_MINUTES * 60_000) : undefined,
-      },
-    });
   }
 
   // ── tokens ──────────────────────────────────────────────────
