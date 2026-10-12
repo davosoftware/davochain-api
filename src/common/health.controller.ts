@@ -1,5 +1,6 @@
 import { Controller, Get } from '@nestjs/common';
 import { Public } from '../auth/public.decorator';
+import { RateLimit } from '../rate-limit/rate-limit.decorator';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -11,6 +12,7 @@ export class HealthController {
   ) {}
 
   @Public()
+  @RateLimit('public')
   @Get()
   async check() {
     let database = 'down';

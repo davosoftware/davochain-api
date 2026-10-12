@@ -16,6 +16,7 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import type { Request } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { Public } from '../auth/public.decorator';
+import { RateLimit } from '../rate-limit/rate-limit.decorator';
 import { parseJsonExact } from '../common/exact-json';
 import { FlutterwaveConfig } from '../flutterwave/flutterwave.config';
 import { redactIds } from '../flutterwave/flutterwave.errors';
@@ -60,6 +61,7 @@ export class FlutterwaveWebhookController {
   ) {}
 
   @Public()
+  @RateLimit('webhooks')
   @Post('flutterwave')
   @HttpCode(200)
   async receive(

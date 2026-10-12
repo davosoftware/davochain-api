@@ -6,6 +6,7 @@ import type { Request } from 'express';
 import { PrismaService } from '../prisma/prisma.service';
 import { SignatureService } from './signature.service';
 import { Public } from '../auth/public.decorator';
+import { RateLimit } from '../rate-limit/rate-limit.decorator';
 import { JOBS, QUEUES, jobId } from '../common/queues';
 import { ApiTags } from '@nestjs/swagger';
 
@@ -33,6 +34,7 @@ export class WebhooksController {
   ) {}
 
   @Public()
+  @RateLimit('webhooks')
   @Post('quidax')
   @HttpCode(200)
   async receive(

@@ -10,6 +10,7 @@ import {
   ResetPasswordDto,
 } from './dto';
 import { Public } from './public.decorator';
+import { RateLimit } from '../rate-limit/rate-limit.decorator';
 import { CurrentUser } from './current-user.decorator';
 import type { JwtPayload } from './auth.service';
 import { ApiTags } from '@nestjs/swagger';
@@ -24,12 +25,14 @@ export class AuthController {
   }
 
   @Public()
+  @RateLimit('auth.register')
   @Post('register')
   async register(@Body() dto: RegisterDto, @Req() req: Request) {
     return this.auth.register(dto, this.ctx(req));
   }
 
   @Public()
+  @RateLimit('auth.login')
   @Post('login')
   @HttpCode(200)
   async login(@Body() dto: LoginDto, @Req() req: Request) {
@@ -37,6 +40,7 @@ export class AuthController {
   }
 
   @Public()
+  @RateLimit('auth.refresh')
   @Post('refresh')
   @HttpCode(200)
   async refresh(@Body() dto: RefreshDto, @Req() req: Request) {
@@ -58,6 +62,7 @@ export class AuthController {
    * are registered here.
    */
   @Public()
+  @RateLimit('auth.reset')
   @Post('reset/request')
   @HttpCode(200)
   async requestReset(@Body() dto: RequestPasswordResetDto) {
@@ -77,12 +82,14 @@ export class AuthController {
    * code as good as the password itself. They sign in with what they chose.
    */
   @Public()
+  @RateLimit('auth.resetConfirm')
   @Post('reset/confirm')
   @HttpCode(204)
   async confirmReset(@Body() dto: ResetPasswordDto): Promise<void> {
     await this.auth.resetPassword(dto.email, dto.code, dto.newPassword);
   }
 
+  @RateLimit('auth.changePassword')
   @Post('change-password')
   @HttpCode(204)
   async changePassword(

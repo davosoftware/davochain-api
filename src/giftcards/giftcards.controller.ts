@@ -5,6 +5,7 @@ import { GiftCardsService } from './giftcards.service';
 import { SubmitGiftCardDto } from './dto';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { Public } from '../auth/public.decorator';
+import { RateLimit } from '../rate-limit/rate-limit.decorator';
 
 @ApiTags('giftcards')
 @ApiBearerAuth('user')
@@ -19,6 +20,7 @@ export class GiftCardsController {
    * the app should be able to see what a card is worth.
    */
   @Public()
+  @RateLimit('public')
   @Get('catalogue')
   catalogue() {
     return this.giftcards.catalogue();
@@ -26,6 +28,7 @@ export class GiftCardsController {
 
   /** A brand logo. Public, and cached hard — the URL carries a version. */
   @Public()
+  @RateLimit('public')
   @Get('brands/:id/image')
   async brandImage(@Param('id') id: string, @Res() res: Response) {
     const { image, type } = await this.giftcards.brandImage(id);

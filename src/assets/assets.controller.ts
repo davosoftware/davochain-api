@@ -1,6 +1,7 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
 import { AssetsService } from './assets.service';
 import { Public } from '../auth/public.decorator';
+import { RateLimit } from '../rate-limit/rate-limit.decorator';
 import { ApiTags } from '@nestjs/swagger';
 
 @ApiTags('assets')
@@ -10,6 +11,7 @@ export class AssetsController {
 
   /** The crypto page. Public — a signed-out user can browse what is listed. */
   @Public()
+  @RateLimit('public')
   @Get()
   async list() {
     const assets = await this.assets.listed();
@@ -29,6 +31,7 @@ export class AssetsController {
   }
 
   @Public()
+  @RateLimit('public')
   @Get(':code/networks')
   async networks(
     @Param('code') code: string,

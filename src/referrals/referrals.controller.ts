@@ -4,6 +4,7 @@ import { ReferralsService } from './referrals.service';
 import { SetUsernameDto } from './dto';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { Public } from '../auth/public.decorator';
+import { RateLimit } from '../rate-limit/rate-limit.decorator';
 
 @ApiTags('referrals')
 @ApiBearerAuth('user')
@@ -40,6 +41,7 @@ export class ReferralsController {
    * nothing that would turn guessing codes into a way to harvest identities.
    */
   @Public()
+  @RateLimit('public')
   @Get('code/:code')
   async check(@Param('code') code: string) {
     const owner = await this.referrals.resolve(code);

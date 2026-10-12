@@ -2,6 +2,7 @@ import { Controller, Get, Header, Param, Res } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
 import { Public } from '../auth/public.decorator';
+import { RateLimit } from '../rate-limit/rate-limit.decorator';
 import { SiteSettingsService } from '../admin/site-settings.service';
 import { EmailTemplateService } from '../cms/email-template.service';
 import { SocialLinksService } from '../cms/social-links.service';
@@ -18,6 +19,7 @@ import { SocialLinksService } from '../cms/social-links.service';
  */
 @Public()
 @ApiTags('site')
+@RateLimit('public')
 @Controller('site')
 export class SiteController {
   constructor(

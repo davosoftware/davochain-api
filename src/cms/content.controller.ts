@@ -1,6 +1,7 @@
 import { Controller, Get, Header, Param } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Public } from '../auth/public.decorator';
+import { RateLimit } from '../rate-limit/rate-limit.decorator';
 import { CmsService } from './cms.service';
 
 /**
@@ -15,6 +16,7 @@ import { CmsService } from './cms.service';
  */
 @Public()
 @ApiTags('content')
+@RateLimit('public')
 @Controller('content')
 export class ContentController {
   constructor(private readonly cms: CmsService) {}

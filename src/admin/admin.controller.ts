@@ -92,6 +92,7 @@ import {
   VirtualAccountStatusDto,
 } from './dto';
 import { Public } from '../auth/public.decorator';
+import { RateLimit } from '../rate-limit/rate-limit.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { AssetsService } from '../assets/assets.service';
 import { InventoryService } from '../inventory/inventory.service';
@@ -142,6 +143,7 @@ function parseKind(value: string): FeeKind {
 @UseGuards(AdminGuard)
 @ApiTags('admin')
 @ApiBearerAuth('admin')
+@RateLimit('default')
 @Controller('admin')
 export class AdminController {
   constructor(
@@ -1179,6 +1181,7 @@ export class AdminController {
    * Returns a replacement token. The caller must store it — every other
    * session, including this one's old token, stops working immediately.
    */
+  @RateLimit('auth.changePassword')
   @Post('me/password')
   @HttpCode(200)
   async changePassword(
@@ -1743,6 +1746,7 @@ export class AdminAuthController {
     private readonly prisma: PrismaService,
   ) {}
 
+  @RateLimit('auth.login')
   @Post('login')
   @HttpCode(200)
   login(@Body() dto: AdminLoginDto, @Req() req: Request) {
@@ -1759,6 +1763,7 @@ export class AdminAuthController {
    * cannot sign in. The response is identical whether or not the email matched
    * an account, because a different answer is a way to enumerate admins.
    */
+  @RateLimit('auth.reset')
   @Post('reset/request')
   @HttpCode(200)
   async requestReset(@Body() dto: RequestResetDto) {
@@ -1779,6 +1784,7 @@ export class AdminAuthController {
   }
 
   /** Finish it. Returns a token, so a reset lands them signed in. */
+  @RateLimit('auth.resetConfirm')
   @Post('reset/confirm')
   @HttpCode(200)
   async confirmReset(@Body() dto: ResetPasswordDto, @Req() req: Request) {
@@ -1812,12 +1818,14 @@ export class AdminAuthController {
    * token failed: "expired" and "never existed" are the same answer, because
    * telling the two apart confirms a guessed token was real.
    */
+  @RateLimit('auth.resetConfirm')
   @Get('invite')
   checkInvite(@Query('token') token: string) {
     return this.admins.checkInvite(token ?? '');
   }
 
   /** Set the password they chose and burn the link. */
+  @RateLimit('auth.resetConfirm')
   @Post('invite/accept')
   @HttpCode(200)
   async acceptInvite(@Body() dto: AcceptInviteDto, @Req() req: Request) {
