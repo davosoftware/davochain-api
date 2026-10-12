@@ -20,6 +20,17 @@ describe('rate limiting environment rules', () => {
     expect(issues({ NODE_ENV: 'development' }, 'TRUST_PROXY_HOPS')).toEqual([]);
   });
 
+  it("accepts the proxy's own addresses instead of a hop count in production", () => {
+    expect(issues({ NODE_ENV: 'production', TRUST_PROXY_ADDRESSES: '127.0.0.1' }, 'TRUST_PROXY_HOPS')).toEqual([]);
+    expect(issues({ NODE_ENV: 'production', TRUST_PROXY_ADDRESSES: 'loopback, 10.0.0.5' }, 'TRUST_PROXY_ADDRESSES')).toEqual([]);
+    expect(envSchema.parse({ ...BASE, TRUST_PROXY_ADDRESSES: 'loopback, 10.0.0.5' }).TRUST_PROXY_ADDRESSES).toEqual(['loopback', '10.0.0.5']);
+  });
+
+  it('refuses both settings at once, and an entry Express would not understand', () => {
+    expect(issues({ TRUST_PROXY_ADDRESSES: 'loopback', TRUST_PROXY_HOPS: '1' }, 'TRUST_PROXY_ADDRESSES')[0]).toMatch(/not both/);
+    expect(issues({ TRUST_PROXY_ADDRESSES: 'nginx.local' }, 'TRUST_PROXY_ADDRESSES')[0]).toMatch(/nginx.local/);
+  });
+
   it('takes TRUST_PROXY_HOPS as a whole number from 0 to 5', () => {
     for (const bad of ['-1', '1.5', 'x', '6']) {
       expect(issues({ NODE_ENV: 'development', TRUST_PROXY_HOPS: bad }, 'TRUST_PROXY_HOPS').length).toBeGreaterThan(0);

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { keyModeProblem } from '../flutterwave/key-mode';
 import { rateLimitEnvProblems } from '../rate-limit/policies';
+import { isProxyAddress } from '../rate-limit/trust-proxy';
 
 /**
  * Startup fails on anything missing or malformed. There is no Quidax sandbox,
@@ -54,13 +55,25 @@ export const envSchema = z
      * How many reverse proxies sit in front of the API (spec §2.5). The client IP
      * every rate limit keys on is the X-Forwarded-For entry this many hops from
      * the right; anything further left was written by the client and is ignored.
-     * Nginx in front: 1. Cloudflare then Nginx: 2. Required in production.
+     * Nginx in front: 1. Cloudflare then Nginx: 2.
+     *
+     * A hop count trusts whoever connects. Prefer TRUST_PROXY_ADDRESSES in
+     * production; use this only where nothing but the proxy can reach the API.
      */
     TRUST_PROXY_HOPS: z
       .string()
       .optional()
       .transform((v) => (v === undefined || v === '' ? undefined : Number(v)))
       .pipe(z.number().int().min(0).max(5).optional()),
+
+    /**
+     * The reverse proxy's own address(es), comma-separated: `loopback` when
+     * Nginx runs on the same machine, its private IP (or a CIDR) otherwise.
+     * X-Forwarded-For is believed only on connections from these, so a client
+     * that reaches the API port directly cannot fake its IP. Preferred over
+     * TRUST_PROXY_HOPS; one of the two is required in production.
+     */
+    TRUST_PROXY_ADDRESSES: csv,
 
     /** Password hashes allowed at once per process (~32 MB each), and how many may wait (spec §4.3). */
     PASSWORD_HASH_CONCURRENCY: int(4),
@@ -178,12 +191,30 @@ export const envSchema = z
     MARGIN_DEVIATION_TRIP_BPS: int(200),
   })
   .superRefine((env, ctx) => {
-    if (env.NODE_ENV === 'production' && env.TRUST_PROXY_HOPS === undefined) {
+    const proxyAddresses = env.TRUST_PROXY_ADDRESSES ?? [];
+    if (env.NODE_ENV === 'production' && env.TRUST_PROXY_HOPS === undefined && proxyAddresses.length === 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['TRUST_PROXY_HOPS'],
-        message: 'TRUST_PROXY_HOPS is required in production (1 behind Nginx); every rate limit keys on the client IP',
+        message:
+          'TRUST_PROXY_ADDRESSES (preferred) or TRUST_PROXY_HOPS is required in production; every rate limit keys on the client IP',
       });
+    }
+    if (env.TRUST_PROXY_HOPS !== undefined && proxyAddresses.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['TRUST_PROXY_ADDRESSES'],
+        message: 'Set TRUST_PROXY_ADDRESSES or TRUST_PROXY_HOPS, not both',
+      });
+    }
+    for (const entry of proxyAddresses) {
+      if (!isProxyAddress(entry)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['TRUST_PROXY_ADDRESSES'],
+          message: `"${entry}" is not an IP, an IP/prefix, or loopback/linklocal/uniquelocal`,
+        });
+      }
     }
     if (env.PASSWORD_HASH_CONCURRENCY < 1) {
       ctx.addIssue({
