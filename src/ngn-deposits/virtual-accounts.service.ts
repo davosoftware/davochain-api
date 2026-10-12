@@ -15,7 +15,7 @@ import { FlutterwaveClient } from '../flutterwave/flutterwave.client';
 import { FlutterwaveError, redactIds } from '../flutterwave/flutterwave.errors';
 import type { FlwStaticAccount } from '../flutterwave/flutterwave.types';
 import { KycHashService } from '../kyc/kyc-hash';
-import { OpsAlertsService } from './ops-alerts.service';
+import { OpsAlertsService } from '../common/ops-alerts/ops-alerts.service';
 import { ReadinessService } from './readiness.service';
 import { txRefForUser, userIdFromTxRef } from './tx-ref';
 

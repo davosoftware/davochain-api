@@ -22,7 +22,7 @@ import { FlutterwaveError, redactIds } from '../flutterwave/flutterwave.errors';
 import type { FlwTransaction } from '../flutterwave/flutterwave.types';
 import { depositBalances, depositLegs } from './deposit-legs';
 import { nameMatches } from './name-match';
-import { OpsAlertsService } from './ops-alerts.service';
+import { OpsAlertsService } from '../common/ops-alerts/ops-alerts.service';
 import { VirtualAccountsService } from './virtual-accounts.service';
 
 const HOUR = 3_600_000;

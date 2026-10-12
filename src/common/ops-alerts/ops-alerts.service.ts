@@ -1,14 +1,14 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AlertType } from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
-import { MailService } from '../common/mail.service';
-import { redactIds } from '../flutterwave/flutterwave.errors';
+import { PrismaService } from '../../prisma/prisma.service';
+import { MailService } from '../mail.service';
+import { redactIds } from '../../flutterwave/flutterwave.errors';
 
 const HOUR = 3_600_000;
 
 /**
- * Operational alerts for the naira rail: one Alert row (the record and the
+ * Operational alerts: one Alert row (the record and the
  * dedupe key, held in `assetCode`) and one email per recipient.
  *
  * Two rules. It never throws, because an alert that fails must not fail the

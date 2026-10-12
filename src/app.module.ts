@@ -3,6 +3,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { ConfigModule } from './config/config.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { CommonModule } from './common/common.module';
+import { OpsAlertsModule } from './common/ops-alerts/ops-alerts.module';
 import { KycLimitsModule } from './kyc/kyc-limits.module';
 import { QueueModule } from './common/queue.module';
 import { RateLimitModule } from './rate-limit/rate-limit.module';
@@ -36,6 +37,7 @@ import { HealthController } from './common/health.controller';
     ConfigModule,
     PrismaModule,
     CommonModule,
+    OpsAlertsModule,
     KycLimitsModule,
     QueueModule,
     RateLimitModule,

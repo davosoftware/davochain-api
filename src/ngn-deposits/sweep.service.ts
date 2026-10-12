@@ -6,7 +6,7 @@ import { JobLeaseService } from '../common/job-lease.service';
 import { lagosDate } from '../common/dates';
 import { FlutterwaveClient } from '../flutterwave/flutterwave.client';
 import { FlutterwaveError, redactIds } from '../flutterwave/flutterwave.errors';
-import { OpsAlertsService } from './ops-alerts.service';
+import { OpsAlertsService } from '../common/ops-alerts/ops-alerts.service';
 import { PayInService, SETTLED_OUTCOMES } from './pay-in.service';
 import { hasOurPrefix } from './tx-ref';
 import { VirtualAccountsService } from './virtual-accounts.service';

@@ -1,6 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { AlertType } from '@prisma/client';
-import { FakePrisma } from './testing/fake-prisma';
+import { FakePrisma } from '../../ngn-deposits/testing/fake-prisma';
 import { OpsAlertsService } from './ops-alerts.service';
 
 function setup(defaults: string[] = ['ops@davochain.test']) {

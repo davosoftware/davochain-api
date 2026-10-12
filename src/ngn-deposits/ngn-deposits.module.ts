@@ -3,7 +3,6 @@ import { FlutterwaveModule } from '../flutterwave/flutterwave.module';
 import { KycModule } from '../kyc/kyc.module';
 import { LedgerModule } from '../ledger/ledger.module';
 import { RatesModule } from '../rates/rates.module';
-import { OpsAlertsService } from './ops-alerts.service';
 import { PayInProcessor } from './pay-in.processor';
 import { PayInService } from './pay-in.service';
 import { ReadinessService } from './readiness.service';
@@ -19,7 +18,7 @@ import { FlutterwaveWebhookController } from './flutterwave-webhook.controller';
 @Module({
   imports: [FlutterwaveModule, KycModule, LedgerModule, RatesModule],
   controllers: [VirtualAccountsController, FlutterwaveWebhookController],
-  providers: [OpsAlertsService, ReadinessService, VirtualAccountsService, PayInService, PayInProcessor, SweepService],
-  exports: [OpsAlertsService, ReadinessService, VirtualAccountsService, PayInService],
+  providers: [ReadinessService, VirtualAccountsService, PayInService, PayInProcessor, SweepService],
+  exports: [ReadinessService, VirtualAccountsService, PayInService],
 })
 export class NgnDepositsModule {}

@@ -19,7 +19,7 @@ import { Public } from '../auth/public.decorator';
 import { parseJsonExact } from '../common/exact-json';
 import { FlutterwaveConfig } from '../flutterwave/flutterwave.config';
 import { redactIds } from '../flutterwave/flutterwave.errors';
-import { OpsAlertsService } from './ops-alerts.service';
+import { OpsAlertsService } from '../common/ops-alerts/ops-alerts.service';
 import { PayInService } from './pay-in.service';
 import { parseFlutterwaveWebhook } from './webhook-payload';
 
