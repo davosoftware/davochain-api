@@ -4,7 +4,7 @@
 | --- | --- |
 | **For** | The Flutter developer building the DavoChain mobile app |
 | **API version** | `v1` |
-| **Last verified** | 2 October 2026, against the API source (`api/src/`) and a running local instance |
+| **Last verified** | 2 October 2026, against the API source (`api/src/`) and a running local instance. Rate limiting (0.4.1, 2.x errors) added 12 October 2026. |
 | **Source of truth** | The API code. If this guide and the API disagree, tell the backend team so the guide gets fixed. |
 | **Replaces** | `admin/docs/FLUTTER.md` |
 
@@ -25,7 +25,7 @@
 ## Contents
 
 **Part 0: Before you start**
-[0.1 Base URL](#01-base-url) · [0.2 Headers](#02-headers) · [0.3 Data formats](#03-data-formats) · [0.4 Errors](#04-errors) · [0.5 Tokens and sessions](#05-tokens-and-sessions) · [0.6 KYC gate](#06-kyc-gate) · [0.7 Idempotency-Key](#07-idempotency-key) · [0.8 Transaction statuses](#08-transaction-statuses) · [0.9 Image URLs](#09-image-urls)
+[0.1 Base URL](#01-base-url) · [0.2 Headers](#02-headers) · [0.3 Data formats](#03-data-formats) · [0.4 Errors](#04-errors) · [0.4.1 Rate limits](#041-rate-limits) · [0.5 Tokens and sessions](#05-tokens-and-sessions) · [0.6 KYC gate](#06-kyc-gate) · [0.7 Idempotency-Key](#07-idempotency-key) · [0.8 Transaction statuses](#08-transaction-statuses) · [0.9 Image URLs](#09-image-urls)
 
 **Part 1: Endpoints**
 
@@ -123,8 +123,31 @@ In development you can try every endpoint in the browser at `http://<host>/docs`
 | 404 | Not found, or not yours (the API doesn't tell you which) | Show `message` |
 | 409 | Conflict (see each endpoint) | See each endpoint |
 | 413 | Request body over 1 MB | Make photos smaller (9.3) |
-| 429 | Too many requests. **Not sent today, but it will be.** | Wait for the `Retry-After` seconds, then retry |
-| 500 / 503 | Server or provider problem | "Something went wrong, please try again." **Never** auto-retry money actions without the same Idempotency-Key. |
+| 429 | Too many requests (rate limit, §0.4.1). Body `{ "statusCode": 429, "message": "Too many attempts. Try again in N seconds." }` and a `Retry-After: N` header | Show `message`. Disable the button for `Retry-After` seconds. **Never** retry automatically on the auth routes. |
+| 500 / 503 | Server or provider problem. On the auth routes a `503` can also mean the sign-in protection is briefly unavailable (`"Temporarily unavailable. Try again shortly."`) or the server is busy (`"The service is busy, try again shortly"`) | "Something went wrong, please try again." **Never** auto-retry money actions without the same Idempotency-Key. |
+
+### 0.4.1 Rate limits
+
+Every endpoint has a request limit. Going over it returns **`429`** with a `Retry-After` header (seconds). The limits below are the defaults. The backend can change them without an app release, so **never hard-code them**: always use `Retry-After`.
+
+| Endpoint | Limit (default) | Counted per |
+| --- | --- | --- |
+| 2.2 Log in | 20 per 15 min · 10 per 15 min | IP address · email address |
+| 2.1 Register | 5 per hour | IP address |
+| 2.6 Request reset code | 10 per hour · 3 per hour | IP address · email address |
+| 2.7 Reset password | 20 per hour | IP address |
+| 2.3 Refresh token | 60 per minute | IP address |
+| 2.5 Change password | 5 per hour | Signed-in user |
+| Public endpoints (1.1, 5.1, 5.2, 9.1, 9.2, 10.1, 13.x) | 120 per minute | IP address |
+| Everything else | 300 per minute | Signed-in user |
+
+**What this means for the app**
+- **The `429` message is the same whichever limit was hit.** It never says whether an email exists. Show it as-is.
+- **Never auto-retry 2.1, 2.2, 2.3, 2.5, 2.6 or 2.7 on `429`.** Each retry counts again. Show the message, and enable the button again after `Retry-After` seconds.
+- **Limits per IP are shared** by everyone behind the same IP (an office Wi-Fi, some mobile networks). A user can see `429` without having done much themselves. The message tells them how long to wait.
+- **Refresh (2.3) on `429`:** the session is **not** expired. Wait `Retry-After` seconds and refresh again. Don't sign the user out.
+- **A `503` on the auth routes is temporary.** Show the message and let the user try again. It is not a wrong password, and it does **not** count toward the 5-failure lock.
+- **The account lock (2.2) is separate from rate limits:** 5 wrong passwords in a row lock the account for 15 minutes (`403`, with the unlock time). A correct sign-in or a password reset clears it.
 
 ## 0.5 Tokens and sessions
 
@@ -303,6 +326,8 @@ Content-Type: application/json
 | 400 | Email already registered | `"Unable to register with those details"` |
 | 400 | Invalid field | Array, e.g. `["Enter a valid email address", "Password must be at least 10 characters", "Password must contain a number", "Enter a valid phone number"]` |
 | 500 | Phone number already used by another account (backend bug, Appendix F) | Generic. Show "That phone number is already in use." |
+| 429 | More than 5 sign-ups from this IP in an hour (§0.4.1) | `"Too many attempts. Try again in N seconds."` + `Retry-After` |
+| 503 | Sign-up protection briefly unavailable, or the server is busy | `"Temporarily unavailable. Try again shortly."` / `"The service is busy, try again shortly"` |
 
 **Integration notes**
 - Save both tokens, then call **12.1** to register the phone for push.
@@ -352,8 +377,11 @@ Content-Type: application/json
 | 403 | Account suspended | `{ "code": "ACCOUNT_SUSPENDED", "message": "<admin's reason>", "suspendedAt": "…" }` |
 | 403 | Account closed | `{ "code": "ACCOUNT_CLOSED", "message": "This account is closed. Contact support." }` |
 | 400 | Bad email format | `["email must be an email"]` |
+| 429 | Too many sign-in attempts for this email (10 per 15 min) or from this IP (20 per 15 min) (§0.4.1) | `"Too many attempts. Try again in N seconds."` + `Retry-After` |
+| 503 | Sign-in protection briefly unavailable, or the server is busy. **Not** counted as a wrong password. | `"Temporarily unavailable. Try again shortly."` / `"The service is busy, try again shortly"` |
 
 **Integration notes**
+- `429` and the `403` lock are different. `429` is a rate limit: wait `Retry-After` seconds. `403` "Too many failed attempts" is the account lock: wait until the time in the message, or reset the password.
 - Show `ACCOUNT_SUSPENDED` / `ACCOUNT_CLOSED` on a dedicated screen with `message` verbatim.
 - After login, call **12.1** (register device) and **3.1** (profile).
 
@@ -390,6 +418,8 @@ Content-Type: application/json
 | --- | --- | --- |
 | 401 | Token unknown | `"Invalid refresh token"` |
 | 401 | Token expired, already used, or revoked (password change, KYC decision, suspension) | `"Session expired. Please sign in again."` |
+| 429 | More than 60 refreshes a minute from this IP (§0.4.1). **The session is still valid.** | `"Too many attempts. Try again in N seconds."` + `Retry-After`. Wait, then refresh again; don't sign out. |
+| 503 | Briefly unavailable | `"Temporarily unavailable. Try again shortly."` Retry shortly; don't sign out. |
 
 **Integration notes**
 - **Save the new refresh token.** The old one is dead.
@@ -467,6 +497,8 @@ Content-Type: application/json
 | --- | --- | --- |
 | 401 | Current password wrong | `"Current password is incorrect"`. **Don't** treat this as an expired token. |
 | 400 | New password breaks the rules | e.g. `["Password must be at least 10 characters"]` |
+| 429 | More than 5 attempts in an hour (§0.4.1) | `"Too many attempts. Try again in N seconds."` + `Retry-After` |
+| 503 | Briefly unavailable, or the server is busy | `"Temporarily unavailable. Try again shortly."` / `"The service is busy, try again shortly"` |
 
 **Integration notes**
 - **Exclude this route from the auto-refresh interceptor**, or a wrong current password will log the user out.
@@ -508,6 +540,8 @@ Content-Type: application/json
 | Status | When | `message` |
 | --- | --- | --- |
 | 400 | Bad email format | `["Enter a valid email address"]` |
+| 429 | More than 3 code requests for this email, or 10 from this IP, in an hour (§0.4.1) | `"Too many attempts. Try again in N seconds."` + `Retry-After` |
+| 503 | Briefly unavailable | `"Temporarily unavailable. Try again shortly."` |
 
 **Integration notes**
 - Always move on to the "enter code" step, even for unknown emails.
@@ -539,10 +573,12 @@ Content-Type: application/json
 
 **Response** `204`: no body.
 
-**Errors** (all `400`)
+**Errors** (`400` unless stated)
 
 | When | `message` |
 | --- | --- |
+| `429`: more than 20 attempts from this IP in an hour (§0.4.1) | `"Too many attempts. Try again in N seconds."` + `Retry-After` |
+| `503`: briefly unavailable, or the server is busy | `"Temporarily unavailable. Try again shortly."` / `"The service is busy, try again shortly"` |
 | Wrong code | `"That code is not right."` or `"That code is not right. 3 tries left."` |
 | Code older than 10 min | `"That code has expired. Ask for a new one."` |
 | 5 wrong attempts | `"Too many wrong codes. Ask for a new one."` |
@@ -2845,11 +2881,12 @@ class Api {
 
 ```dart
 class ApiError implements Exception {
-  ApiError(this.status, this.message, {this.code, this.requiredTier});
+  ApiError(this.status, this.message, {this.code, this.requiredTier, this.retryAfterSeconds});
   final int status;
   final String message;
   final String? code;          // ACCOUNT_SUSPENDED / ACCOUNT_CLOSED
   final String? requiredTier;  // set on KYC 403
+  final int? retryAfterSeconds; // set on 429 (0.4.1): disable the button this long
 
   factory ApiError.from(DioException e) {
     final s = e.response?.statusCode ?? 0;
@@ -2857,7 +2894,9 @@ class ApiError implements Exception {
     if (d is Map) {
       final m = d['message'];
       final text = m is List ? m.join('\n') : (m?.toString() ?? 'Something went wrong');
-      return ApiError(s, text, code: d['code'] as String?, requiredTier: d['requiredTier'] as String?);
+      final retryAfter = int.tryParse(e.response?.headers.value('retry-after') ?? '');
+      return ApiError(s, text,
+          code: d['code'] as String?, requiredTier: d['requiredTier'] as String?, retryAfterSeconds: retryAfter);
     }
     return ApiError(s, 'Something went wrong. Please try again.');
   }
@@ -2865,6 +2904,7 @@ class ApiError implements Exception {
   bool get needsKyc => status == 403 && requiredTier != null;
   bool get suspended => code == 'ACCOUNT_SUSPENDED';
   bool get closed => code == 'ACCOUNT_CLOSED';
+  bool get rateLimited => status == 429; // never auto-retry auth routes; wait retryAfterSeconds
 }
 ```
 
@@ -2975,7 +3015,7 @@ Locally the API uses a **fake ("mock") version of Quidax**, the crypto provider.
 | 4 | **Gift-card photos** limited by the 1 MB request size | A separate upload endpoint is planned |
 | 5 | **No email verification** after signup | Will be added. Plan for a "verify your email" step after 2.1. |
 | 6 | **Withdrawals need only a token** | An OTP/2FA confirm step, saved addresses and a new-address waiting period are planned. Leave room in the confirm screen. |
-| 7 | **No rate limiting** | `429` + `Retry-After` will start on login, reset and quotes |
+| 7 | **Rate limiting is live** (§0.4.1) | Handle `429` + `Retry-After` on every call. Quotes (7.1) have no limit of their own yet; they share the 300-per-minute default. |
 | 8 | **No deposit/withdrawal detail endpoints**, no tx hash or address in history | Use the lists + 7.4. Detail endpoints are planned. |
 | 9 | **No pagination** beyond `limit=100` | Cursor paging will be added |
 | 10 | **Phantom deposit after a buy** (a `PENDING` "deposit" of the bought coin + a "BTC added" notification) | Backend bug, fix pending. Not an app bug. |
