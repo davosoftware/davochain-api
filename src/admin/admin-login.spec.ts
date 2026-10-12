@@ -40,11 +40,21 @@ const ctx = { ip: '203.0.113.9', userAgent: 'curl' };
 describe('AdminService.login lockout', () => {
   beforeEach(() => record.mockReset());
 
-  it('treats an unknown admin as before: dummy hash, 401, nothing counted', async () => {
-    const { svc, passwords } = setup(null);
+  it('treats an unknown admin with a dummy hash and a counting transaction on no row, so it costs what a real one does', async () => {
+    const { svc, passwords, prisma } = setup(null);
+    record.mockResolvedValue({ failedLogins: 0, lockedUntil: null, justLocked: false });
     await expect(svc.login('nobody@x.com', 'pw', ctx)).rejects.toBeInstanceOf(UnauthorizedException);
     expect(passwords.dummyVerify).toHaveBeenCalled();
-    expect(record).not.toHaveBeenCalled();
+    expect(record).toHaveBeenCalledTimes(1);
+    expect(record).toHaveBeenCalledWith(prisma, 'admin_users', expect.not.stringMatching(/^admin-1$/));
+  });
+
+  it('gives an inactive admin the same cost too, without touching its counter', async () => {
+    const { svc, prisma } = setup({ isActive: false });
+    record.mockResolvedValue({ failedLogins: 0, lockedUntil: null, justLocked: false });
+    await expect(svc.login(ADMIN.email, 'pw', ctx)).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(record).toHaveBeenCalledTimes(1);
+    expect(record).not.toHaveBeenCalledWith(prisma, 'admin_users', 'admin-1');
   });
 
   it('answers a locked admin exactly like a wrong password, at the same cost, so the lock does not confirm the email', async () => {
@@ -56,7 +66,9 @@ describe('AdminService.login lockout', () => {
     expect(JSON.stringify((err as UnauthorizedException).getResponse())).not.toMatch(/lock|attempt|after/i);
     expect(passwords.verify).not.toHaveBeenCalled();
     expect(passwords.dummyVerify).toHaveBeenCalledTimes(1);
-    expect(record).not.toHaveBeenCalled();
+    // Same database work as a wrong password, on a row that does not exist: the locked admin's counter is untouched.
+    expect(record).toHaveBeenCalledTimes(1);
+    expect(record).not.toHaveBeenCalledWith(expect.anything(), 'admin_users', 'admin-1');
   });
 
   it('does not count a login refused because the hash queue is full: a busy server is not a wrong password', async () => {
@@ -99,6 +111,19 @@ describe('AdminService.login lockout', () => {
       expect.stringMatching(/admin account was locked/i),
       expect.arrayContaining([expect.stringContaining('203.0.113.9')]),
     );
+  });
+
+  it('answers the failure that locks without waiting for the alert email', async () => {
+    const { svc, alerts } = setup();
+    alerts.raise.mockImplementation(() => new Promise<boolean>(() => undefined)); // SMTP that never answers
+    record.mockResolvedValue({ failedLogins: 5, lockedUntil: new Date(Date.now() + 15 * 60_000), justLocked: true });
+    const answer = svc.login(ADMIN.email, 'wrong', ctx).then(
+      () => 'resolved',
+      (e: unknown) => (e instanceof UnauthorizedException ? '401' : 'other'),
+    );
+    const winner = await Promise.race([answer, new Promise((r) => setTimeout(() => r('still waiting'), 500))]);
+    expect(winner).toBe('401');
+    expect(alerts.raise).toHaveBeenCalledTimes(1);
   });
 
   it('clears the counter and lock on success', async () => {

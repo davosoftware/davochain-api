@@ -200,6 +200,15 @@ export const envSchema = z
           'TRUST_PROXY_ADDRESSES (preferred) or TRUST_PROXY_HOPS is required in production; every rate limit keys on the client IP',
       });
     }
+    // 0 hops behind Nginx makes every client look like Nginx: one shared bucket,
+    // and one attacker locks everybody out of sign-in.
+    if (env.NODE_ENV === 'production' && env.TRUST_PROXY_HOPS === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['TRUST_PROXY_HOPS'],
+        message: 'TRUST_PROXY_HOPS must be at least 1 in production (or use TRUST_PROXY_ADDRESSES)',
+      });
+    }
     if (env.TRUST_PROXY_HOPS !== undefined && proxyAddresses.length > 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

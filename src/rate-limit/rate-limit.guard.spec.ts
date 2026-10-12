@@ -2,7 +2,7 @@ import { ExecutionContext, HttpException, ServiceUnavailableException } from '@n
 import { Reflector } from '@nestjs/core';
 import { AlertType } from '@prisma/client';
 import { RateLimit } from './rate-limit.decorator';
-import { RateLimitGuard, accountKey } from './rate-limit.guard';
+import { RateLimitGuard, accountKey, ipKey } from './rate-limit.guard';
 import { RedisUnavailableError } from './rate-limit.service';
 import type { Limit } from './policies';
 
@@ -146,6 +146,29 @@ describe('RateLimitGuard', () => {
     expect(alerts.raise.mock.calls[0]).toEqual(
       expect.arrayContaining([AlertType.RATE_LIMIT_DEGRADED, 'rate-limit-degraded']),
     );
+  });
+
+  it('counts an IPv6 client by its /64, so one device cannot rotate through its own addresses', async () => {
+    const { call, limiter } = setup();
+    for (let i = 1; i <= 20; i++) {
+      await call(Routes.prototype.login, Routes, login(`2001:db8:abcd:12::${i.toString(16)}`, `u${i}@x.com`));
+    }
+    const err = await refusal(call(Routes.prototype.login, Routes, login('2001:db8:abcd:12:ffff::99', 'new@x.com')));
+    expect(err.getStatus()).toBe(429);
+    expect(limiter.counts.get('rl:auth.login:ip:2001:db8:abcd:12::/64')).toBe(21);
+    await expect(call(Routes.prototype.login, Routes, login('2001:db8:abcd:13::1', 'other@x.com'))).resolves.toBe(true);
+  });
+
+  it('keys IPv4, IPv4-mapped IPv6 and odd IPv6 spellings consistently', () => {
+    expect(ipKey('203.0.113.9')).toBe('203.0.113.9');
+    expect(ipKey('::ffff:203.0.113.9')).toBe('203.0.113.9');
+    expect(ipKey('::FFFF:203.0.113.9')).toBe('203.0.113.9');
+    expect(ipKey('2001:0db8:0000:0012:0000:0000:0000:0001')).toBe('2001:db8:0:12::/64');
+    expect(ipKey('2001:db8::12:1')).toBe('2001:db8:0:0::/64');
+    expect(ipKey('fe80::1%eth0')).toBe('fe80:0:0:0::/64');
+    expect(ipKey('::1')).toBe('0:0:0:0::/64');
+    expect(ipKey('64:ff9b::192.0.2.1')).toBe('64:ff9b:0:0::/64');
+    expect(ipKey('not-an-ip')).toBe('not-an-ip');
   });
 
   it('leaves non-HTTP contexts alone', async () => {

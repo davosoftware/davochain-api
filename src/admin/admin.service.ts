@@ -49,6 +49,7 @@ export class AdminService {
     });
     if (!admin || !admin.isActive) {
       await this.passwords.dummyVerify();
+      await this.sameCostAsAFailure();
       throw new UnauthorizedException('Incorrect email or password');
     }
 
@@ -61,13 +62,16 @@ export class AdminService {
      */
     if (admin.lockedUntil && admin.lockedUntil > new Date()) {
       await this.passwords.dummyVerify();
+      await this.sameCostAsAFailure();
       throw new UnauthorizedException('Incorrect email or password');
     }
 
     // A full hash queue throws a 503 here, before anything is counted.
     if (!(await this.passwords.verify(password, admin.passwordHash))) {
       const failed = await recordFailedLogin(this.prisma, 'admin_users', admin.id);
-      if (failed.justLocked) await this.onLocked(admin, failed.lockedUntil, context);
+      // Not awaited: the alert emails out, and waiting for SMTP would both delay
+      // this answer (revealing a real admin) and hang it if mail is down.
+      if (failed.justLocked) void this.onLocked(admin, failed.lockedUntil, context).catch(() => undefined);
       throw new UnauthorizedException('Incorrect email or password');
     }
 
@@ -77,6 +81,20 @@ export class AdminService {
     });
 
     return { accessToken: await this.signToken(admin, context) };
+  }
+
+  /**
+   * The database work a wrong password does (the counting transaction), on a
+   * row that does not exist. Without it an unknown, inactive or locked address
+   * answers measurably faster than a real admin's wrong password, and the
+   * timing alone says which emails are admins.
+   */
+  private async sameCostAsAFailure(): Promise<void> {
+    try {
+      await recordFailedLogin(this.prisma, 'admin_users', randomUUID());
+    } catch {
+      // Only the time it takes matters here; a failure must not change the answer.
+    }
   }
 
   /**

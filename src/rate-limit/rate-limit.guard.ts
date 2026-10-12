@@ -10,6 +10,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { AlertType } from '@prisma/client';
 import { createHash } from 'node:crypto';
+import { isIP } from 'node:net';
 import { OpsAlertsService } from '../common/ops-alerts/ops-alerts.service';
 import { RATE_LIMIT_KEY } from './rate-limit.decorator';
 import { RateLimitService, RedisUnavailableError } from './rate-limit.service';
@@ -24,6 +25,30 @@ interface LimitedRequest {
 /** What Redis holds instead of an email: the SHA-256 of the trimmed, lowercased address. */
 export function accountKey(email: string): string {
   return createHash('sha256').update(email.trim().toLowerCase()).digest('hex');
+}
+
+/**
+ * The client an IP limit counts. IPv4 as is (also when it arrives IPv4-mapped,
+ * "::ffff:1.2.3.4"). IPv6 by its /64: a single home or phone is routinely given
+ * a whole /64, so counting each address separately would let one device rotate
+ * through millions of fresh buckets.
+ */
+export function ipKey(ip: string): string {
+  const mapped = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i.exec(ip);
+  if (mapped) return mapped[1];
+  const bare = ip.split('%')[0]; // drop a zone id such as %eth0
+  if (isIP(bare) !== 6) return ip;
+  let groups: string[];
+  if (bare.includes('::')) {
+    const [head, tail] = bare.split('::');
+    const h = head ? head.split(':') : [];
+    const t = tail ? tail.split(':') : [];
+    groups = [...h, ...Array<string>(8 - h.length - t.length - (t.some((g) => g.includes('.')) ? 1 : 0)).fill('0'), ...t];
+  } else {
+    groups = bare.split(':');
+  }
+  const prefix = groups.slice(0, 4).map((g) => parseInt(g, 16).toString(16));
+  return `${prefix.join(':')}::/64`;
 }
 
 const DEGRADED_LOG_MS = 60_000;
@@ -79,7 +104,7 @@ export class RateLimitGuard implements CanActivate {
     limits: Partial<Record<Dimension, Limit>>,
     req: LimitedRequest,
   ): Array<{ key: string; limit: Limit }> {
-    const ip = req.ip ?? 'unknown';
+    const ip = ipKey(req.ip ?? 'unknown');
     const keys: Array<{ key: string; limit: Limit }> = [];
     for (const [dimension, limit] of Object.entries(limits) as Array<[Dimension, Limit]>) {
       if (dimension === 'ip') {

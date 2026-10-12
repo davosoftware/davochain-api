@@ -26,6 +26,11 @@ describe('rate limiting environment rules', () => {
     expect(envSchema.parse({ ...BASE, TRUST_PROXY_ADDRESSES: 'loopback, 10.0.0.5' }).TRUST_PROXY_ADDRESSES).toEqual(['loopback', '10.0.0.5']);
   });
 
+  it('refuses a hop count of 0 in production, which would put every client behind Nginx in one bucket', () => {
+    expect(issues({ NODE_ENV: 'production', TRUST_PROXY_HOPS: '0' }, 'TRUST_PROXY_HOPS')[0]).toMatch(/at least 1 in production/);
+    expect(issues({ NODE_ENV: 'development', TRUST_PROXY_HOPS: '0' }, 'TRUST_PROXY_HOPS')).toEqual([]);
+  });
+
   it('refuses both settings at once, and an entry Express would not understand', () => {
     expect(issues({ TRUST_PROXY_ADDRESSES: 'loopback', TRUST_PROXY_HOPS: '1' }, 'TRUST_PROXY_ADDRESSES')[0]).toMatch(/not both/);
     expect(issues({ TRUST_PROXY_ADDRESSES: 'nginx.local' }, 'TRUST_PROXY_ADDRESSES')[0]).toMatch(/nginx.local/);
