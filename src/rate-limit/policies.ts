@@ -47,7 +47,8 @@ export const DEFAULT_POLICIES: Readonly<Record<PolicyName, Policy>> = {
   'auth.resetConfirm': { name: 'auth.resetConfirm', limits: { ip: lim(20, H) }, failClosed: true },
   'auth.refresh': { name: 'auth.refresh', limits: { ip: lim(60, M) }, failClosed: true },
   'auth.changePassword': { name: 'auth.changePassword', limits: { user: lim(5, H) }, failClosed: true },
-  webhooks: { name: 'webhooks', limits: { ip: lim(600, M) }, failClosed: false },
+  // Generous on purpose: a 429 spends a provider's retries, and Quidax stops retrying after 24 h.
+  webhooks: { name: 'webhooks', limits: { ip: lim(3000, M) }, failClosed: false },
   public: { name: 'public', limits: { ip: lim(120, M) }, failClosed: false },
   default: { name: 'default', limits: { user: lim(300, M) }, failClosed: false },
 };

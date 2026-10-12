@@ -44,7 +44,7 @@ describe('resolvePolicies', () => {
     expect(p['auth.resetConfirm'].limits).toEqual({ ip: { count: 20, windowMs: H } });
     expect(p['auth.refresh'].limits).toEqual({ ip: { count: 60, windowMs: M } });
     expect(p['auth.changePassword'].limits).toEqual({ user: { count: 5, windowMs: H } });
-    expect(p.webhooks.limits).toEqual({ ip: { count: 600, windowMs: M } });
+    expect(p.webhooks.limits).toEqual({ ip: { count: 3000, windowMs: M } });
     expect(p.public.limits).toEqual({ ip: { count: 120, windowMs: M } });
     expect(p.default.limits).toEqual({ user: { count: 300, windowMs: M } });
   });
