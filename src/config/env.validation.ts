@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { keyModeProblem } from '../flutterwave/key-mode';
+import { rateLimitEnvProblems } from '../rate-limit/policies';
 
 /**
  * Startup fails on anything missing or malformed. There is no Quidax sandbox,
@@ -48,6 +49,22 @@ export const envSchema = z
     REDIS_HOST: z.string().default('localhost'),
     REDIS_PORT: int(6379),
     REDIS_PASSWORD: z.string().optional(),
+
+    /**
+     * How many reverse proxies sit in front of the API (spec §2.5). The client IP
+     * every rate limit keys on is the X-Forwarded-For entry this many hops from
+     * the right; anything further left was written by the client and is ignored.
+     * Nginx in front: 1. Cloudflare then Nginx: 2. Required in production.
+     */
+    TRUST_PROXY_HOPS: z
+      .string()
+      .optional()
+      .transform((v) => (v === undefined || v === '' ? undefined : Number(v)))
+      .pipe(z.number().int().min(0).max(5).optional()),
+
+    /** Password hashes allowed at once per process (~32 MB each), and how many may wait (spec §4.3). */
+    PASSWORD_HASH_CONCURRENCY: int(4),
+    PASSWORD_HASH_QUEUE: int(32),
 
     QUIDAX_BASE_URL: z.string().url().default('https://openapi.quidax.io/exchange-open-api/api/v1'),
     QUIDAX_SECRET_KEY: z.string().optional(),
@@ -161,6 +178,27 @@ export const envSchema = z
     MARGIN_DEVIATION_TRIP_BPS: int(200),
   })
   .superRefine((env, ctx) => {
+    if (env.NODE_ENV === 'production' && env.TRUST_PROXY_HOPS === undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['TRUST_PROXY_HOPS'],
+        message: 'TRUST_PROXY_HOPS is required in production (1 behind Nginx); every rate limit keys on the client IP',
+      });
+    }
+    if (env.PASSWORD_HASH_CONCURRENCY < 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['PASSWORD_HASH_CONCURRENCY'],
+        message: 'PASSWORD_HASH_CONCURRENCY must be at least 1',
+      });
+    }
+    if (env.PASSWORD_HASH_QUEUE < 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['PASSWORD_HASH_QUEUE'],
+        message: 'PASSWORD_HASH_QUEUE must be 0 or more',
+      });
+    }
     // The live key is only optional while the mock is in charge.
     if (!env.QUIDAX_USE_MOCK && !env.QUIDAX_SECRET_KEY) {
       ctx.addIssue({
@@ -265,9 +303,14 @@ export type Env = z.infer<typeof envSchema>;
 
 export function validateEnv(raw: Record<string, unknown>): Env {
   const parsed = envSchema.safeParse(raw);
-  if (!parsed.success) {
-    const lines = parsed.error.issues.map((i) => `  • ${i.path.join('.')}: ${i.message}`);
-    throw new Error(`Invalid environment configuration:\n${lines.join('\n')}\n`);
+  const lines = parsed.success ? [] : parsed.error.issues.map((i) => `  • ${i.path.join('.')}: ${i.message}`);
+  // RATE_LIMIT_* overrides are read straight from the environment by the rate
+  // limiter (they are not schema fields), so they are checked here instead.
+  for (const problem of rateLimitEnvProblems(raw as Record<string, string | undefined>)) {
+    lines.push(`  • ${problem}`);
   }
+  const refuse = () => new Error(`Invalid environment configuration:\n${lines.join('\n')}\n`);
+  if (!parsed.success) throw refuse();
+  if (lines.length > 0) throw refuse();
   return parsed.data;
 }

@@ -21,6 +21,12 @@ async function bootstrap(): Promise<void> {
   const config = app.get(ConfigService);
   const log = new Logger('Bootstrap');
 
+  // The client IP every rate limit keys on (spec §2.5). Exactly this many
+  // X-Forwarded-For hops are trusted; anything further left is the client's
+  // own claim. 0 in development, 1 behind Nginx, required in production.
+  const trustedHops = config.get<number>('TRUST_PROXY_HOPS') ?? 0;
+  app.set('trust proxy', trustedHops);
+
   // Swagger UI loads inline scripts and styles, which helmet's default CSP
   // blocks outright — the page renders blank with a console full of CSP errors.
   // An admin avatar arrives as a base64 data URL, and base64 costs a third on
@@ -63,6 +69,7 @@ async function bootstrap(): Promise<void> {
   log.log(`Davochain API listening on :${port}`);
   if (docsPath) log.log(`API explorer:  http://localhost:${port}${docsPath}`);
   log.log(`Quidax mode: ${config.get<boolean>('QUIDAX_USE_MOCK') ? 'MOCK' : 'LIVE'}`);
+  log.log(`Trusted proxy hops: ${trustedHops}`);
   if (!config.get<boolean>('QUIDAX_USE_MOCK')) {
     log.warn('LIVE Quidax key in use — every call moves real money. There is no sandbox.');
   }
