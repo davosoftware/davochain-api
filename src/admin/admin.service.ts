@@ -1,12 +1,14 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { AdminRole, KycStatus, KycTier } from '@prisma/client';
+import { AdminRole, AlertType, KycStatus, KycTier } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { TemplatedMailService } from '../cms/templated-mail.service';
 import { ReferralsService } from '../referrals/referrals.service';
 import { PasswordService } from '../auth/password.service';
+import { recordFailedLogin } from '../auth/failed-logins';
+import { OpsAlertsService } from '../common/ops-alerts/ops-alerts.service';
 import { RatesService } from '../rates/rates.service';
 import { AdminSessionsService } from './sessions.service';
 import { dec, str } from '../common/money';
@@ -34,6 +36,7 @@ export class AdminService {
     private readonly sessions: AdminSessionsService,
     private readonly mail: TemplatedMailService,
     private readonly referrals: ReferralsService,
+    private readonly alerts: OpsAlertsService,
   ) {}
 
   async login(
@@ -48,16 +51,70 @@ export class AdminService {
       await this.passwords.dummyVerify();
       throw new UnauthorizedException('Incorrect email or password');
     }
+
+    /*
+     * Locked (spec §4.2): answered exactly like a wrong password, and at the
+     * same cost. Admin emails are not public; a distinct "locked" reply, or a
+     * suspiciously fast one, would confirm an address is a real admin after
+     * five guesses. The admin learns of the lock from the ADMIN_LOCKOUT alert
+     * and the audit log, and it lifts after 15 minutes or a password reset.
+     */
+    if (admin.lockedUntil && admin.lockedUntil > new Date()) {
+      await this.passwords.dummyVerify();
+      throw new UnauthorizedException('Incorrect email or password');
+    }
+
+    // A full hash queue throws a 503 here, before anything is counted.
     if (!(await this.passwords.verify(password, admin.passwordHash))) {
+      const failed = await recordFailedLogin(this.prisma, 'admin_users', admin.id);
+      if (failed.justLocked) await this.onLocked(admin, failed.lockedUntil, context);
       throw new UnauthorizedException('Incorrect email or password');
     }
 
     await this.prisma.adminUser.update({
       where: { id: admin.id },
-      data: { lastLoginAt: new Date() },
+      data: { lastLoginAt: new Date(), failedLogins: 0, lockedUntil: null },
     });
 
     return { accessToken: await this.signToken(admin, context) };
+  }
+
+  /**
+   * An admin account just locked. That usually means someone is guessing its
+   * password, so it is written down and an alert goes out. Neither may turn
+   * the sign-in answer into something other than "incorrect".
+   */
+  private async onLocked(
+    admin: { id: string; email: string },
+    lockedUntil: Date | null,
+    context?: { ip?: string; userAgent?: string },
+  ): Promise<void> {
+    const until = lockedUntil?.toISOString() ?? 'unknown';
+    try {
+      await this.audit(
+        admin.id,
+        'admin.locked',
+        'AdminUser',
+        admin.id,
+        null,
+        { lockedUntil: until, userAgent: context?.userAgent ?? null },
+        context?.ip,
+      );
+    } catch (err) {
+      this.log.error(`Could not audit the lockout of ${admin.email}: ${(err as Error).message}`);
+    }
+    await this.alerts.raise(
+      AlertType.ADMIN_LOCKOUT,
+      `admin-lockout:${admin.id}`,
+      'An admin account was locked after repeated wrong passwords',
+      [
+        `Admin: ${admin.email}`,
+        `From IP: ${context?.ip ?? 'unknown'}`,
+        `Locked until: ${until}`,
+        'If this was not them, someone is guessing the password. Check the audit log for admin.locked.',
+        'While locked, the sign-in page says "Incorrect email or password" even for the right password.',
+      ],
+    );
   }
 
   /**

@@ -265,6 +265,9 @@ export class AdminsService {
       data: {
         passwordHash: await this.passwords.hash(newPassword),
         passwordChangedAt: new Date(),
+        // A new password ends a lockout too: a reset is how a locked admin gets back in.
+        failedLogins: 0,
+        lockedUntil: null,
       },
     });
 
