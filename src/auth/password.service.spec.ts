@@ -55,3 +55,26 @@ describe('PasswordService', () => {
     expect(await svc.verify(decomposed, hash)).toBe(true);
   });
 });
+
+describe('PasswordService under load', () => {
+  const tight = { get: (k: string) => ({ PASSWORD_HASH_CONCURRENCY: 1, PASSWORD_HASH_QUEUE: 0 })[k as 'PASSWORD_HASH_QUEUE'] };
+
+  it('refuses a hash beyond the cap with a 503 instead of allocating more memory', async () => {
+    const svc = new PasswordService(tight as never);
+    const results = await Promise.allSettled([svc.hash('one-password'), svc.hash('two-password')]);
+    expect(results.map((r) => r.status).sort()).toEqual(['fulfilled', 'rejected']);
+    const refused = results.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+    expect(refused.reason.getStatus()).toBe(503);
+  });
+
+  it('reports a busy server as a 503, never as a wrong password (which would count toward a lockout)', async () => {
+    const svc = new PasswordService(tight as never);
+    const stored = await svc.hash('right-password');
+    const [first, second] = await Promise.allSettled([svc.verify('right-password', stored), svc.verify('right-password', stored)]);
+    const outcomes = [first, second];
+    expect(outcomes.some((r) => r.status === 'fulfilled' && r.value === true)).toBe(true);
+    const refused = outcomes.find((r) => r.status === 'rejected') as PromiseRejectedResult;
+    expect(refused.reason.getStatus()).toBe(503);
+    expect(outcomes.some((r) => r.status === 'fulfilled' && r.value === false)).toBe(false);
+  });
+});

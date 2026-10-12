@@ -1,6 +1,8 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
+import { HashSemaphore } from './hash-semaphore';
 
 const scryptAsync = promisify(scrypt) as (
   password: string | Buffer,
@@ -27,7 +29,30 @@ export class PasswordService {
   private static readonly KEYLEN = 64;
   private static readonly MAXMEM = 96 * 1024 * 1024;
 
+  /** Bounds concurrent scrypt runs (spec §4.3). `new PasswordService()` gets the defaults. */
+  private readonly gate: HashSemaphore;
+
+  constructor(@Optional() config?: ConfigService) {
+    this.gate = new HashSemaphore(
+      Number(config?.get<number>('PASSWORD_HASH_CONCURRENCY') ?? 4),
+      Number(config?.get<number>('PASSWORD_HASH_QUEUE') ?? 32),
+    );
+  }
+
   async hash(password: string): Promise<string> {
+    return this.gate.run(() => this.hashNow(password));
+  }
+
+  /**
+   * Constant-time. Returns false rather than throwing on a malformed hash, but a
+   * full hash queue is a 503, never `false`: a busy server must not count as a
+   * wrong password toward somebody's lockout.
+   */
+  async verify(password: string, stored: string): Promise<boolean> {
+    return this.gate.run(() => this.verifyNow(password, stored));
+  }
+
+  private async hashNow(password: string): Promise<string> {
     const salt = randomBytes(16);
     const derived = await scryptAsync(password.normalize('NFKC'), salt, PasswordService.KEYLEN, {
       N: PasswordService.N,
@@ -45,8 +70,7 @@ export class PasswordService {
     ].join('$');
   }
 
-  /** Constant-time. Returns false rather than throwing on a malformed hash. */
-  async verify(password: string, stored: string): Promise<boolean> {
+  private async verifyNow(password: string, stored: string): Promise<boolean> {
     try {
       const [scheme, n, r, p, saltB64, hashB64] = stored.split('$');
       if (scheme !== 'scrypt') return false;
