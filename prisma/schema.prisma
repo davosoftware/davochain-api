@@ -151,6 +151,8 @@ enum AlertType {
   NGN_DEPOSIT_UNMATCHED
   NGN_RECONCILIATION
   VIRTUAL_ACCOUNT_SYNC
+  ADMIN_LOCKOUT
+  RATE_LIMIT_DEGRADED
 }
 
 // ─────────────────────────────────────────────── identity
@@ -779,6 +781,11 @@ model AdminUser {
   /// has to end the sessions it is being changed because of.
   passwordChangedAt DateTime  @default(now())
   lastLoginAt       DateTime?
+
+  /// Wrong passwords in a row. The fifth locks the account for 15 minutes;
+  /// a successful sign-in, a password change or a reset clears both.
+  failedLogins Int       @default(0)
+  lockedUntil  DateTime?
 
   /// Which admin created this one. Null for the bootstrap account, which by
   /// definition predates anyone who could have created it.
