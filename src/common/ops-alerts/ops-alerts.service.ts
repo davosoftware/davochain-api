@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { AlertRecipientsService } from './alert-recipients.service';
 import { ConfigService } from '@nestjs/config';
 import { AlertType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -19,11 +20,16 @@ const HOUR = 3_600_000;
 export class OpsAlertsService {
   private readonly log = new Logger(OpsAlertsService.name);
 
+  private readonly recipientsOf: AlertRecipientsService;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly mail: MailService,
-  ) {}
+    @Optional() recipients?: AlertRecipientsService,
+  ) {
+    this.recipientsOf = recipients ?? new AlertRecipientsService(prisma, config);
+  }
 
   /** True when it went out; false when it was a repeat inside the cooldown, or could not be raised. */
   async raise(
@@ -46,7 +52,7 @@ export class OpsAlertsService {
         data: { type, assetCode: key, payload: { subject: safeSubject, lines: safeLines } },
       });
 
-      const to = await this.recipients(type);
+      const to = await this.recipientsOf.resolve(type);
       if (to.length === 0) {
         this.log.warn(`No recipients for ${type}: ${safeSubject}`);
         return true;
@@ -60,11 +66,5 @@ export class OpsAlertsService {
       this.log.error(`Could not raise a ${type} alert: ${redactIds((err as Error).message)}`);
       return false;
     }
-  }
-
-  private async recipients(type: AlertType): Promise<string[]> {
-    const rows = await this.prisma.alertRecipient.findMany({ where: { type, enabled: true } });
-    if (rows.length > 0) return rows.map((r) => r.email);
-    return this.config.get<string[]>('ALERT_DEFAULT_RECIPIENTS') ?? [];
   }
 }

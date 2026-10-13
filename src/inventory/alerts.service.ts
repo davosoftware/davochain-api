@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { AlertRecipientsService } from '../common/ops-alerts/alert-recipients.service';
 import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import { AlertType } from '@prisma/client';
@@ -27,21 +28,20 @@ const DAY = 86_400_000;
 export class AlertsService {
   private readonly log = new Logger(AlertsService.name);
 
+  private readonly recipientsOf: AlertRecipientsService;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly inventory: InventoryService,
     private readonly config: ConfigService,
     private readonly mail: MailService,
-  ) {}
-
-  private async recipients(type: AlertType): Promise<string[]> {
-    const rows = await this.prisma.alertRecipient.findMany({ where: { type, enabled: true } });
-    if (rows.length > 0) return rows.map((r) => r.email);
-    return this.config.get<string[]>('ALERT_DEFAULT_RECIPIENTS') ?? [];
+    @Optional() recipients?: AlertRecipientsService,
+  ) {
+    this.recipientsOf = recipients ?? new AlertRecipientsService(prisma, config);
   }
 
   async send(type: AlertType, subject: string, rows: InventoryRow[], lead: string): Promise<void> {
-    const to = await this.recipients(type);
+    const to = await this.recipientsOf.resolve(type);
     if (to.length === 0) {
       this.log.warn(`No recipients configured for ${type} — alert not sent`);
       return;
