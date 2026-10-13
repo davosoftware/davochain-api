@@ -63,3 +63,15 @@ describe('trustProxySetting', () => {
     expect(trustProxySetting({ TRUST_PROXY_ADDRESSES: [], TRUST_PROXY_HOPS: undefined })).toBe(0);
   });
 });
+
+describe('the dashboard chain: browser → Nginx → dashboard → API, all on loopback', () => {
+  it('identifies each admin by the address Nginx appended, and ignores anything the browser forged before it', async () => {
+    const app = appWith(['loopback']);
+    // Nginx appends the real client after whatever the browser sent; the dashboard forwards the header unchanged.
+    const first = await request(app).get('/ip').set('X-Forwarded-For', '6.6.6.6, 203.0.113.5');
+    const second = await request(app).get('/ip').set('X-Forwarded-For', '6.6.6.6, 203.0.113.6');
+    expect(first.body.ip).toBe('203.0.113.5');
+    expect(second.body.ip).toBe('203.0.113.6');
+    expect([first.body.ip, second.body.ip]).not.toContain('6.6.6.6');
+  });
+});
