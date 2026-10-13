@@ -1,11 +1,17 @@
 import Redis from 'ioredis';
 import { randomUUID } from 'node:crypto';
 import { RateLimitService, RedisUnavailableError } from './rate-limit.service';
+import { pauseTestAllowed } from './redis-target';
 
 /** Real Redis: atomicity and TTL behavior cannot be proven against a fake (spec §6). */
 const HOST = process.env.REDIS_HOST ?? 'localhost';
 const PORT = Number(process.env.REDIS_PORT ?? 6379);
 const PASSWORD = process.env.REDIS_PASSWORD || undefined;
+const PAUSE_ALLOWED = pauseTestAllowed(HOST, process.env);
+if (!PAUSE_ALLOWED) {
+  // eslint-disable-next-line no-console
+  console.warn(`Skipping the CLIENT PAUSE test: Redis at ${HOST} is not local (set ALLOW_REDIS_PAUSE_TEST=1 to force).`);
+}
 
 function client(port = PORT): Redis {
   return new Redis({
@@ -92,7 +98,7 @@ describe('RateLimitService on real Redis', () => {
     );
   });
 
-  it('treats a Redis too slow to answer as unavailable, within about half a second', async () => {
+  (PAUSE_ALLOWED ? it : it.skip)('treats a Redis too slow to answer as unavailable, within about half a second', async () => {
     const slow = client();
     opened.push(slow);
     await slow.connect();
