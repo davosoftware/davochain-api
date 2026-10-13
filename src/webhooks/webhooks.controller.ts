@@ -62,7 +62,8 @@ export class WebhooksController {
           data: {
             eventName,
             dedupHash,
-            payload: payload as never,
+            // Size and reason only: an unauthenticated body is attacker-supplied and may carry anything.
+            payload: { bytes: raw?.length ?? 0, reason: 'bad-signature', json: req.body !== undefined } as never,
             signatureValid: false,
           },
         })
