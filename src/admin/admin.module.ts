@@ -1,3 +1,4 @@
+import { AlertRecipientsController } from './alert-recipients.controller';
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { BullModule } from '@nestjs/bullmq';
@@ -39,7 +40,7 @@ import { QUEUES } from '../common/queues';
     NgnDepositsModule,
     FlutterwaveModule,
   ],
-  controllers: [AdminController, AdminAuthController],
+  controllers: [AdminController, AdminAuthController, AlertRecipientsController],
   providers: [AdminService, UsersAdminService, AdminsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService, AdminSessionsService, AdminOtpService, NgnWithdrawalsService, AdminGuard],
   exports: [AdminService, UsersAdminService, AdminsService, AdminSessionsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService],
 })

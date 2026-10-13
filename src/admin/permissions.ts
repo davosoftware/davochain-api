@@ -105,6 +105,11 @@ export const PERMISSION_GROUPS = [
     permissions: [
       { key: 'audit.view', label: 'See the audit log', hint: 'Every admin action, by whom' },
       {
+        key: 'alerts.manage',
+        label: 'Manage alert recipients',
+        hint: 'Who is emailed about lockouts, outages and money alerts. Every change is audited.',
+      },
+      {
         key: 'settings.manage',
         label: 'Edit site settings',
         hint: 'Contact details, store links and social handles shown on the public website',

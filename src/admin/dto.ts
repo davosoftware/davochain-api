@@ -1,5 +1,5 @@
 import { Type } from 'class-transformer';
-import { AdminRole, FeeKind, KycTier } from '@prisma/client';
+import { AdminRole, AlertType, FeeKind, KycTier } from '@prisma/client';
 import {
   IsArray,
   IsEnum,
@@ -281,4 +281,18 @@ export class SimulatePayInDto {
   @IsOptional() @IsString() @MaxLength(100) payerName?: string;
   @IsOptional() @IsIn(['successful', 'pending', 'failed']) status?: 'successful' | 'pending' | 'failed';
   @IsOptional() @IsIn(['legacy', 'v3']) format?: 'legacy' | 'v3';
+}
+
+export class AddAlertRecipientDto {
+  @IsEnum(AlertType)
+  type!: AlertType;
+
+  @IsEmail({}, { message: 'Enter a valid email address' })
+  @MaxLength(254)
+  email!: string;
+}
+
+export class SetAlertRecipientEnabledDto {
+  @IsBoolean()
+  enabled!: boolean;
 }

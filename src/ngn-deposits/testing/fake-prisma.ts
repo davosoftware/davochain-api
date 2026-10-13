@@ -329,6 +329,15 @@ class FakeModel {
     return { count };
   }
 
+  /** Like Prisma: removes the one matching row and returns it, or throws P2025. */
+  async delete(args: Args): Promise<Row> {
+    this.db.hook(this.name, 'delete');
+    const at = this.table.findIndex((r) => matchesWhere(r, args.where));
+    if (at < 0) throw p2025(this.name);
+    const [row] = this.table.splice(at, 1);
+    return { ...row };
+  }
+
   async upsert(args: Args): Promise<Row> {
     this.db.hook(this.name, 'upsert');
     const exists = this.table.some((r) => matchesWhere(r, args.where));
