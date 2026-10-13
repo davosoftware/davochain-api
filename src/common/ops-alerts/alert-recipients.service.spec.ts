@@ -105,3 +105,33 @@ describe('AlertRecipientsService: managing recipients', () => {
     for (const t of view.types) expect(t.description.length).toBeGreaterThan(10);
   });
 });
+
+describe('AlertRecipientsService: audit and fallback honesty (final review)', () => {
+  const actor = { adminId: 'admin-1', ip: '203.0.113.5' };
+
+  it('writes the audit row inside the same transaction as the change', async () => {
+    const { db, svc } = managed();
+    const row = await svc.add(AlertType.PRICE_DIP, 'ops3@davochain.test', actor);
+    await svc.setEnabled(row.id, false, actor);
+    await svc.remove(row.id, actor);
+    const audits = db.rows('adminAuditLog').map((a) => `${a.action}:${a.entityId}:${a.ip}`);
+    expect(audits).toEqual([
+      `alert_recipient.add:${row.id}:203.0.113.5`,
+      `alert_recipient.disable:${row.id}:203.0.113.5`,
+      `alert_recipient.remove:${row.id}:203.0.113.5`,
+    ]);
+  });
+
+  it('rolls the change back when its audit row cannot be written', async () => {
+    const { db, svc } = managed();
+    jest.spyOn(db.adminAuditLog, 'create').mockRejectedValueOnce(new Error('audit table unavailable'));
+    await expect(svc.add(AlertType.PRICE_DIP, 'ops4@davochain.test', actor)).rejects.toThrow('audit table unavailable');
+    expect(db.rows('alertRecipient')).toHaveLength(0);
+  });
+
+  it('says whether the env fallback actually names anyone, so "server default" never hides "nobody"', async () => {
+    expect((await managed(['ops@davochain.test']).svc.list()).fallbackConfigured).toBe(true);
+    expect((await managed(null).svc.list()).fallbackConfigured).toBe(false);
+    expect((await managed([]).svc.list()).fallbackConfigured).toBe(false);
+  });
+});

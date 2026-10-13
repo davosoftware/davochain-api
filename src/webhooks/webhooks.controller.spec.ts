@@ -38,3 +38,23 @@ describe('WebhooksController (Quidax)', () => {
     expect(queue.add).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('WebhooksController: attacker-supplied event names (final review m5)', () => {
+  function badCall(event: string) {
+    const created: Array<{ data: Record<string, unknown> }> = [];
+    const prisma = { webhookEvent: { create: jest.fn(async (arg: { data: Record<string, unknown> }) => (created.push(arg), { id: 'e' })) } };
+    const ctl = new WebhooksController(prisma as never, { verify: jest.fn(async () => false) } as never, { add: jest.fn() } as never);
+    const body = { event, data: { id: 'q' } };
+    return ctl.receive({ rawBody: Buffer.from(JSON.stringify(body)), body } as never, 'bad').then(() => created[0].data.eventName);
+  }
+
+  it('keeps a plain event name for a bad-signature request', async () => {
+    await expect(badCall('deposit.successful')).resolves.toBe('deposit.successful');
+  });
+
+  it('replaces anything else with "unknown", so no attacker text is stored or logged', async () => {
+    await expect(badCall('x'.repeat(65))).resolves.toBe('unknown');
+    await expect(badCall('<script>alert(1)</script>')).resolves.toBe('unknown');
+    await expect(badCall('leak@example.com')).resolves.toBe('unknown');
+  });
+});

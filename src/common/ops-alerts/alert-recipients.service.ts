@@ -33,7 +33,15 @@ const CATALOGUE: Record<AlertType, { label: string; description: string }> = {
   RATE_LIMIT_DEGRADED: { label: 'Rate limiting degraded', description: 'Redis is unreachable: sign-in is refusing requests and other routes run without limits.' },
 };
 
+/** Who made a change, for the audit row written in the same transaction. */
+export interface AuditActor {
+  adminId: string;
+  ip?: string;
+}
+
 export interface RecipientsView {
+  /** False when ALERT_DEFAULT_RECIPIENTS is empty: a type on the fallback then reaches nobody. */
+  fallbackConfigured: boolean;
   types: Array<{
     type: AlertType;
     label: string;
@@ -68,6 +76,7 @@ export class AlertRecipientsService {
   async list(): Promise<RecipientsView> {
     const rows = await this.prisma.alertRecipient.findMany({ orderBy: { email: 'asc' } });
     return {
+      fallbackConfigured: (this.config.get<string[]>('ALERT_DEFAULT_RECIPIENTS') ?? []).length > 0,
       types: (Object.values(AlertType) as AlertType[]).map((type) => {
         const recipients = rows.filter((r) => r.type === type);
         return {
@@ -81,31 +90,39 @@ export class AlertRecipientsService {
     };
   }
 
-  async add(type: AlertType, email: string): Promise<AlertRecipient> {
+  async add(type: AlertType, email: string, actor?: AuditActor): Promise<AlertRecipient> {
     const clean = email.trim().toLowerCase();
     return this.lockedFor(type, async (tx) => {
       const existing = await tx.alertRecipient.findFirst({ where: { type, email: clean } });
       if (existing) throw new ConflictException('That email already receives this alert');
-      return tx.alertRecipient.create({ data: { type, email: clean } });
+      const row = await tx.alertRecipient.create({ data: { type, email: clean } });
+      await this.audit(tx, actor, 'alert_recipient.add', row.id, null, row);
+      return row;
     });
   }
 
-  async setEnabled(id: string, enabled: boolean): Promise<{ before: AlertRecipient; after: AlertRecipient }> {
+  async setEnabled(
+    id: string,
+    enabled: boolean,
+    actor?: AuditActor,
+  ): Promise<{ before: AlertRecipient; after: AlertRecipient }> {
     const found = await this.mustFind(this.prisma, id);
     return this.lockedFor(found.type, async (tx) => {
       const before = await this.mustFind(tx, id);
       if (!enabled) await this.refuseIfLastSecurityRecipient(tx, before);
       const after = await tx.alertRecipient.update({ where: { id }, data: { enabled } });
+      await this.audit(tx, actor, enabled ? 'alert_recipient.enable' : 'alert_recipient.disable', id, before, after);
       return { before, after };
     });
   }
 
-  async remove(id: string): Promise<AlertRecipient> {
+  async remove(id: string, actor?: AuditActor): Promise<AlertRecipient> {
     const found = await this.mustFind(this.prisma, id);
     return this.lockedFor(found.type, async (tx) => {
       const row = await this.mustFind(tx, id);
       await this.refuseIfLastSecurityRecipient(tx, row);
       await tx.alertRecipient.delete({ where: { id } });
+      await this.audit(tx, actor, 'alert_recipient.remove', id, row, null);
       return row;
     });
   }
@@ -119,6 +136,32 @@ export class AlertRecipientsService {
     return this.prisma.$transaction(async (tx: Tx) => {
       await tx.$queryRaw`SELECT 1 AS ok FROM pg_advisory_xact_lock(hashtext(${`alert_recipients:${type}`}))`;
       return fn(tx);
+    });
+  }
+
+  /**
+   * The audit row is written with the same transaction as the change, so a
+   * change without its audit row cannot commit (final review m3).
+   */
+  private async audit(
+    tx: Tx,
+    actor: AuditActor | undefined,
+    action: string,
+    id: string,
+    before: unknown,
+    after: unknown,
+  ): Promise<void> {
+    if (!actor) return;
+    await tx.adminAuditLog.create({
+      data: {
+        adminUserId: actor.adminId,
+        action,
+        entity: 'AlertRecipient',
+        entityId: id,
+        before: (before ?? null) as never,
+        after: (after ?? null) as never,
+        ip: actor.ip ?? null,
+      },
     });
   }
 

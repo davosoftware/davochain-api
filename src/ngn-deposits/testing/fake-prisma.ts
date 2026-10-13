@@ -102,6 +102,12 @@ const MODELS = {
     decimals: [],
     defaults: () => ({ enabled: true }),
   },
+  adminAuditLog: {
+    unique: [['id']],
+    autoId: true,
+    decimals: [],
+    defaults: () => ({ entityId: null, before: null, after: null, ip: null, createdAt: new Date() }),
+  },
 } satisfies Record<string, ModelSpec>;
 
 export type ModelName = keyof typeof MODELS;
@@ -418,6 +424,7 @@ export class FakePrisma {
   readonly webhookEvent = new FakeModel(this, 'webhookEvent');
   readonly alert = new FakeModel(this, 'alert');
   readonly alertRecipient = new FakeModel(this, 'alertRecipient');
+  readonly adminAuditLog = new FakeModel(this, 'adminAuditLog');
 
   table(name: string): Row[] {
     let rows = this.tables.get(name);

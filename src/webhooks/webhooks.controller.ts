@@ -54,13 +54,15 @@ export class WebhooksController {
       .digest('hex');
 
     if (!valid) {
+      // The name came from an unauthenticated body: keep it only if it looks like an event name.
+      const safeName = /^[a-z0-9._-]{1,64}$/i.test(eventName) ? eventName : 'unknown';
       // Record it — a run of these is either a misconfigured secret or someone
       // probing the endpoint, and both are worth being able to see.
-      this.log.warn(`Rejected webhook signature for ${eventName}`);
+      this.log.warn(`Rejected webhook signature for ${safeName}`);
       await this.prisma.webhookEvent
         .create({
           data: {
-            eventName,
+            eventName: safeName,
             dedupHash,
             // Size and reason only: an unauthenticated body is attacker-supplied and may carry anything.
             payload: { bytes: raw?.length ?? 0, reason: 'bad-signature', json: req.body !== undefined } as never,
