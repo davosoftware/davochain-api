@@ -32,7 +32,15 @@ export class BasicReviewService {
       if (d.approve) {
         if (!s) throw new ConflictException('There is no verified identity to screen. Reject instead.');
         if (s.status === 'PENDING') throw new ConflictException('AML screening is still running. Try again in a few minutes.');
-        if (s.status === 'CLEAR') {
+        // Clear, or a person already decided its AML case in the person's favour and
+        // nothing else holds them (found in the live sandbox run: the case can be
+        // decided before the identity is).
+        const caseRow = await tx.amlReviewCase.findUnique({ where: { screeningId: s.id } });
+        const user = await tx.user.findUnique({ where: { id: userId }, select: { amlStatus: true } });
+        const amlSettled =
+          s.status === 'CLEAR' ||
+          (!!caseRow && ['CLEARED', 'PEP_APPROVED_EDD', 'SANCTIONS_FALSE_POSITIVE'].includes(caseRow.status) && user?.amlStatus === 'CLEAR');
+        if (amlSettled) {
           out.push(...(await this.basic.approve(tx, v.id)));
           next = 'APPROVED';
         } else {

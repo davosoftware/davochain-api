@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { AlertType, type AmlCaseStatus, Prisma } from '@prisma/client';
+import { AlertType, type AmlCaseStatus, type AmlStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { OpsAlertsService } from '../common/ops-alerts/ops-alerts.service';
 import { AmlService, runEffects, VA_SWITCH, type Effect, type Tx, type VaSwitch } from './aml.service';
@@ -155,7 +155,7 @@ export class ComplianceReviewService {
           out.push(() => this.virtualAccounts.setDesiredForUser(c.userId, 'INACTIVE', { background: true }));
         }
       }
-      if (RELEASING.has(target)) out.push(...(await this.release(tx, c.userId, c.screeningId, c.id)));
+      if (RELEASING.has(target)) out.push(...(await this.release(tx, c.userId, c.id, target)));
       if (target === 'CLEARANCE_PROPOSED') out.push(() => this.alert(c.id, 'proposed', 'Sanctions clearance proposed: a second admin must confirm'));
 
       await tx.adminAuditLog.create({
@@ -194,7 +194,7 @@ export class ComplianceReviewService {
           data: { status: target, confirmedBy: actor.adminId, confirmedAt: now, decidedBy: actor.adminId, decidedAt: now, reason: d.reason },
         });
         if (r.count !== 1) throw new ConflictException('This proposal changed just now');
-        out.push(...(await this.release(tx, c.userId, c.screeningId, c.id)));
+        out.push(...(await this.release(tx, c.userId, c.id, target)));
         out.push(() => this.virtualAccounts.setDesiredForUser(c.userId, 'ACTIVE', { background: true }));
         out.push(() => this.alert(c.id, 'confirmed', 'Sanctions clearance confirmed by a second admin'));
       } else {
@@ -288,13 +288,25 @@ export class ComplianceReviewService {
     return subs.filter((a) => a.permissions.includes('compliance.review')).map((a) => a.id);
   }
 
-  /** The user goes CLEAR only when nothing else is open about them (spec §9; principle 3). */
-  private async release(tx: Tx, userId: string, screeningId: string, caseId: string): Promise<Effect[]> {
-    const others = await tx.amlReviewCase.count({ where: { userId, id: { not: caseId }, status: { in: STILL_OPEN } } });
-    if (others > 0) return [];
-    await this.aml.setAmlStatus(tx, userId, 'CLEAR', ['UNDER_REVIEW', 'RESTRICTED', 'BLOCKED']);
-    const v = await tx.kycVerification.findFirst({ where: { screeningId, state: 'COMPLIANCE_REVIEW' } });
-    return v ? this.approver.approve(tx, v.id) : [];
+  /**
+   * The user goes CLEAR only when nothing else is open about them and no
+   * sanctions match stands confirmed (spec §9; principle 3). BLOCKED is lifted
+   * only by a two-person sanctions clearance (spec §14.1). Every verification
+   * still waiting on compliance is then approved, not just this case's.
+   */
+  private async release(tx: Tx, userId: string, caseId: string, target: AmlCaseStatus): Promise<Effect[]> {
+    const holding = await tx.amlReviewCase.count({
+      where: { userId, id: { not: caseId }, status: { in: [...STILL_OPEN, 'SANCTIONS_CONFIRMED'] } },
+    });
+    if (holding > 0) return [];
+    const from: AmlStatus[] = target === 'SANCTIONS_FALSE_POSITIVE' ? ['UNDER_REVIEW', 'RESTRICTED', 'BLOCKED'] : ['UNDER_REVIEW', 'RESTRICTED'];
+    await this.aml.setAmlStatus(tx, userId, 'CLEAR', from);
+    const user = await tx.user.findUnique({ where: { id: userId }, select: { amlStatus: true } });
+    if (user?.amlStatus !== 'CLEAR') return [];
+    const waiting = await tx.kycVerification.findMany({ where: { userId, state: 'COMPLIANCE_REVIEW' } });
+    const effects: Effect[] = [];
+    for (const v of waiting) effects.push(...(await this.approver.approve(tx, v.id)));
+    return effects;
   }
 
   private async alert(caseId: string, step: string, subject: string): Promise<void> {

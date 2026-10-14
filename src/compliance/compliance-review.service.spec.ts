@@ -207,3 +207,32 @@ describe('ComplianceReviewService: other cases', () => {
     expect(db.rows('user')[0].amlStatus).toBe('UNDER_REVIEW');
   });
 });
+
+describe('release never undoes a confirmed sanctions block, and never strands a verification', () => {
+  it('clearing another case does not unblock a person with a CONFIRMED sanctions case', async () => {
+    const { svc, db } = await setup({ category: 'PEP', amlStatus: 'BLOCKED' });
+    await db.amlScreening.create({ data: { id: 's9', userId: 'u1', inputs: {}, inputFingerprint: 'z', status: 'CONFIRMED_MATCH', category: 'SANCTIONS' } });
+    await db.amlReviewCase.create({ data: { id: 'c9', userId: 'u1', screeningId: 's9', category: 'SANCTIONS', priority: 'CRITICAL', status: 'SANCTIONS_CONFIRMED' } });
+    await svc.decide(SUB, 'c1', { decision: 'CLEARED', reason: 'False positive on a common name' });
+    expect(db.rows('user')[0].amlStatus).toBe('BLOCKED');
+  });
+
+  it('a non-sanctions clearance never lifts BLOCKED, even with nothing else open', async () => {
+    const { svc, db } = await setup({ category: 'PEP', amlStatus: 'BLOCKED' });
+    await svc.decide(SUB, 'c1', { decision: 'CLEARED', reason: 'False positive on a common name' });
+    expect(db.rows('user')[0].amlStatus).toBe('BLOCKED');
+  });
+
+  it('clearing the last open case approves every verification still waiting in COMPLIANCE_REVIEW', async () => {
+    const { svc, db, basic } = await setup({ category: 'PEP', amlStatus: 'UNDER_REVIEW' });
+    await db.amlScreening.create({ data: { id: 's2', userId: 'u1', inputs: {}, inputFingerprint: 'g', status: 'UNKNOWN' } });
+    await db.amlReviewCase.create({ data: { id: 'c2', userId: 'u1', screeningId: 's2', category: 'UNKNOWN', priority: 'NORMAL' } });
+    await db.kycVerification.updateMany({ where: { id: 'v1' }, data: { activeFor: null } });
+    await db.kycVerification.create({ data: { id: 'v2', userId: 'u1', activeFor: 'u1', state: 'COMPLIANCE_REVIEW', lagosDay: '2026-10-14', idType: 'BVN', idHash: 'h1:y', idLast4: '1111', typedFirstName: 'A', typedLastName: 'B', typedDateOfBirth: '2000-01-01', typedAddress: {}, screeningId: 's2' } });
+    await svc.decide(SUB, 'c1', { decision: 'CLEARED', reason: 'False positive on a common name' }); // c2 still open
+    expect(basic.approve).not.toHaveBeenCalled();
+    await svc.decide(SUB, 'c2', { decision: 'CLEARED', reason: 'Unclear result reviewed, fine' });
+    expect(db.rows('user')[0].amlStatus).toBe('CLEAR');
+    expect(basic.approve.mock.calls.map((c) => c[1]).sort()).toEqual(['v1', 'v2']);
+  });
+});

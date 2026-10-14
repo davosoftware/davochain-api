@@ -83,3 +83,26 @@ describe('the old review route (plan ruling 8)', () => {
     await expect(svc.reviewKyc('a1', 'u1', { approve: true, tier: 'TIER_1' as never })).rejects.toMatchObject({ status: 400 });
   });
 });
+
+describe('identity approved after the AML case was already decided (found in the live sandbox run)', () => {
+  it('approves when the case was cleared and the person is CLEAR, instead of stranding them in COMPLIANCE_REVIEW', async () => {
+    const { svc, db, basic } = await setup({ status: 'UNKNOWN' });
+    await db.user.updateMany({ where: { id: 'u1' }, data: { amlStatus: 'CLEAR' } });
+    await db.amlReviewCase.create({ data: { userId: 'u1', screeningId: 's1', category: 'PEP', priority: 'HIGH', status: 'CLEARED' } });
+    expect((await svc.decide(actor, 'u1', { approve: true, reason: 'Surname typed wrongly; record confirmed' })).state).toBe('APPROVED');
+    expect(basic.approve).toHaveBeenCalledWith(expect.anything(), 'v1');
+  });
+
+  it('still goes to COMPLIANCE_REVIEW while the case is open', async () => {
+    const { svc, db } = await setup({ status: 'UNKNOWN' });
+    await db.amlReviewCase.create({ data: { userId: 'u1', screeningId: 's1', category: 'PEP', priority: 'HIGH', status: 'OPEN' } });
+    expect((await svc.decide(actor, 'u1', { approve: true, reason: 'Surname typed wrongly; record confirmed' })).state).toBe('COMPLIANCE_REVIEW');
+  });
+
+  it('a cleared case does not approve a person who is still not CLEAR (another case open)', async () => {
+    const { svc, db } = await setup({ status: 'UNKNOWN' });
+    await db.user.updateMany({ where: { id: 'u1' }, data: { amlStatus: 'UNDER_REVIEW' } });
+    await db.amlReviewCase.create({ data: { userId: 'u1', screeningId: 's1', category: 'PEP', priority: 'HIGH', status: 'CLEARED' } });
+    expect((await svc.decide(actor, 'u1', { approve: true, reason: 'Surname typed wrongly; record confirmed' })).state).toBe('COMPLIANCE_REVIEW');
+  });
+});
