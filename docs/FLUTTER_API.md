@@ -4,7 +4,7 @@
 | --- | --- |
 | **For** | The Flutter developer building the DavoChain mobile app |
 | **API version** | `v1` |
-| **Last verified** | 2 October 2026, against the API source (`api/src/`) and a running local instance. Rate limiting (0.4.1, 2.x errors) added 12 October 2026. |
+| **Last verified** | 2 October 2026, against the API source (`api/src/`) and a running local instance. Rate limiting (0.4.1, 2.x errors) added 12 October 2026. Basic verification (4.2, 4.4, §0.6) added 14 October 2026. |
 | **Source of truth** | The API code. If this guide and the API disagree, tell the backend team so the guide gets fixed. |
 | **Replaces** | `admin/docs/FLUTTER.md` |
 
@@ -20,6 +20,19 @@
    - **Integration notes:** UX rules and gotchas
 3. Use **Part 2, Appendices** for push notifications, enum values, ready-made Dart code, testing on the local backend, and known limitations.
 
+## What changed for the app (14 October 2026): Basic verification
+
+| Change | Where | What the app must do |
+| --- | --- | --- |
+| **`POST /v1/kyc/tier1` is gone** (now `404`) | 4.2 | Use **`POST /v1/kyc/basic`**. It takes names, date of birth, address and state of origin as well as the BVN/NIN, and answers at once. |
+| **New: `GET /v1/kyc/states`** | 4.4 | Load the state and LGA pickers from it |
+| **`GET /v1/kyc` has new fields** | 4.1 | `level`, `basicState`, `underReview`, `attemptsLeftToday`, `attemptsLeftTotal` |
+| **`phone` is required at sign-up** | 2.1 | Make the field mandatory. A phone already in use now gives `400` (it used to give `500`). |
+| **Verification-gated endpoints have two new `403` answers** | §0.4, §0.6 | Handle `code: "VERIFICATION_PENDING"` and `code: "ACCOUNT_UNDER_REVIEW"` (Dart: D.3) |
+| **The naira deposit account needs the person to be fully cleared** | 6.4, 6.5 | Show `reason` as sent; it can now say "under review" |
+| **New rate limit:** Basic submissions, 5 per hour per user | §0.4.1 | Never auto-retry 4.2 |
+| **Basic is switched off until launch** | Appendix F 3a | 4.2 answers `503 "Verification is not available yet."`; build the screens anyway |
+
 ---
 
 ## Contents
@@ -34,7 +47,7 @@
 | 1 | [Health](#1-health) | 1.1 Server health |
 | 2 | [Authentication](#2-authentication) | 2.1 Register · 2.2 Log in · 2.3 Refresh token · 2.4 Log out · 2.5 Change password · 2.6 Request reset code · 2.7 Reset password · 2.8 Who am I (token) |
 | 3 | [Profile & wallets](#3-profile--wallets) | 3.1 Get profile · 3.2 Get wallet balances |
-| 4 | [KYC](#4-kyc-identity-verification) | 4.1 Get KYC status · 4.2 Basic verification · 4.3 Attach document (not ready) · 4.4 States and LGAs |
+| 4 | [KYC](#4-kyc-identity-verification) | 4.1 Get KYC status · 4.2 Basic verification · 4.3 Attach document (not ready) · 4.4 States and LGAs · 4.5 Basic screen flow |
 | 5 | [Assets](#5-assets--networks) | 5.1 List coins · 5.2 List a coin's networks |
 | 6 | [Deposits](#6-deposits) | 6.1 Get deposit address · 6.2 List my addresses · 6.3 Deposit history · 6.4 Naira account · 6.5 Open naira account |
 | 7 | [Trading](#7-trading-buy-sell-swap) | 7.1 Get a quote · 7.2 Execute a quote · 7.3 Trade history · 7.4 Get one transaction |
@@ -911,6 +924,36 @@ Returns Nigeria's 36 states and the FCT, each with its local government areas, f
 
 ---
 
+### 4.5 Basic verification: the screen flow
+
+1. **Open the verification screen:** call 4.1.
+   - `level: "BASIC"`: show "Verified". Hide the form.
+   - `underReview: true`: show "We are reviewing your details". Hide the form (a submit would get `409`).
+   - Otherwise show the form, if `attemptsLeftToday` > 0. If it is 0 but `attemptsLeftTotal` > 0, say "Try again tomorrow". If both are 0, say "Contact support".
+2. **Fill the form:** ID type (BVN/NIN), the 11-digit number, names **exactly as on the ID**, date of birth, address with the state and LGA from 4.4, and state of origin from 4.4.
+3. **Submit (4.2)** with a loading state: it can take up to ~5 seconds. **Never auto-retry it.**
+4. **Show the answer** by `state`:
+   - `APPROVED`: success, then **sign the user in again**. Their sessions were ended on purpose so the new level takes effect (§0.5).
+   - `IDENTITY_REVIEW`, `COMPLIANCE_REVIEW` or `LOOKED_UP`: show `message` ("We are reviewing your details…"). All three look the same to the user. They get an email when it is decided.
+   - `REJECTED_NOT_FOUND`: show `message` and let them correct the number.
+   - `503`: show `message`; this didn't use an attempt. `429`: show `message`.
+5. **When the user comes back**, call 4.1 again; the email tells them it was decided.
+
+**Test numbers** (local backend with the Dojah mock, `DOJAH_USE_MOCK=true` and `KYC_BASIC_ENABLED=true`). Use the exact names shown; the date of birth must match too:
+
+| `idNumber` | Names / date of birth to type | Result |
+| --- | --- | --- |
+| `33333333333` | Someone Clean, 1995-03-03 | `APPROVED` |
+| `22222222222` | John Doe Ajayi, 2000-05-01 | `COMPLIANCE_REVIEW` (until an admin decides) |
+| `33333333333` | any other name | `IDENTITY_REVIEW` |
+| `11111111111` | anything | `REJECTED_NOT_FOUND` |
+| `40200000001` | anything | `503` (provider unavailable; no attempt used) |
+| `66666666666` | Test Sanctioned, 1985-06-06 | `COMPLIANCE_REVIEW`, and every gated call then answers `ACCOUNT_UNDER_REVIEW` |
+
+Against the Dojah **sandbox** instead, `22222222222` belongs to "John Doe Adamu", born 2000-05-01.
+
+---
+
 ## 5. Assets & networks
 
 ### 5.1 List coins
@@ -1085,7 +1128,7 @@ Content-Type: application/json
 
 | Status | When | `message` |
 | --- | --- | --- |
-| 403 | User not verified | KYC body (§0.4) |
+| 403 | Not verified, verification still completing, or account under review | One of the three bodies in §0.6 |
 | 403 | Deposits paused by admin | `"Deposits are temporarily paused."` |
 | 404 | Unknown coin | `"Unknown asset: xyz"` |
 | 404 | Coin not on that network | `"USDT is not available on xyz"` |
@@ -1204,6 +1247,16 @@ Authorization: Bearer eyJhbGciOi…
 { "statusCode": 404, "code": "NO_VIRTUAL_ACCOUNT", "eligible": false, "reason": "Verify your identity (Tier 1) to get a naira account.", "message": "You have no naira deposit account yet." }
 ```
 
+Possible `reason` values when `eligible` is `false`:
+
+| `reason` | Meaning |
+| --- | --- |
+| `"Verify your identity (Tier 1) to get a naira account."` | Not Basic yet: open 4.2 |
+| `"Your verification is still being completed."` | Basic was submitted and is still finishing |
+| `"Your account is under review. Contact support."` | Under review. Show it as-is; never explain why. |
+| `"Your account is not active. Contact support."` | Suspended or closed |
+| `"Naira deposits are not available yet."` / `"Naira deposits are temporarily unavailable. Try again later."` | Switched off, or the provider is down |
+
 **Integration notes**
 - Call it when the naira deposit screen opens. On 404 with `eligible: true`, offer "Get my account number" (6.5). With `eligible: false`, show `reason`.
 - A deposit shows up in 6.3 and as a `deposit.credited` push. A deposit over the user's KYC limit shows as `ON_HOLD` (push `deposit.on_hold`) until an admin reviews it.
@@ -1212,7 +1265,7 @@ Authorization: Bearer eyJhbGciOi…
 
 ### 6.5 Open my naira deposit account
 
-**Endpoint:** `POST /v1/deposits/ngn/account` · **Auth:** **Bearer** · **KYC:** Tier 1 approved (checked server-side) · **Success:** `201`, `200` or `202`
+**Endpoint:** `POST /v1/deposits/ngn/account` · **Auth:** **Bearer** · **KYC:** Basic (`TIER_1`) approved **and** not under review (checked server-side) · **Success:** `201`, `200` or `202`
 
 **What it does**
 Creates the user's permanent naira account at Flutterwave, DavoChain's payment provider. The user re-enters the BVN or NIN they verified with in 4.2. It is checked against what DavoChain holds, sent once to Flutterwave, and never stored.
@@ -1361,7 +1414,7 @@ Content-Type: application/json
 | 404 | Unknown coin | `"Unknown asset: xyz"` |
 | 404 | Outside the provider's transfer limit (quirk, should be 400) | `"Minimum BTC transfer is 0.00015"` |
 | 403 | Trading paused | `"Trading is temporarily paused. Please try again shortly."` / `"BTC is temporarily unavailable for trading."` |
-| 403 | Not verified | KYC body |
+| 403 | Not verified, verification still completing, or account under review | One of the three bodies in §0.6 |
 | 500 | Price provider unreachable | Generic. "Couldn't get a price, try again." |
 
 **Integration notes (important)**
@@ -1679,7 +1732,7 @@ Content-Type: application/json
 
 | Status | When | `message` |
 | --- | --- | --- |
-| 403 | Not verified | KYC body |
+| 403 | Not verified, verification still completing, or account under review | One of the three bodies in §0.6 |
 | 403 | Withdrawals paused | `"Withdrawals are temporarily paused."` |
 | 404 | Unknown coin | `"Unknown asset: xyz"` |
 | 400 | Network not offered | `"USDT is not available on xyz"` |
@@ -2810,7 +2863,10 @@ Push uses **Firebase Cloud Messaging** and is **off until the backend adds Fireb
 
 | Name | Values |
 | --- | --- |
-| KYC tier | `TIER_0` (signed up) · `TIER_1` (BVN/NIN) · `TIER_2` (ID + selfie, not available yet) · `TIER_3` (proof of address, not available yet) |
+| KYC tier | `TIER_0` (signed up) · `TIER_1` (**Basic**: BVN/NIN checked) · `TIER_2` / `TIER_3` (Advanced, not available yet) |
+| KYC level (4.1 `level`) | `NONE` · `BASIC` |
+| Basic state (4.1 `basicState`, 4.2 `state`) | `CREATED` · `LOOKED_UP` · `APPROVED` · `IDENTITY_REVIEW` · `COMPLIANCE_REVIEW` · `REJECTED_NOT_FOUND` · `REJECTED_BY_REVIEW` · `FAILED_SYSTEM` |
+| `403` codes | `ACCOUNT_SUSPENDED` · `ACCOUNT_CLOSED` · `VERIFICATION_PENDING` · `ACCOUNT_UNDER_REVIEW` |
 | KYC status | `NOT_STARTED` · `PENDING` · `APPROVED` · `REJECTED` · `EXPIRED` (not used yet) |
 | User status | `ACTIVE` · `SUSPENDED` · `CLOSED` |
 | Transaction status | `PENDING` · `PROCESSING` · `ON_HOLD` · `COMPLETED` · `FAILED` · `RECONCILING` |
@@ -2948,7 +3004,7 @@ class ApiError implements Exception {
   ApiError(this.status, this.message, {this.code, this.requiredTier, this.retryAfterSeconds});
   final int status;
   final String message;
-  final String? code;          // ACCOUNT_SUSPENDED / ACCOUNT_CLOSED
+  final String? code;          // ACCOUNT_SUSPENDED / ACCOUNT_CLOSED / VERIFICATION_PENDING / ACCOUNT_UNDER_REVIEW
   final String? requiredTier;  // set on KYC 403
   final int? retryAfterSeconds; // set on 429 (0.4.1): disable the button this long
 
@@ -2968,7 +3024,41 @@ class ApiError implements Exception {
   bool get needsKyc => status == 403 && requiredTier != null;
   bool get suspended => code == 'ACCOUNT_SUSPENDED';
   bool get closed => code == 'ACCOUNT_CLOSED';
+  bool get verificationPending => code == 'VERIFICATION_PENDING'; // §0.6: show message, re-check 4.1 later
+  bool get underReview => code == 'ACCOUNT_UNDER_REVIEW'; // §0.6: show message as-is, never explain
   bool get rateLimited => status == 429; // never auto-retry auth routes; wait retryAfterSeconds
+}
+```
+
+### D.3a Basic verification
+
+```dart
+Future<Map<String, dynamic>> submitBasic(Dio dio, {
+  required String idType, // "BVN" or "NIN"
+  required String idNumber,
+  required String firstName,
+  String? middleName,
+  required String lastName,
+  required String dateOfBirth, // YYYY-MM-DD
+  required String street,
+  required String city,
+  required String state, // from GET /v1/kyc/states
+  required String lga, // from the same state
+  required String stateOfOrigin,
+}) async {
+  // One request, no automatic retry: each call can cost a paid lookup.
+  final res = await dio.post('/v1/kyc/basic', data: {
+    'idType': idType,
+    'idNumber': idNumber,
+    'firstName': firstName,
+    if (middleName != null && middleName.isNotEmpty) 'middleName': middleName,
+    'lastName': lastName,
+    'dateOfBirth': dateOfBirth,
+    'address': {'street': street, 'city': city, 'state': state, 'lga': lga},
+    'stateOfOrigin': stateOfOrigin,
+    'country': 'NG',
+  });
+  return res.data as Map<String, dynamic>; // { state, level, message }
 }
 ```
 
