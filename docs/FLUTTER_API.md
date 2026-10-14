@@ -4,7 +4,7 @@
 | --- | --- |
 | **For** | The Flutter developer building the DavoChain mobile app |
 | **API version** | `v1` |
-| **Last verified** | 2 October 2026, against the API source (`api/src/`) and a running local instance. Rate limiting (0.4.1, 2.x errors) added 12 October 2026. Basic verification (4.2, 4.4, §0.6) added 14 October 2026. |
+| **Last verified** | 2 October 2026, against the API source (`api/src/`) and a running local instance. Rate limiting (0.4.1, 2.x errors) added 12 October 2026. Basic verification (4.2, 4.4, §0.6) added 14 October 2026. Bug fixes and maintenance enforcement (Appendix F) 15 October 2026. |
 | **Source of truth** | The API code. If this guide and the API disagree, tell the backend team so the guide gets fixed. |
 | **Replaces** | `admin/docs/FLUTTER.md` |
 
@@ -124,6 +124,7 @@ In development you can try every endpoint in the browser at `http://<host>/docs`
 { "message": "Verification required before you can do this", "requiredTier": "TIER_1", "currentTier": "TIER_0", "kycStatus": "NOT_STARTED" }
 { "code": "VERIFICATION_PENDING", "message": "Your verification is still being completed." }
 { "code": "ACCOUNT_UNDER_REVIEW", "message": "Your account is under review. Contact support." }
+{ "statusCode": 503, "code": "MAINTENANCE", "message": "<the admin's maintenance message>" }
 ```
 
 **Rules:**
@@ -139,6 +140,7 @@ In development you can try every endpoint in the browser at `http://<host>/docs`
 | 409 | Conflict (see each endpoint) | See each endpoint |
 | 413 | Request body over 1 MB | Make photos smaller (9.3) |
 | 429 | Too many requests (rate limit, §0.4.1). Body `{ "statusCode": 429, "message": "Too many attempts. Try again in N seconds." }` and a `Retry-After: N` header | Show `message`. Disable the button for `Retry-After` seconds. **Never** retry automatically on the auth routes. |
+| 503 with `code: "MAINTENANCE"` | Maintenance mode is on (quotes, trades, withdrawals, deposit addresses, the naira account, gift-card trades, Basic) | Show the full-screen maintenance page with `message`. Sign-in, balances and history still work. |
 | 500 / 503 | Server or provider problem. On the auth routes a `503` can also mean the sign-in protection is briefly unavailable (`"Temporarily unavailable. Try again shortly."`) or the server is busy (`"The service is busy, try again shortly"`) | "Something went wrong, please try again." **Never** auto-retry money actions without the same Idempotency-Key. |
 
 ### 0.4.1 Rate limits
@@ -1393,7 +1395,7 @@ Content-Type: application/json
 | `fromAsset`, `toAsset` | string | |
 | `fromAmount` | string | **What will actually be taken from the balance.** On a buy it can be a little *less* than the amount typed (the coin amount is rounded down, then the naira is re-priced from it). Show this, not the typed amount. NGN 2 decimals, coins 8. |
 | `toAmount` | string | What the user receives (8 decimals for coins, 2 for NGN) |
-| `rate` | string | **Buy/sell:** naira per **US dollar**, with DavoChain's margin included (e.g. "₦1,485 per $1"). **Swap:** `toAsset` per 1 `fromAsset`, but **cut to 4 decimals, so small swap rates come back as `"0.0000"`** (e.g. USDT→BTC). For swaps, show your own rate: `(toAmount + fee) ÷ fromAmount`, or simply "50 USDT → 0.00071234 BTC". |
+| `rate` | string | **Buy/sell:** naira per **US dollar**, with DavoChain's margin included (e.g. "₦1,485 per $1"). **Swap:** `toAsset` per 1 `fromAsset`, to 10 significant digits (e.g. USDT→BTC `"0.00001423498765"`). |
 | `fee` | string | Buy/sell: always zero (the margin is inside the rate), so show ₦0 or no fee line. Swap: a real fee, already taken out of `toAmount`. **Show it.** |
 | `feeAsset` | string \| null | The coin the swap fee is charged in |
 | `minimum`, `maximum` | string | Allowed trade size **in US dollars**. Changes with price. |
@@ -1412,7 +1414,7 @@ Content-Type: application/json
 | 400 | Swap below twice its fee | `"Minimum swap is $4.00 worth — the $2.00 fee would take too large a share"` |
 | 400 | Same coin on both sides | `"Choose two different coins"` |
 | 404 | Unknown coin | `"Unknown asset: xyz"` |
-| 404 | Outside the provider's transfer limit (quirk, should be 400) | `"Minimum BTC transfer is 0.00015"` |
+| 400 | Outside the coin's transfer limit | `"Minimum BTC transfer is 0.00015"` / `"Maximum BTC transfer is 5"` |
 | 403 | Trading paused | `"Trading is temporarily paused. Please try again shortly."` / `"BTC is temporarily unavailable for trading."` |
 | 403 | Not verified, verification still completing, or account under review | One of the three bodies in §0.6 |
 | 500 | Price provider unreachable | Generic. "Couldn't get a price, try again." |
@@ -3173,14 +3175,14 @@ Locally the API uses a **fake ("mock") version of Quidax**, the crypto provider.
 | 7 | **Rate limiting is live** (§0.4.1) | Handle `429` + `Retry-After` on every call. Quotes (7.1) have no limit of their own yet; they share the 300-per-minute default. |
 | 8 | **No deposit/withdrawal detail endpoints**, no tx hash or address in history | Use the lists + 7.4. Detail endpoints are planned. |
 | 9 | **No pagination** beyond `limit=100` | Cursor paging will be added |
-| 10 | **Phantom deposit after a buy** (a `PENDING` "deposit" of the bought coin + a "BTC added" notification) | Backend bug, fix pending. Not an app bug. |
-| 11 | 8.1 / 8.4 return **500** if `amount` is missing or invalid | Validate before calling |
-| 12 | Provider transfer-limit errors in 7.1 return **404** instead of 400 | Show `message`. Will become 400. |
+| 10 | ~~Phantom deposit after a buy~~ **Fixed (15 Oct):** a buy no longer creates a deposit or a "BTC added" notification | Nothing |
+| 11 | ~~8.1 / 8.4 return 500 on a bad amount~~ **Fixed:** `400 "Enter an amount greater than zero"` (8.1 also: `"Choose a coin"`, `"Choose a network"`) | Show `message` |
+| 12 | ~~Transfer-limit errors in 7.1 return 404~~ **Fixed:** now `400` | Show `message` |
 | 13 | ~~Registering with a phone already in use returns 500~~ **Fixed:** it now returns the same `400` as a taken email | Show `message` |
-| 14 | 8.7 returns **500** if the account details are invalid at submit | Always call 8.6 first |
-| 15 | Maintenance mode isn't enforced by the API | The app must check 13.1 |
+| 14 | ~~8.7 returns 500 on invalid account details~~ **Fixed:** `400 "Unable to verify those bank details. Check the account and bank."`, or `503` if the bank check is unavailable. Nothing is debited. | Still call 8.6 first for a better screen |
+| 15 | ~~Maintenance mode isn't enforced~~ **Fixed:** money-moving calls answer `503` with `code: "MAINTENANCE"` while it is on | Still check 13.1 on start for the full-screen page; handle the 503 on any money action |
 | 16 | Error **wording** may change | Never write logic on message text |
-| 17 | Swap quote `rate` (7.1) is cut to 4 decimals, so it often reads `"0.0000"` | Compute the display rate from the amounts. Will be fixed to full precision. |
+| 17 | ~~Swap quote `rate` cut to 4 decimals~~ **Fixed:** a swap rate keeps 10 significant digits (e.g. `"0.00001423498765"`) | Show `rate` as sent |
 
 ---
 
