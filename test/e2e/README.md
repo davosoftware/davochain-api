@@ -25,15 +25,18 @@ They are **safe**: they refuse to run against anything but `localhost`. They cre
 docker compose up -d
 ```
 
-**2. Start the API with the mocks** (terminal 1, from `api/`):
+**2. Start the API in test mode** (terminal 1, from `api/`). **Stop `npm run start:dev` first**: this replaces it.
 
-```bash
-DOJAH_USE_MOCK=true KYC_BASIC_ENABLED=true QUIDAX_USE_MOCK=true FLW_USE_MOCK=true \
-ALERT_DEFAULT_RECIPIENTS=ops@davochain.invalid RATE_LIMIT_AUTH_REGISTER_IP=1000/1h \
-npm run start:dev
+```
+npm run start:e2e
 ```
 
-`RATE_LIMIT_AUTH_REGISTER_IP=1000/1h` matters: one full run registers about 50 users, and the real limit is 5 per hour per IP.
+It works the same in PowerShell, cmd and Bash, and prints the settings it uses:
+- every provider mocked: `DOJAH_USE_MOCK`, `QUIDAX_USE_MOCK`, `FLW_USE_MOCK`;
+- Basic verification on: `KYC_BASIC_ENABLED`, `ALERT_DEFAULT_RECIPIENTS`;
+- `RATE_LIMIT_AUTH_REGISTER_IP=1000/1h`, because one full run registers about 50 users and the real limit is 5 per hour per IP.
+
+Wait for `Davochain API listening on :3000`. To use another port: `npm run start:e2e -- 3001`, then set `API_URL` (step 4).
 
 **3. Create an admin, once** (for `admin.e2e-spec.ts`):
 
@@ -41,11 +44,23 @@ npm run start:dev
 npm run create-admin -- --email e2e-owner@davochain.invalid --password 'Pick-a-long-password-9'
 ```
 
-**4. Run the tests** (terminal 2, from `api/`):
+**4. Run the tests** (terminal 2, from `api/`).
+
+PowerShell:
+
+```powershell
+$env:E2E_ADMIN_EMAIL = "e2e-owner@davochain.invalid"
+$env:E2E_ADMIN_PASSWORD = "Pick-a-long-password-9"
+npm run test:e2e
+```
+
+Git Bash:
 
 ```bash
 E2E_ADMIN_EMAIL=e2e-owner@davochain.invalid E2E_ADMIN_PASSWORD='Pick-a-long-password-9' npm run test:e2e
 ```
+
+Expected result: `Test Suites: 6 passed` and `Tests: 89 passed`. In PowerShell a red `NativeCommandError` line may also appear. That is only PowerShell labelling Jest's normal output (Jest writes it to stderr); the `Tests:` line is what counts.
 
 ### Useful variations
 
@@ -54,15 +69,16 @@ E2E_ADMIN_EMAIL=e2e-owner@davochain.invalid E2E_ADMIN_PASSWORD='Pick-a-long-pass
 | `npm run test:e2e` | everything; the admin suite is **skipped** without `E2E_ADMIN_*` |
 | `npm run test:e2e -- test/e2e/kyc-basic` | one file |
 | `npm run test:e2e -- -t "Idempotency"` | tests whose name matches |
-| `API_URL=http://localhost:3001 npm run test:e2e` | a server on another port (default `http://localhost:3000`) |
+| `$env:API_URL = "http://localhost:3001"` (PowerShell) or `API_URL=http://localhost:3001` (Bash), then `npm run test:e2e` | a server on another port (default `http://localhost:3000`) |
 | `npm test` | the unit tests (no server needed) |
 
 ## When something fails
 
 | Message | Fix |
 |---|---|
-| `No API at http://localhost:3000` | the server isn't running, or runs on another port (set `API_URL`) |
-| `Could not register a test user (429 …)` | restart the server with `RATE_LIMIT_AUTH_REGISTER_IP=1000/1h`, or wait the seconds shown |
-| `Basic verification did not approve (503 …)` | start the server with `DOJAH_USE_MOCK=true KYC_BASIC_ENABLED=true ALERT_DEFAULT_RECIPIENTS=…` |
+| `No API at http://localhost:3000` | the server isn't running yet (wait for "listening"), or runs on another port (set `API_URL`) |
+| `Could not register a test user (429 …)` | the server was started with `npm run start:dev`, not `npm run start:e2e`, so the real sign-up limit (5 per hour) applies. Stop it and run `npm run start:e2e`. |
+| `Basic verification did not approve (503 …)` | the same: start the server with `npm run start:e2e` |
+| `-t "…"` still fails in setup | `-t` picks which tests run, but each file's setup (registering a user) still runs, so it needs the test-mode server too |
 | `Admin login failed` | check `E2E_ADMIN_EMAIL` / `E2E_ADMIN_PASSWORD`, or re-run `create-admin` (it resets the password) |
 | A maintenance test fails half-way | it restores the setting in a `finally` block. If the server was killed mid-test, switch it off in the dashboard (System → Site settings). |

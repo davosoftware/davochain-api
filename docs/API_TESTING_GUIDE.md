@@ -19,14 +19,14 @@ A hands-on guide for testing the API yourself from a terminal, using `curl` (Git
 
 You need Postgres and Redis running (`docker compose up -d` at the workspace root), and the database migrated (`cd api && npx prisma migrate deploy`).
 
-Start the API with every outside provider **mocked**, so nothing real is called or charged:
+Start the API with every outside provider **mocked**, so nothing real is called or charged. Use this instead of `npm run start:dev`; it works in PowerShell, cmd and Bash:
 
-```bash
-cd api
-DOJAH_USE_MOCK=true KYC_BASIC_ENABLED=true QUIDAX_USE_MOCK=true FLW_USE_MOCK=true \
-ALERT_DEFAULT_RECIPIENTS=ops@davochain.invalid RATE_LIMIT_AUTH_REGISTER_IP=1000/1h \
-npm run start:dev
 ```
+cd api
+npm run start:e2e
+```
+
+It sets these for you:
 
 | Variable | Why |
 |---|---|
@@ -51,7 +51,7 @@ curl -s http://localhost:3000/health
 npm run create-admin -- --email you@example.com --password 'pick-a-long-password-9'
 ```
 
-**Set these in your terminal once.** All the examples use them:
+**Set these in your terminal once.** All the examples use them. The `curl` examples are written for **Git Bash**; in PowerShell use `curl.exe` and its own quoting, or simply use Git Bash for this guide.
 
 ```bash
 API=http://localhost:3000/v1

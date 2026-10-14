@@ -30,7 +30,8 @@
     "dev-credit": "node scripts/dev-credit.mjs",
     "demo": "node scripts/demo-buy.mjs",
     "cms:to-html": "ts-node --compiler-options {\"module\":\"CommonJS\"} scripts/markdown-to-html.ts",
-    "test:e2e": "jest --config test/jest-e2e.json --runInBand"
+    "test:e2e": "jest --config test/jest-e2e.json --runInBand",
+    "start:e2e": "node scripts/start-e2e.mjs"
   },
   "dependencies": {
     "@nestjs/bullmq": "^11.0.2",

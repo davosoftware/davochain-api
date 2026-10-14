@@ -52,7 +52,7 @@ export async function requireServer(): Promise<void> {
     const r = await call('GET', '/health');
     if (r.status !== 200) throw new Error(`health answered ${r.status}`);
   } catch (err) {
-    throw new Error(`No API at ${BASE} (${(err as Error).message}). Start it first: see test/e2e/README.md.`);
+    throw new Error(`No API at ${BASE} (${(err as Error).message}). Start it first with \`npm run start:e2e\` and wait for "listening" (test/e2e/README.md).`);
   }
 }
 
@@ -80,7 +80,7 @@ export async function newUser(firstName = 'E2e', lastName = 'Tester'): Promise<T
   if (r.status !== 201) {
     throw new Error(
       `Could not register a test user (${r.status} ${JSON.stringify(r.body)}). ` +
-        'If this is 429, start the server with RATE_LIMIT_AUTH_REGISTER_IP=1000/1h (test/e2e/README.md).',
+        'If this is 429, the server is not in test mode: stop it and start it with `npm run start:e2e` (test/e2e/README.md).',
     );
   }
   return { id: r.body.userId, email, password, phone, token: r.body.accessToken, refreshToken: r.body.refreshToken };
@@ -103,7 +103,7 @@ export async function verifyBasic(user: TestUser): Promise<TestUser> {
   if (r.status !== 201 || r.body.state !== 'APPROVED') {
     throw new Error(
       `Basic verification did not approve (${r.status} ${JSON.stringify(r.body)}). ` +
-        'Start the server with DOJAH_USE_MOCK=true KYC_BASIC_ENABLED=true ALERT_DEFAULT_RECIPIENTS=... (test/e2e/README.md).',
+        'The server is not in test mode: stop it and start it with `npm run start:e2e` (test/e2e/README.md).',
     );
   }
   return login(user);
