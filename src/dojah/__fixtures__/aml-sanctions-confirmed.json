@@ -1,0 +1,1 @@
+{ "entity": { "entity_id": "sc-1", "risk_level": "High", "match_status": "Confirmed Match", "total_results": 1, "results": [ { "name": "Test Person", "source_type": "SANCTION", "country": "Nigeria", "score": 1, "articles": [ { "title": "Listed", "url": "https://example.test/a", "body": "long article text that must not be copied" } ] } ] } }

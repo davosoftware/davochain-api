@@ -1,0 +1,1 @@
+{ "entity": { "entity_id": "sp-1", "risk_level": "Medium", "match_status": "Potential Match", "total_results": 1, "results": [ { "name": "Test Person", "source_type": "Sanctions", "score": 0.7 } ] } }
