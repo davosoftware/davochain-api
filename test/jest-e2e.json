@@ -1,0 +1,11 @@
+{
+  "moduleFileExtensions": ["js", "json", "ts"],
+  "rootDir": "..",
+  "testRegex": "test/e2e/.*\\.e2e-spec\\.ts$",
+  "transform": {
+    "^.+.(t|j)s$": ["ts-jest", { "tsconfig": { "allowJs": true, "esModuleInterop": true } }]
+  },
+  "testEnvironment": "node",
+  "testTimeout": 30000,
+  "maxWorkers": 1
+}

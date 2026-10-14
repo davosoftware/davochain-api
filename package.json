@@ -29,7 +29,8 @@
     "create-admin": "node scripts/create-admin.mjs",
     "dev-credit": "node scripts/dev-credit.mjs",
     "demo": "node scripts/demo-buy.mjs",
-    "cms:to-html": "ts-node --compiler-options {\"module\":\"CommonJS\"} scripts/markdown-to-html.ts"
+    "cms:to-html": "ts-node --compiler-options {\"module\":\"CommonJS\"} scripts/markdown-to-html.ts",
+    "test:e2e": "jest --config test/jest-e2e.json --runInBand"
   },
   "dependencies": {
     "@nestjs/bullmq": "^11.0.2",
