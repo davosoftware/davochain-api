@@ -1,6 +1,7 @@
 import { AlertRecipientsController } from './alert-recipients.controller';
 import { KycBasicReviewController } from './kyc-basic-review.controller';
 import { ComplianceController } from './compliance.controller';
+import { DojahAdminController } from './dojah-admin.controller';
 import { KycModule } from '../kyc/kyc.module';
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
@@ -44,7 +45,7 @@ import { QUEUES } from '../common/queues';
     FlutterwaveModule,
     KycModule,
   ],
-  controllers: [AdminController, AdminAuthController, AlertRecipientsController, KycBasicReviewController, ComplianceController],
+  controllers: [AdminController, AdminAuthController, AlertRecipientsController, KycBasicReviewController, ComplianceController, DojahAdminController],
   providers: [AdminService, UsersAdminService, AdminsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService, AdminSessionsService, AdminOtpService, NgnWithdrawalsService, AdminGuard],
   exports: [AdminService, UsersAdminService, AdminsService, AdminSessionsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService],
 })
