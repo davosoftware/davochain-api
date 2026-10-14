@@ -37,13 +37,16 @@ const MODELS = {
     unique: [['id'], ['email']],
     autoId: true,
     decimals: [],
-    defaults: () => ({ status: 'ACTIVE', kycTier: 'TIER_0', kycStatus: 'NOT_STARTED', isTest: false, phone: null }),
+    defaults: () => ({ status: 'ACTIVE', kycTier: 'TIER_0', kycStatus: 'NOT_STARTED', amlStatus: 'NOT_SCREENED', isTest: false, phone: null }),
   },
   kycProfile: {
     unique: [['id'], ['userId']],
     autoId: true,
     decimals: [],
-    defaults: () => ({ tier: 'TIER_0', status: 'NOT_STARTED', bvnHash: null, bvnLast4: null, ninHash: null, ninLast4: null }),
+    defaults: () => ({
+      tier: 'TIER_0', status: 'NOT_STARTED', bvnHash: null, bvnLast4: null, ninHash: null, ninLast4: null,
+      addressLine: null, city: null, state: null, lga: null, postcode: null, stateOfOrigin: null, country: 'NG', rejectionReason: null,
+    }),
   },
   virtualAccount: {
     unique: [['id'], ['orderRef']],
@@ -107,6 +110,45 @@ const MODELS = {
     autoId: true,
     decimals: [],
     defaults: () => ({ entityId: null, before: null, after: null, ip: null, createdAt: new Date() }),
+  },
+  kycVerification: {
+    unique: [['id'], ['activeFor']],
+    autoId: true,
+    decimals: [],
+    defaults: () => ({
+      state: 'CREATED', activeFor: null, typedMiddleName: null, recordFirstName: null, recordMiddleName: null,
+      recordLastName: null, recordDateOfBirth: null, recordGender: null, recordUsable: null, match: null,
+      reviewReason: null, providerCustomerRef: null, lookupOutcome: null, lookupHttpStatus: null,
+      lookupStartedAt: null, lookupCompletedAt: null, possiblyCharged: false, failureReason: null,
+      screeningId: null, decidedBy: null, decidedAt: null, decisionReason: null,
+    }),
+  },
+  amlScreening: {
+    unique: [['id'], ['userId', 'inputFingerprint']],
+    autoId: true,
+    decimals: [],
+    defaults: () => ({
+      status: 'PENDING', matchStatus: null, riskLevel: null, entityId: null, matches: null, category: null,
+      callOutcome: null, sendCount: 0, unknownCount: 0, definiteFailCount: 0, nextAttemptAt: null,
+      screenStartedAt: null, screenCompletedAt: null, possibleDuplicateCharge: false, lastError: null,
+    }),
+  },
+  amlReviewCase: {
+    unique: [['id'], ['screeningId']],
+    autoId: true,
+    decimals: [],
+    defaults: () => ({
+      status: 'OPEN', possible: false, riskLevel: null, entityId: null, matches: null, rescreenCount: 0,
+      rescreenResult: null, proposedBy: null, proposedAt: null, proposalReason: null, confirmedBy: null,
+      confirmedAt: null, decidedBy: null, decidedAt: null, reason: null, reportedToAuthority: null,
+      reportReference: null, reportedAt: null,
+    }),
+  },
+  refreshToken: {
+    unique: [['id']],
+    autoId: true,
+    decimals: [],
+    defaults: () => ({ revokedAt: null }),
   },
 } satisfies Record<string, ModelSpec>;
 
@@ -225,6 +267,11 @@ export function matchesWhere(row: Row, where: unknown): boolean {
     }
     if (key === 'OR') {
       if (!(cond as unknown[]).some((w) => matchesWhere(row, w))) return false;
+      continue;
+    }
+    // Prisma's compound-unique form, e.g. { userId_inputFingerprint: { userId, inputFingerprint } }.
+    if (isPlain(cond) && !isOperatorObject(cond) && key.includes('_') && !(key in row)) {
+      if (!matchesWhere(row, cond)) return false;
       continue;
     }
     if (!matchValue(row[key], cond)) return false;
@@ -425,6 +472,21 @@ export class FakePrisma {
   readonly alert = new FakeModel(this, 'alert');
   readonly alertRecipient = new FakeModel(this, 'alertRecipient');
   readonly adminAuditLog = new FakeModel(this, 'adminAuditLog');
+  readonly kycVerification = new FakeModel(this, 'kycVerification');
+  readonly amlScreening = new FakeModel(this, 'amlScreening');
+  readonly amlReviewCase = new FakeModel(this, 'amlReviewCase');
+  readonly refreshToken = new FakeModel(this, 'refreshToken');
+
+  /** Raw SQL the code under test ran (advisory locks and the like): recorded, not executed. */
+  readonly rawCalls: string[] = [];
+  async $executeRaw(strings: TemplateStringsArray, ..._values: unknown[]): Promise<number> {
+    this.rawCalls.push(strings.join('?'));
+    return 0;
+  }
+  async $queryRaw<T = unknown>(strings: TemplateStringsArray, ..._values: unknown[]): Promise<T> {
+    this.rawCalls.push(strings.join('?'));
+    return [{ ok: 1 }] as T;
+  }
 
   table(name: string): Row[] {
     let rows = this.tables.get(name);
