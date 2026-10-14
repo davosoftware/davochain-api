@@ -106,3 +106,25 @@ describe('identity approved after the AML case was already decided (found in the
     expect((await svc.decide(actor, 'u1', { approve: true, reason: 'Surname typed wrongly; record confirmed' })).state).toBe('COMPLIANCE_REVIEW');
   });
 });
+
+describe('final review C1: a reviewer cannot approve a person who is not CLEAR', () => {
+  it('a CLEAR screening on a person who is UNDER_REVIEW goes to COMPLIANCE_REVIEW, not APPROVED', async () => {
+    const { svc, db, basic } = await setup({ status: 'CLEAR' });
+    await db.user.updateMany({ where: { id: 'u1' }, data: { amlStatus: 'UNDER_REVIEW' } });
+    expect((await svc.decide(actor, 'u1', { approve: true, reason: 'Names checked by hand' })).state).toBe('COMPLIANCE_REVIEW');
+    expect(basic.approve).not.toHaveBeenCalled();
+  });
+});
+
+describe('final review I4: the old review route cannot touch a Basic verification in progress', () => {
+  it('refuses a rejection while a non-terminal Basic verification exists', async () => {
+    const prisma = {
+      kycVerification: { findFirst: jest.fn(async () => ({ id: 'v1', state: 'COMPLIANCE_REVIEW' })) },
+      kycProfile: { findUniqueOrThrow: jest.fn(async () => ({ id: 'p', tier: 'TIER_0' })) },
+    };
+    const svc = Object.create(AdminService.prototype) as AdminService;
+    (svc as unknown as { prisma: unknown }).prisma = prisma;
+    await expect(svc.reviewKyc('a1', 'u1', { approve: false, reason: 'no' })).rejects.toMatchObject({ status: 409 });
+    expect(prisma.kycProfile.findUniqueOrThrow).not.toHaveBeenCalled();
+  });
+});

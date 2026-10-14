@@ -117,7 +117,8 @@ export class AmlService {
         callOutcome: 'IN_FLIGHT',
         screenStartedAt: new Date(),
         sendCount: { increment: 1 },
-        possibleDuplicateCharge: s.possibleDuplicateCharge || s.unknownCount > 0,
+        // Only a re-send after an UNKNOWN outcome can be a second bill (plan R1.3).
+        possibleDuplicateCharge: s.possibleDuplicateCharge || s.callOutcome === 'UNKNOWN',
       },
     });
     if (claimed.count !== 1) return;
@@ -252,7 +253,7 @@ export class AmlService {
         }));
 
       if (confirmedSanctions) {
-        const blocked = await this.setAmlStatus(tx, s.userId, 'BLOCKED', ['PENDING', 'UNDER_REVIEW']);
+        const blocked = await this.setAmlStatus(tx, s.userId, 'BLOCKED', ['PENDING', 'UNDER_REVIEW', 'RESTRICTED']);
         if (blocked) {
           await tx.refreshToken.updateMany({ where: { userId: s.userId, revokedAt: null }, data: { revokedAt: new Date() } });
           await tx.adminAuditLog.create({
@@ -293,9 +294,14 @@ export class AmlService {
     }
 
     // Verifications whose identity is accepted and which waited on this screening.
+    // A non-clear result whose case people already decided in the person's favour
+    // (a reused screening) is approved like a clear one, never parked with no case
+    // left to release it (final review I1). approve() still requires the person CLEAR.
+    const decided = s.status === 'CLEAR' ? null : await tx.amlReviewCase.findUnique({ where: { screeningId } });
+    const favourable = !!decided && ['CLEARED', 'PEP_APPROVED_EDD', 'SANCTIONS_FALSE_POSITIVE'].includes(decided.status);
     const waiting = await tx.kycVerification.findMany({ where: { screeningId, state: 'LOOKED_UP' } });
     for (const v of waiting) {
-      if (s.status === 'CLEAR') {
+      if (s.status === 'CLEAR' || favourable) {
         effects.push(...(await this.approvalHook(tx, v.id)));
       } else {
         const moved = await tx.kycVerification.updateMany({ where: { id: v.id, state: 'LOOKED_UP' }, data: { state: 'COMPLIANCE_REVIEW' } });

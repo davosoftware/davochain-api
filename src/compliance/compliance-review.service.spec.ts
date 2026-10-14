@@ -164,7 +164,7 @@ describe('ComplianceReviewService: other cases', () => {
   it('re-screen: ERROR cases only, at most 3, audited, budget reset, one send', async () => {
     const { svc, db, aml } = await setup({ category: 'ERROR', amlStatus: 'UNDER_REVIEW' });
     expect((await svc.rescreen(SUB, 'c1', 'Dojah was down all morning')).rescreenCount).toBe(1);
-    expect(db.rows('amlScreening')[0]).toMatchObject({ status: 'PENDING', unknownCount: 0, definiteFailCount: 0, callOutcome: null });
+    expect(db.rows('amlScreening')[0]).toMatchObject({ status: 'PENDING', unknownCount: 1, definiteFailCount: 0, callOutcome: null });
     expect(aml.send).toHaveBeenCalledWith('s1');
     expect(db.rows('adminAuditLog').map((r) => r.action)).toContain('aml.rescreen');
     await db.amlScreening.updateMany({ where: { id: 's1' }, data: { status: 'ERROR' } });
@@ -234,5 +234,34 @@ describe('release never undoes a confirmed sanctions block, and never strands a 
     await svc.decide(SUB, 'c2', { decision: 'CLEARED', reason: 'Unclear result reviewed, fine' });
     expect(db.rows('user')[0].amlStatus).toBe('CLEAR');
     expect(basic.approve.mock.calls.map((c) => c[1]).sort()).toEqual(['v1', 'v2']);
+  });
+});
+
+describe('final review C2, I2, I3', () => {
+  it('C2: a confirmed clearance that leaves the person blocked does not switch their deposit accounts back on', async () => {
+    const { svc, db, va } = await setup({ status: 'CLEARANCE_PROPOSED' });
+    await db.amlReviewCase.updateMany({ where: { id: 'c1' }, data: { proposedBy: 'oa' } });
+    await db.amlScreening.create({ data: { id: 's9', userId: 'u1', inputs: {}, inputFingerprint: 'z', status: 'CONFIRMED_MATCH', category: 'SANCTIONS' } });
+    await db.amlReviewCase.create({ data: { id: 'c9', userId: 'u1', screeningId: 's9', category: 'SANCTIONS', priority: 'CRITICAL', status: 'SANCTIONS_CONFIRMED' } });
+    await svc.confirm(OWNER_B, 'c1', { confirm: true, reason: 'Checked the DOB myself' });
+    expect(db.rows('user')[0].amlStatus).toBe('BLOCKED');
+    expect(va.setDesiredForUser).not.toHaveBeenCalledWith('u1', 'ACTIVE', expect.anything());
+  });
+
+  it('I2: SANCTIONS_CONFIRMED on another case blocks a RESTRICTED person', async () => {
+    const { svc, db } = await setup({ amlStatus: 'RESTRICTED' });
+    await svc.decide(OWNER_A, 'c1', { decision: 'SANCTIONS_CONFIRMED', reason: 'Matches the list entry', reportedToAuthority: false });
+    expect(db.rows('user')[0].amlStatus).toBe('BLOCKED');
+  });
+
+  it('I2: re-screen is refused on a RESTRICTED case (only an OPEN one)', async () => {
+    const { svc } = await setup({ category: 'ERROR', status: 'RESTRICTED', amlStatus: 'RESTRICTED' });
+    await expect(svc.rescreen(SUB, 'c1', 'try again please')).rejects.toMatchObject({ status: 409 });
+  });
+
+  it('I3: a manual re-screen is never re-sent automatically after an unknown outcome (1 billed call per re-screen)', async () => {
+    const { svc, db } = await setup({ category: 'ERROR', amlStatus: 'UNDER_REVIEW' });
+    await svc.rescreen(SUB, 'c1', 'Dojah was down all morning');
+    expect(db.rows('amlScreening')[0]).toMatchObject({ unknownCount: 1, status: 'PENDING' });
   });
 });

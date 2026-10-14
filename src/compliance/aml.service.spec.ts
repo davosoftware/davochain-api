@@ -201,3 +201,53 @@ it('a confirmed sanctions re-screen blocks a person under review (plan ruling 5)
   expect(db.rows('user')[0].amlStatus).toBe('BLOCKED');
   expect(db.rows('amlReviewCase')[0]).toMatchObject({ category: 'SANCTIONS', priority: 'CRITICAL', rescreenResult: 'CONFIRMED_MATCH' });
 });
+
+describe('final review I1 and I3', () => {
+  it('I1: a reused screening whose case was already favourably decided approves a CLEAR person instead of stranding them', async () => {
+    const db = new FakePrisma();
+    const svc = new AmlService(db as never, new DojahMockClient(), { raise: jest.fn(async () => true) } as never, { setDesiredForUser: jest.fn() } as never);
+    const approvals: string[] = [];
+    svc.setApprovalHook(async (_tx, id) => {
+      approvals.push(id);
+      return [];
+    });
+    await db.user.create({ data: { id: 'u1', email: 'u@x.test', firstName: 'A', lastName: 'B', amlStatus: 'CLEAR' } });
+    const s = await db.amlScreening.create({ data: { userId: 'u1', inputs: {}, inputFingerprint: 'f', status: 'POSSIBLE_MATCH', category: 'PEP' } });
+    await db.amlReviewCase.create({ data: { userId: 'u1', screeningId: s.id, category: 'PEP', priority: 'HIGH', status: 'CLEARED' } });
+    await db.kycVerification.create({ data: { id: 'v2', userId: 'u1', activeFor: 'u1', state: 'LOOKED_UP', lagosDay: '2026-10-14', idType: 'BVN', idHash: 'h1:x', idLast4: '0000', typedFirstName: 'a', typedLastName: 'b', typedDateOfBirth: '2000-01-01', typedAddress: {}, screeningId: s.id } });
+    await db.$transaction((tx) => svc.finalise(tx as never, s.id as string));
+    expect(approvals).toEqual(['v2']);
+    expect(db.rows('user')[0].amlStatus).toBe('CLEAR');
+  });
+
+  it('I1: a fresh non-clear screening still parks the verification for a person', async () => {
+    const { db, svc, screeningId, approvals } = await setup('Pep');
+    await svc.send(screeningId);
+    expect(approvals).toEqual([]);
+    expect(db.rows('kycVerification')[0].state).toBe('COMPLIANCE_REVIEW');
+  });
+
+  it('I3: a send after a recorded DEFINITE failure is not flagged as a possible duplicate charge', async () => {
+    const { db, svc, screeningId, dojah } = await setup('Clean');
+    jest.spyOn(dojah, 'screen').mockRejectedValueOnce(new DojahError('SERVER', 'x', 500));
+    await svc.send(screeningId);
+    await db.amlScreening.updateMany({ where: { id: screeningId }, data: { nextAttemptAt: null } });
+    await svc.send(screeningId);
+    expect(db.rows('amlScreening')[0]).toMatchObject({ status: 'CLEAR', possibleDuplicateCharge: false });
+  });
+});
+
+describe('final review I2: a confirmed sanctions result blocks a RESTRICTED person', () => {
+  it('RESTRICTED → BLOCKED with sessions revoked and the audit row', async () => {
+    const db = new FakePrisma();
+    const va = { setDesiredForUser: jest.fn(async () => undefined) };
+    const svc = new AmlService(db as never, new DojahMockClient(), { raise: jest.fn(async () => true) } as never, va as never);
+    await db.user.create({ data: { id: 'u1', email: 'u@x.test', firstName: 'A', lastName: 'B', amlStatus: 'RESTRICTED' } });
+    await db.refreshToken.create({ data: { userId: 'u1', revokedAt: null } });
+    const s = await db.amlScreening.create({ data: { userId: 'u1', inputs: {}, inputFingerprint: 'f', status: 'CONFIRMED_MATCH', category: 'SANCTIONS' } });
+    await db.$transaction((tx) => svc.finalise(tx as never, s.id as string));
+    expect(db.rows('user')[0].amlStatus).toBe('BLOCKED');
+    expect(db.rows('refreshToken')[0].revokedAt).toBeInstanceOf(Date);
+    expect(db.rows('adminAuditLog')[0].action).toBe('aml.auto_block');
+  });
+});

@@ -1119,14 +1119,16 @@ export class AdminController {
             firstName: true,
             lastName: true,
             // Basic: the typed details beside the BVN/NIN record, for the reviewer (spec §11).
+            // The one Basic verification in progress (activeFor is set only while not terminal), so the
+            // dashboard offers its own review and never the old buttons for it (final review I4).
             kycVerifications: {
-              where: { state: 'IDENTITY_REVIEW' },
+              where: { activeFor: { not: null } },
               orderBy: { createdAt: 'desc' },
               take: 1,
               select: {
                 id: true, idType: true, idLast4: true, typedFirstName: true, typedMiddleName: true, typedLastName: true,
                 typedDateOfBirth: true, typedAddress: true, recordFirstName: true, recordMiddleName: true, recordLastName: true,
-                recordDateOfBirth: true, recordGender: true, recordUsable: true, match: true, reviewReason: true, createdAt: true,
+                recordDateOfBirth: true, recordGender: true, recordUsable: true, match: true, reviewReason: true, createdAt: true, state: true,
                 screening: { select: { status: true } },
               },
             },

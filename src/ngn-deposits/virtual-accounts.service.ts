@@ -110,6 +110,16 @@ export class VirtualAccountsService {
     if (user.kycStatus !== KycStatus.APPROVED || TIER_RANK[user.kycTier] < TIER_RANK.TIER_1) {
       return { eligible: false, reason: 'Verify your identity (Tier 1) to get a naira account.' };
     }
+    // Final review C1: nobody under review, restricted or blocked gets a way to receive naira.
+    if (user.amlStatus !== 'CLEAR') {
+      return {
+        eligible: false,
+        reason:
+          user.amlStatus === 'PENDING' || user.amlStatus === 'NOT_SCREENED'
+            ? 'Your verification is still being completed.'
+            : 'Your account is under review. Contact support.',
+      };
+    }
     const readiness = await this.readiness.report();
     if (!readiness.depositsEnabled) return { eligible: false, reason: 'Naira deposits are not available yet.' };
     if (!readiness.canCreateAccounts) {

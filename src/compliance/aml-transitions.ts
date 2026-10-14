@@ -43,7 +43,7 @@ export const AML_STATUS_TRANSITIONS: Record<AmlStatus, readonly AmlStatus[]> = {
   CLEAR: ['PENDING'],
   PENDING: ['CLEAR', 'UNDER_REVIEW', 'BLOCKED'],
   UNDER_REVIEW: ['CLEAR', 'RESTRICTED', 'BLOCKED'],
-  RESTRICTED: ['CLEAR'],
+  RESTRICTED: ['CLEAR', 'BLOCKED'],
   BLOCKED: ['CLEAR'],
 };
 

@@ -38,8 +38,8 @@ export class BasicReviewService {
         const caseRow = await tx.amlReviewCase.findUnique({ where: { screeningId: s.id } });
         const user = await tx.user.findUnique({ where: { id: userId }, select: { amlStatus: true } });
         const amlSettled =
-          s.status === 'CLEAR' ||
-          (!!caseRow && ['CLEARED', 'PEP_APPROVED_EDD', 'SANCTIONS_FALSE_POSITIVE'].includes(caseRow.status) && user?.amlStatus === 'CLEAR');
+          user?.amlStatus === 'CLEAR' &&
+          (s.status === 'CLEAR' || (!!caseRow && ['CLEARED', 'PEP_APPROVED_EDD', 'SANCTIONS_FALSE_POSITIVE'].includes(caseRow.status)));
         if (amlSettled) {
           out.push(...(await this.basic.approve(tx, v.id)));
           next = 'APPROVED';

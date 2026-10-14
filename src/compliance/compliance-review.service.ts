@@ -150,12 +150,12 @@ export class ComplianceReviewService {
       const out: Effect[] = [];
       if (target === 'RESTRICTED') await this.aml.setAmlStatus(tx, c.userId, 'RESTRICTED', ['UNDER_REVIEW']);
       if (target === 'SANCTIONS_CONFIRMED') {
-        if (await this.aml.setAmlStatus(tx, c.userId, 'BLOCKED', ['PENDING', 'UNDER_REVIEW'])) {
+        if (await this.aml.setAmlStatus(tx, c.userId, 'BLOCKED', ['PENDING', 'UNDER_REVIEW', 'RESTRICTED'])) {
           await tx.refreshToken.updateMany({ where: { userId: c.userId, revokedAt: null }, data: { revokedAt: now } });
           out.push(() => this.virtualAccounts.setDesiredForUser(c.userId, 'INACTIVE', { background: true }));
         }
       }
-      if (RELEASING.has(target)) out.push(...(await this.release(tx, c.userId, c.id, target)));
+      if (RELEASING.has(target)) out.push(...(await this.release(tx, c.userId, c.id, target)).effects);
       if (target === 'CLEARANCE_PROPOSED') out.push(() => this.alert(c.id, 'proposed', 'Sanctions clearance proposed: a second admin must confirm'));
 
       await tx.adminAuditLog.create({
@@ -194,8 +194,10 @@ export class ComplianceReviewService {
           data: { status: target, confirmedBy: actor.adminId, confirmedAt: now, decidedBy: actor.adminId, decidedAt: now, reason: d.reason },
         });
         if (r.count !== 1) throw new ConflictException('This proposal changed just now');
-        out.push(...(await this.release(tx, c.userId, c.id, target)));
-        out.push(() => this.virtualAccounts.setDesiredForUser(c.userId, 'ACTIVE', { background: true }));
+        const released = await this.release(tx, c.userId, c.id, target);
+        out.push(...released.effects);
+        // Final review C2: deposit accounts come back only if the person is actually CLEAR now.
+        if (released.cleared) out.push(() => this.virtualAccounts.setDesiredForUser(c.userId, 'ACTIVE', { background: true }));
         out.push(() => this.alert(c.id, 'confirmed', 'Sanctions clearance confirmed by a second admin'));
       } else {
         target = 'OPEN';
@@ -244,13 +246,15 @@ export class ComplianceReviewService {
     const result = await this.prisma.$transaction(async (tx) => {
       const c = await tx.amlReviewCase.findUnique({ where: { id } });
       if (!c) throw new NotFoundException('Case not found');
-      if (c.category !== 'ERROR' || !STILL_OPEN.includes(c.status)) {
+      // Only an OPEN case: a RESTRICTED one could otherwise become an undecidable sanctions case (final review I2).
+      if (c.category !== 'ERROR' || c.status !== 'OPEN') {
         throw new ConflictException('Only an open case whose screening never produced a result can be re-screened');
       }
       if (c.rescreenCount >= MAX_RESCREENS) throw new ConflictException('This case has been re-screened 3 times. Decide it.');
       const r = await tx.amlScreening.updateMany({
         where: { id: c.screeningId, status: 'ERROR' },
-        data: { status: 'PENDING', callOutcome: null, unknownCount: 0, definiteFailCount: 0, nextAttemptAt: null, lastError: null },
+        // unknownCount 1: an UNKNOWN outcome is not re-sent automatically, so one re-screen is at most one bill (final review I3).
+        data: { status: 'PENDING', callOutcome: null, unknownCount: 1, definiteFailCount: 0, nextAttemptAt: null, lastError: null },
       });
       if (r.count !== 1) throw new ConflictException('A re-screen is already running');
       const n = c.rescreenCount + 1;
@@ -294,19 +298,19 @@ export class ComplianceReviewService {
    * only by a two-person sanctions clearance (spec §14.1). Every verification
    * still waiting on compliance is then approved, not just this case's.
    */
-  private async release(tx: Tx, userId: string, caseId: string, target: AmlCaseStatus): Promise<Effect[]> {
+  private async release(tx: Tx, userId: string, caseId: string, target: AmlCaseStatus): Promise<{ cleared: boolean; effects: Effect[] }> {
     const holding = await tx.amlReviewCase.count({
       where: { userId, id: { not: caseId }, status: { in: [...STILL_OPEN, 'SANCTIONS_CONFIRMED'] } },
     });
-    if (holding > 0) return [];
+    if (holding > 0) return { cleared: false, effects: [] };
     const from: AmlStatus[] = target === 'SANCTIONS_FALSE_POSITIVE' ? ['UNDER_REVIEW', 'RESTRICTED', 'BLOCKED'] : ['UNDER_REVIEW', 'RESTRICTED'];
     await this.aml.setAmlStatus(tx, userId, 'CLEAR', from);
     const user = await tx.user.findUnique({ where: { id: userId }, select: { amlStatus: true } });
-    if (user?.amlStatus !== 'CLEAR') return [];
+    if (user?.amlStatus !== 'CLEAR') return { cleared: false, effects: [] };
     const waiting = await tx.kycVerification.findMany({ where: { userId, state: 'COMPLIANCE_REVIEW' } });
     const effects: Effect[] = [];
     for (const v of waiting) effects.push(...(await this.approver.approve(tx, v.id)));
-    return effects;
+    return { cleared: true, effects };
   }
 
   private async alert(caseId: string, step: string, subject: string): Promise<void> {

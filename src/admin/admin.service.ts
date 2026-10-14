@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { AdminRole, AlertType, KycStatus, KycTier } from '@prisma/client';
@@ -337,6 +337,9 @@ export class AdminService {
       // (plan ruling 8). This route stays for the Advanced tiers.
       throw new BadRequestException('Basic is decided through basic-decision');
     }
+    // Final review I4: a Basic verification in progress is decided only through its own flow.
+    const active = await this.prisma.kycVerification.findFirst({ where: { activeFor: userId }, select: { id: true } });
+    if (active) throw new ConflictException('This person is in Basic verification. Decide it from the Basic review or Compliance review.');
     const profile = await this.prisma.kycProfile.findUniqueOrThrow({ where: { userId } });
 
     const [updated] = await this.prisma.$transaction([

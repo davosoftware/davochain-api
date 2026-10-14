@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   HttpException,
   HttpStatus,
   Inject,
@@ -24,6 +25,7 @@ import { lagosDate } from '../common/dates';
 import { TemplatedMailService } from '../cms/templated-mail.service';
 import { ReferralsService } from '../referrals/referrals.service';
 import { OpsAlertsService } from '../common/ops-alerts/ops-alerts.service';
+import { GATE_REVIEW } from '../auth/jwt-auth.guard';
 
 export const MSG_UNAVAILABLE = 'Verification is temporarily unavailable. Please try again later.';
 export const MSG_DISABLED = 'Verification is not available yet.';
@@ -229,6 +231,8 @@ export class BasicVerificationService implements OnModuleInit {
       return await this.prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'kyc.basic:' + userId}))`;
         const user = await tx.user.findUniqueOrThrow({ where: { id: userId } });
+        // Final review C1: under review, restricted or blocked people never start a new verification.
+        if (user.amlStatus !== 'NOT_SCREENED' && user.amlStatus !== 'CLEAR') throw new ForbiddenException(GATE_REVIEW);
         if (user.kycStatus === 'APPROVED' && user.kycTier !== 'TIER_0') throw new ConflictException('You are already verified.');
         const counted = { userId, state: { not: 'FAILED_SYSTEM' as const } };
         const [total, daily] = await Promise.all([
@@ -283,6 +287,20 @@ export class BasicVerificationService implements OnModuleInit {
    */
   async approve(tx: Tx, verificationId: string): Promise<Effect[]> {
     const v = await tx.kycVerification.findUniqueOrThrow({ where: { id: verificationId } });
+    // Final review C1: only a person who is AML-CLEAR is ever approved. Anyone else
+    // waits in COMPLIANCE_REVIEW and is approved when their last case is released.
+    const holder = await tx.user.findUnique({ where: { id: v.userId }, select: { amlStatus: true } });
+    if (holder?.amlStatus !== 'CLEAR') {
+      const parked = await tx.kycVerification.updateMany({
+        where: { id: v.id, state: { in: ['LOOKED_UP', 'IDENTITY_REVIEW'] } },
+        data: { state: 'COMPLIANCE_REVIEW' },
+      });
+      if (parked.count === 1) {
+        await tx.kycProfile.updateMany({ where: { userId: v.userId }, data: { status: 'PENDING' } });
+        await tx.user.updateMany({ where: { id: v.userId }, data: { kycStatus: 'PENDING' } });
+      }
+      return [];
+    }
     const r = await tx.kycVerification.updateMany({
       where: { id: v.id, state: { in: ['LOOKED_UP', 'IDENTITY_REVIEW', 'COMPLIANCE_REVIEW'] } },
       data: { state: 'APPROVED', activeFor: null },

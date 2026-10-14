@@ -171,3 +171,23 @@ describe('BasicVerificationService', () => {
     expect(await svc.failStaleLookups()).toBe(0);
   });
 });
+
+describe('final review C1: a person who is not AML-CLEAR never becomes Basic', () => {
+  it.each(['BLOCKED', 'UNDER_REVIEW', 'RESTRICTED', 'PENDING'])('submit is refused while amlStatus is %s, before any Dojah call', async (amlStatus) => {
+    const { svc, db, dojah } = await setup();
+    await db.user.updateMany({ where: { id: 'u1' }, data: { amlStatus } });
+    await expect(svc.submit('u1', input())).rejects.toMatchObject({ status: 403, message: 'Your account is under review. Contact support.' });
+    expect(dojah.calls.lookup).toBe(0);
+  });
+
+  it('approve() parks the verification in COMPLIANCE_REVIEW instead of approving a person who is not CLEAR', async () => {
+    const { svc, db, mail } = await setup();
+    await db.user.updateMany({ where: { id: 'u1' }, data: { amlStatus: 'BLOCKED' } });
+    await db.kycVerification.create({ data: { id: 'vx', userId: 'u1', activeFor: 'u1', state: 'IDENTITY_REVIEW', lagosDay: '2026-10-14', idType: 'BVN', idHash: 'h1:x', idLast4: '0000', typedFirstName: 'a', typedLastName: 'b', typedDateOfBirth: '2000-01-01', typedAddress: {} } });
+    const effects = await db.$transaction((tx) => svc.approve(tx as never, 'vx'));
+    expect(effects).toEqual([]);
+    expect(db.rows('kycVerification')[0].state).toBe('COMPLIANCE_REVIEW');
+    expect(db.rows('user')[0]).toMatchObject({ kycTier: 'TIER_0', amlStatus: 'BLOCKED' });
+    expect(mail.send).not.toHaveBeenCalled();
+  });
+});

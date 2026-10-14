@@ -25,7 +25,7 @@ async function setup(o: Options = {}) {
   await db.user.create({
     data: {
       id: USER, email: 'ada@example.com', firstName: 'Ada', lastName: 'Obi',
-      status: 'ACTIVE', kycTier: 'TIER_1', kycStatus: 'APPROVED', ...o.user,
+      status: 'ACTIVE', kycTier: 'TIER_1', kycStatus: 'APPROVED', amlStatus: 'CLEAR', ...o.user,
     },
   });
   await db.kycProfile.create({ data: { userId: USER, bvnHash: hasher.hash(BVN), bvnLast4: '3883', ...o.profile } });
@@ -326,5 +326,14 @@ describe('VirtualAccountsService: reading, routing and status', () => {
     expect(before).toMatchObject({ id: vaId, desiredStatus: 'ACTIVE' });
     expect(after).toMatchObject({ id: vaId, desiredStatus: 'INACTIVE', providerStatus: 'inactive' });
     await expect(svc.listForUser(USER)).resolves.toEqual([expect.objectContaining({ id: vaId, desiredStatus: 'INACTIVE' })]);
+  });
+});
+
+describe('final review C1: a person not AML-CLEAR cannot open a naira deposit account', () => {
+  it.each(['BLOCKED', 'UNDER_REVIEW', 'RESTRICTED', 'PENDING', 'NOT_SCREENED'])('%s is not eligible, with the generic wording', async (amlStatus) => {
+    const { svc } = await setup({ user: { amlStatus } });
+    const r = await svc.eligibility(USER);
+    expect(r.eligible).toBe(false);
+    expect(r.reason).not.toMatch(/sanction|aml|pep|blocked/i);
   });
 });
