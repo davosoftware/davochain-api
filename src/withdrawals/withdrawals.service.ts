@@ -243,20 +243,28 @@ export class WithdrawalsService {
 
   async verifyNgnBankAccount(input: { accountNumber: string; bankCode: string }) {
     await this.flags.assertNgnWithdrawalsAllowed();
-    let accountName: string;
+    const accountName = await this.resolveNgnAccountName(input);
+    return {
+      accountName,
+      accountNumberLast4: input.accountNumber.slice(-4),
+      bankCode: input.bankCode,
+    };
+  }
+
+  /**
+   * The account holder's name from Quidax. A refusal (4xx) is the customer's
+   * details being wrong; anything else is Quidax being unavailable. Shared by
+   * 8.6 and 8.7, so the submit can never surface a raw provider error as a 500.
+   */
+  private async resolveNgnAccountName(input: { accountNumber: string; bankCode: string }): Promise<string> {
     try {
-      ({ account_name: accountName } = await this.quidax.verifyBankAccount(input));
+      return (await this.quidax.verifyBankAccount(input)).account_name;
     } catch (err) {
       if (err instanceof QuidaxError && err.httpStatus >= 400 && err.httpStatus < 500) {
         throw new BadRequestException('Unable to verify those bank details. Check the account and bank.');
       }
       throw new ServiceUnavailableException('Bank account verification is temporarily unavailable.');
     }
-    return {
-      accountName,
-      accountNumberLast4: input.accountNumber.slice(-4),
-      bankCode: input.bankCode,
-    };
   }
 
   async withdrawNgn(
@@ -277,11 +285,14 @@ export class WithdrawalsService {
     }
 
     // Resolve again at submit time; never trust a client-supplied account name.
-    const verified = await this.quidax.verifyBankAccount({
+    await this.resolveNgnAccountName({
       accountNumber: input.accountNumber,
       bankCode: input.bankCode,
     });
-    const bank = (await this.quidax.fetchBanks()).find(
+    const banks = await this.quidax.fetchBanks().catch(() => {
+      throw new ServiceUnavailableException('Naira withdrawals are temporarily unavailable. Try again shortly.');
+    });
+    const bank = banks.find(
       (candidate) =>
         candidate.code === input.bankCode &&
         candidate.country.toLowerCase() === 'nigeria' &&
