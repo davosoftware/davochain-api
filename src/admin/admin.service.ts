@@ -1,4 +1,4 @@
-import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { AdminRole, AlertType, KycStatus, KycTier } from '@prisma/client';
@@ -331,8 +331,13 @@ export class AdminService {
     userId: string,
     decision: { approve: boolean; tier?: KycTier; reason?: string },
   ) {
-    const profile = await this.prisma.kycProfile.findUniqueOrThrow({ where: { userId } });
     const tier = decision.tier ?? KycTier.TIER_1;
+    if (decision.approve && tier === KycTier.TIER_1) {
+      // Basic is decided by the Dojah lookup, its AML screen and their reviews
+      // (plan ruling 8). This route stays for the Advanced tiers.
+      throw new BadRequestException('Basic is decided through basic-decision');
+    }
+    const profile = await this.prisma.kycProfile.findUniqueOrThrow({ where: { userId } });
 
     const [updated] = await this.prisma.$transaction([
       this.prisma.kycProfile.update({

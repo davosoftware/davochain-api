@@ -1113,7 +1113,25 @@ export class AdminController {
       where: { status: 'PENDING' },
       include: {
         documents: true,
-        user: { select: { email: true, firstName: true, lastName: true } },
+        user: {
+          select: {
+            email: true,
+            firstName: true,
+            lastName: true,
+            // Basic: the typed details beside the BVN/NIN record, for the reviewer (spec §11).
+            kycVerifications: {
+              where: { state: 'IDENTITY_REVIEW' },
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+              select: {
+                id: true, idType: true, idLast4: true, typedFirstName: true, typedMiddleName: true, typedLastName: true,
+                typedDateOfBirth: true, typedAddress: true, recordFirstName: true, recordMiddleName: true, recordLastName: true,
+                recordDateOfBirth: true, recordGender: true, recordUsable: true, match: true, reviewReason: true, createdAt: true,
+                screening: { select: { status: true } },
+              },
+            },
+          },
+        },
       },
       orderBy: { submittedAt: 'asc' },
       take: 100,

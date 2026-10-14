@@ -1,4 +1,6 @@
 import { AlertRecipientsController } from './alert-recipients.controller';
+import { KycBasicReviewController } from './kyc-basic-review.controller';
+import { KycModule } from '../kyc/kyc.module';
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { BullModule } from '@nestjs/bullmq';
@@ -39,8 +41,9 @@ import { QUEUES } from '../common/queues';
     GiftCardsModule,
     NgnDepositsModule,
     FlutterwaveModule,
+    KycModule,
   ],
-  controllers: [AdminController, AdminAuthController, AlertRecipientsController],
+  controllers: [AdminController, AdminAuthController, AlertRecipientsController, KycBasicReviewController],
   providers: [AdminService, UsersAdminService, AdminsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService, AdminSessionsService, AdminOtpService, NgnWithdrawalsService, AdminGuard],
   exports: [AdminService, UsersAdminService, AdminsService, AdminSessionsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService],
 })
