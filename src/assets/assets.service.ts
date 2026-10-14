@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Asset, AssetNetwork } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuidaxClient } from '../quidax/quidax.client';
@@ -143,12 +143,12 @@ export class AssetsService {
   /** Reject before debiting rather than discovering the limit at settlement. */
   assertTransferable(asset: Asset, amount: Decimal): void {
     if (asset.transferMin && amount.lt(dec(asset.transferMin))) {
-      throw new NotFoundException(
+      throw new BadRequestException(
         `Minimum ${asset.code.toUpperCase()} transfer is ${dec(asset.transferMin).toFixed()}`,
       );
     }
     if (asset.transferMax && amount.gt(dec(asset.transferMax))) {
-      throw new NotFoundException(
+      throw new BadRequestException(
         `Maximum ${asset.code.toUpperCase()} transfer is ${dec(asset.transferMax).toFixed()}`,
       );
     }
