@@ -1,10 +1,9 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { KycStatus, KycTier } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { KycLimitsService } from './kyc-limits.service';
-import { KycHashService } from './kyc-hash';
 import { ZERO, type Decimal } from '../common/money';
-import { TemplatedMailService } from '../cms/templated-mail.service';
+import { BasicVerificationService } from './basic-verification.service';
 
 /**
  * Raw BVN and NIN values are NEVER stored. Only a hash for matching plus the
@@ -16,8 +15,7 @@ export class KycService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly limits: KycLimitsService,
-    private readonly mail: TemplatedMailService,
-    private readonly hasher: KycHashService,
+    private readonly basic: BasicVerificationService,
   ) {}
 
   /**
@@ -30,12 +28,14 @@ export class KycService {
    * limits that nothing honoured, which is worse than saying nothing.
    */
   async status(userId: string) {
-    const [profile, tiers] = await Promise.all([
+    const [profile, tiers, latest, attempts] = await Promise.all([
       this.prisma.kycProfile.findUnique({
         where: { userId },
         include: { documents: { select: { type: true, status: true, uploadedAt: true } } },
       }),
       this.prisma.kycTierLimit.findMany({ orderBy: { tier: 'asc' } }),
+      this.prisma.kycVerification.findFirst({ where: { userId }, orderBy: { createdAt: 'desc' }, select: { state: true } }),
+      this.basic.attemptsLeft(userId),
     ]);
 
     const tier = profile?.tier ?? KycTier.TIER_0;
@@ -62,6 +62,14 @@ export class KycService {
       bvnLast4: profile?.bvnLast4 ?? null,
       documents: profile?.documents ?? [],
 
+      /** Basic verification (spec §11). */
+      level: tier === KycTier.TIER_0 ? 'NONE' : 'BASIC',
+      basicState: latest?.state ?? null,
+      /** Generic on purpose: never says why (no tipping off). */
+      underReview: latest ? ['LOOKED_UP', 'IDENTITY_REVIEW', 'COMPLIANCE_REVIEW'].includes(latest.state) : false,
+      attemptsLeftToday: attempts.today,
+      attemptsLeftTotal: attempts.total,
+
       /** Naira only. Nothing else is capped by tier. */
       limits: {
         /** This user, this tier, today. Resets at midnight in Lagos. */
@@ -76,59 +84,6 @@ export class KycService {
         })),
       },
     };
-  }
-
-  async submitTier1(userId: string, input: { bvn?: string; nin?: string; dateOfBirth: string }) {
-    if (!input.bvn && !input.nin) {
-      throw new BadRequestException('Provide either a BVN or a NIN');
-    }
-    const id = input.bvn ?? input.nin!;
-    if (!/^[0-9]{11}$/.test(id)) {
-      throw new BadRequestException('BVN and NIN are 11 digits');
-    }
-
-    const profile = await this.prisma.kycProfile.upsert({
-      where: { userId },
-      create: {
-        userId,
-        status: KycStatus.PENDING,
-        dateOfBirth: new Date(input.dateOfBirth),
-        ...(input.bvn
-          ? { bvnHash: this.hasher.hash(input.bvn), bvnLast4: input.bvn.slice(-4) }
-          : { ninHash: this.hasher.hash(input.nin!), ninLast4: input.nin!.slice(-4) }),
-        submittedAt: new Date(),
-      },
-      update: {
-        status: KycStatus.PENDING,
-        dateOfBirth: new Date(input.dateOfBirth),
-        ...(input.bvn
-          ? { bvnHash: this.hasher.hash(input.bvn), bvnLast4: input.bvn.slice(-4) }
-          : { ninHash: this.hasher.hash(input.nin!), ninLast4: input.nin!.slice(-4) }),
-        submittedAt: new Date(),
-        rejectionReason: null,
-      },
-    });
-
-    const user = await this.prisma.user.update({
-      where: { id: userId },
-      data: { kycStatus: KycStatus.PENDING },
-      select: { email: true, firstName: true, lastName: true },
-    });
-
-    // Review is manual until a provider is chosen, so this is the only thing
-    // that tells somebody their submission arrived rather than vanished.
-    await this.mail.send({
-      key: 'kyc.submitted',
-      to: user.email,
-      variables: {
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-      },
-    });
-
-    // TODO: hand off to a verification provider once chosen — see TODO.md.
-    return { status: profile.status, submittedAt: profile.submittedAt };
   }
 
   async attachDocument(

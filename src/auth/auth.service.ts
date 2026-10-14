@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { KycStatus, KycTier, UserStatus } from '@prisma/client';
+import { KycStatus, KycTier, Prisma, UserStatus } from '@prisma/client';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -77,17 +77,25 @@ export class AuthService {
 
     const passwordHash = await this.passwords.hash(input.password);
 
-    const user = await this.prisma.user.create({
-      data: {
-        email,
-        passwordHash,
-        firstName: input.firstName.trim(),
-        lastName: input.lastName.trim(),
-        phone: input.phone?.trim() || null,
-        isTest: this.config.get<string>('NODE_ENV') !== 'production',
-        kycProfile: { create: { tier: KycTier.TIER_0, status: KycStatus.NOT_STARTED } },
-      },
-    });
+    const user = await this.prisma.user
+      .create({
+        data: {
+          email,
+          passwordHash,
+          firstName: input.firstName.trim(),
+          lastName: input.lastName.trim(),
+          phone: input.phone?.trim() || null,
+          isTest: this.config.get<string>('NODE_ENV') !== 'production',
+          kycProfile: { create: { tier: KycTier.TIER_0, status: KycStatus.NOT_STARTED } },
+        },
+      })
+      .catch((err: unknown) => {
+        // The phone (or, in a race, the email) is already registered: the same answer as above.
+        if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+          throw new BadRequestException('Unable to register with those details');
+        }
+        throw err;
+      });
 
     // The Quidax sub-account is provisioned on a worker: a signup must not fail
     // because an upstream call did, and the user has no use for a wallet until

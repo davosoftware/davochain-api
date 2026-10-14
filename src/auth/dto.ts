@@ -36,10 +36,10 @@ export class RegisterDto {
   @MaxLength(60)
   lastName!: string;
 
-  @IsOptional()
+  /** Required since Basic verification (spec §1). Unique; not yet verified by OTP. */
   @IsString()
   @Matches(/^\+?[0-9]{7,15}$/, { message: 'Enter a valid phone number' })
-  phone?: string;
+  phone!: string;
 
   /**
    * Somebody's referral code, if they arrived through one.
