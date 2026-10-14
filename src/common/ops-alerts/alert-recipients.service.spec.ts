@@ -35,8 +35,8 @@ describe('AlertRecipientsService.resolve: who an alert goes to', () => {
     await expect(svc.resolve(AlertType.RATE_LIMIT_DEGRADED)).resolves.toEqual([]);
   });
 
-  it('treats lockouts and rate-limit outages as security alerts', () => {
-    expect([...SECURITY_ALERT_TYPES].sort()).toEqual(['ADMIN_LOCKOUT', 'RATE_LIMIT_DEGRADED']);
+  it('treats lockouts, rate-limit outages and Dojah/AML alerts as security alerts', () => {
+    expect([...SECURITY_ALERT_TYPES].sort()).toEqual(['ADMIN_LOCKOUT', 'AML_REVIEW', 'AML_SANCTIONS', 'DOJAH_CONFIG', 'RATE_LIMIT_DEGRADED']);
   });
 });
 
@@ -134,4 +134,8 @@ describe('AlertRecipientsService: audit and fallback honesty (final review)', ()
     expect((await managed(null).svc.list()).fallbackConfigured).toBe(false);
     expect((await managed([]).svc.list()).fallbackConfigured).toBe(false);
   });
+});
+
+it('treats the three Dojah/AML types as security alerts', () => {
+  for (const t of ['DOJAH_CONFIG', 'AML_REVIEW', 'AML_SANCTIONS'] as const) expect(SECURITY_ALERT_TYPES.has(t)).toBe(true);
 });

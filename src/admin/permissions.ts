@@ -77,6 +77,16 @@ export const PERMISSION_GROUPS = [
       { key: 'users.manage', label: 'Suspend and reinstate users' },
       { key: 'kyc.view', label: 'See KYC submissions' },
       { key: 'kyc.review', label: 'Approve or reject KYC', hint: 'Unlocks trading for a person' },
+      {
+        key: 'compliance.view',
+        label: 'See AML review cases',
+        hint: 'Sanctions, PEP and adverse-media matches. Opening a case is audited.',
+      },
+      {
+        key: 'compliance.review',
+        label: 'Decide AML review cases',
+        hint: 'Can unblock a person. Sanctions cases need an owner, and clearing one needs a second admin.',
+      },
       { key: 'notifications.send', label: 'Send notifications' },
     ],
   },

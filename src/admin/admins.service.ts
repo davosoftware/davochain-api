@@ -19,6 +19,7 @@ import { ConfigService } from '@nestjs/config';
 import { MailService } from '../common/mail.service';
 import { EmailTemplateService } from '../cms/email-template.service';
 import { formatLagos } from '../common/dates';
+import { SYSTEM_ACTOR_ID } from '../common/system-actor';
 
 /** Where an invitation went, and how long it lasts. Never the token. */
 export interface InviteResult {
@@ -358,6 +359,8 @@ export class AdminsService {
 
   async team(): Promise<AdminProfile[]> {
     const rows = await this.prisma.adminUser.findMany({
+      // The system actor (audit rows for automatic actions) is not a team member.
+      where: { id: { not: SYSTEM_ACTOR_ID } },
       orderBy: [{ isActive: 'desc' }, { createdAt: 'asc' }],
       select: this.select,
     });
@@ -432,6 +435,7 @@ export class AdminsService {
    * it is one click to replace rather than a deleted-and-recreated account.
    */
   async sendInvite(adminUserId: string, invitedBy: string, inviterName?: string): Promise<InviteResult> {
+    if (adminUserId === SYSTEM_ACTOR_ID) throw new NotFoundException('Admin not found');
     const admin = await this.prisma.adminUser.findUnique({
       where: { id: adminUserId },
       select: { id: true, email: true, name: true, role: true, isActive: true },
@@ -583,6 +587,7 @@ export class AdminsService {
     targetId: string,
     permissions: string[],
   ): Promise<AdminProfile> {
+    if (targetId === SYSTEM_ACTOR_ID) throw new NotFoundException('Admin not found');
     if (actor.role !== AdminRole.OWNER) {
       throw new ForbiddenException('Only an owner can change what someone can do');
     }
@@ -618,6 +623,7 @@ export class AdminsService {
     targetId: string,
     role: AdminRole,
   ): Promise<AdminProfile> {
+    if (targetId === SYSTEM_ACTOR_ID) throw new NotFoundException('Admin not found');
     if (actor.role !== AdminRole.OWNER) {
       throw new ForbiddenException('Only an owner can change a role');
     }
@@ -662,6 +668,7 @@ export class AdminsService {
     targetId: string,
     isActive: boolean,
   ): Promise<AdminProfile> {
+    if (targetId === SYSTEM_ACTOR_ID) throw new NotFoundException('Admin not found');
     const target = await this.prisma.adminUser.findUnique({ where: { id: targetId } });
     if (!target) throw new NotFoundException('Admin not found');
 

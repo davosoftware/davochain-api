@@ -68,3 +68,20 @@ describe('generatePassword', () => {
     expect(firstChars.size).toBeGreaterThan(5);
   });
 });
+
+describe('the system actor (plan ruling 7)', () => {
+  it('is hidden from the team list and cannot be changed', async () => {
+    const { AdminsService } = await import('./admins.service');
+    const { SYSTEM_ACTOR_ID } = await import('../common/system-actor');
+    const findMany = jest.fn(async () => []);
+    const svc = Object.create(AdminsService.prototype) as InstanceType<typeof AdminsService>;
+    Object.assign(svc, { prisma: { adminUser: { findMany, findUnique: jest.fn() } }, select: {}, shape: (r: unknown) => r });
+    await svc.team();
+    expect(findMany).toHaveBeenCalledWith(expect.objectContaining({ where: { id: { not: SYSTEM_ACTOR_ID } } }));
+    const owner = { id: 'o1', role: 'OWNER' as never };
+    await expect(svc.setActive(owner, SYSTEM_ACTOR_ID, true)).rejects.toMatchObject({ status: 404 });
+    await expect(svc.setRole(owner, SYSTEM_ACTOR_ID, 'OWNER' as never)).rejects.toMatchObject({ status: 404 });
+    await expect(svc.setPermissions(owner, SYSTEM_ACTOR_ID, [])).rejects.toMatchObject({ status: 404 });
+    await expect(svc.sendInvite(SYSTEM_ACTOR_ID, 'o1')).rejects.toMatchObject({ status: 404 });
+  });
+});

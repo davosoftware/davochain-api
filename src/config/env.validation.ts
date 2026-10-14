@@ -185,6 +185,19 @@ export const envSchema = z
     NGN_DEPOSITS_ENABLED: bool(false),
     /** HMAC key for BVN/NIN hashes. Rotating it means users re-enter their number. */
     KYC_HASH_KEY: z.string().optional(),
+    // ── Dojah (identity lookups and AML screening) ──
+    DOJAH_USE_MOCK: bool(true),
+    DOJAH_BASE_URL: z.string().url().default('https://sandbox.dojah.io'),
+    DOJAH_APP_ID: z.string().optional(),
+    DOJAH_SECRET_KEY: z.string().optional(),
+    /** Naira. The hard stop: Basic refuses new submissions below it (plan §R2). Required in production. */
+    DOJAH_MIN_BALANCE: z.string().optional(),
+    /** Naira. A DOJAH_CONFIG "top up" alert fires below it (plan §R2). */
+    DOJAH_LOW_BALANCE_WARN: z.string().optional(),
+    /** Off until launch is verified (spec §14.6). */
+    KYC_BASIC_ENABLED: bool(false),
+    KYC_BASIC_DAILY_ATTEMPTS: int(3),
+    KYC_BASIC_TOTAL_ATTEMPTS: int(10),
     MAX_TRADE_USD: num(2000),
     MAX_USER_DAILY_USD: num(5000),
     MAX_PLATFORM_DAILY_USD: num(50000),
@@ -290,6 +303,41 @@ export const envSchema = z
         path: ['FLW_BASE_URL'],
         message: 'FLW_BASE_URL must use https in staging and production',
       });
+    }
+    // ── Dojah ──
+    if (env.DOJAH_USE_MOCK && !['development', 'test'].includes(env.NODE_ENV)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['DOJAH_USE_MOCK'], message: 'DOJAH_USE_MOCK=true is only allowed in development and test' });
+    }
+    {
+      const host = new URL(env.DOJAH_BASE_URL).hostname;
+      if ((env.NODE_ENV === 'staging' || env.NODE_ENV === 'production') && !env.DOJAH_BASE_URL.startsWith('https://')) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['DOJAH_BASE_URL'], message: 'DOJAH_BASE_URL must use https in staging and production' });
+      } else if (env.NODE_ENV === 'production' && !env.DOJAH_USE_MOCK && host !== 'api.dojah.io') {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['DOJAH_BASE_URL'], message: 'DOJAH_BASE_URL in production must use https://api.dojah.io' });
+      } else if (env.NODE_ENV !== 'production' && host === 'api.dojah.io') {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['DOJAH_BASE_URL'], message: 'The live Dojah URL is only allowed in production; use https://sandbox.dojah.io' });
+      }
+    }
+    const DECIMAL = /^\d+(\.\d{1,2})?$/;
+    for (const key of ['DOJAH_MIN_BALANCE', 'DOJAH_LOW_BALANCE_WARN'] as const) {
+      const v = env[key];
+      if (v !== undefined && v !== '' && !DECIMAL.test(v)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: [key], message: `${key} must be a plain decimal number of naira, e.g. 8000 or 8000.50` });
+      }
+    }
+    if (env.NODE_ENV === 'production') {
+      if (!env.DOJAH_MIN_BALANCE) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['DOJAH_MIN_BALANCE'], message: 'DOJAH_MIN_BALANCE is required in production; compute it with scripts/dojah-threshold.ts (plan §R2)' });
+      } else if (DECIMAL.test(env.DOJAH_MIN_BALANCE) && Number(env.DOJAH_MIN_BALANCE) <= 0) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['DOJAH_MIN_BALANCE'], message: 'DOJAH_MIN_BALANCE must be greater than 0 in production' });
+      }
+    }
+    if (
+      env.DOJAH_LOW_BALANCE_WARN && env.DOJAH_MIN_BALANCE &&
+      DECIMAL.test(env.DOJAH_LOW_BALANCE_WARN) && DECIMAL.test(env.DOJAH_MIN_BALANCE) &&
+      Number(env.DOJAH_LOW_BALANCE_WARN) <= Number(env.DOJAH_MIN_BALANCE)
+    ) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['DOJAH_LOW_BALANCE_WARN'], message: 'DOJAH_LOW_BALANCE_WARN must be greater than DOJAH_MIN_BALANCE' });
     }
     // Production must never quietly run against fixtures.
     if (env.NODE_ENV === 'production' && env.QUIDAX_USE_MOCK) {

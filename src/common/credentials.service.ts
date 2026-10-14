@@ -41,6 +41,20 @@ export const CREDENTIALS = [
     hint: 'Must equal Settings → Webhooks → Secret hash in the Flutterwave dashboard. A wrong value means every webhook is rejected.',
   },
   {
+    group: 'Dojah',
+    name: 'dojah.appId',
+    label: 'App ID',
+    env: 'DOJAH_APP_ID',
+    hint: 'Sent as the AppId header. Sandbox and live apps have different IDs.',
+  },
+  {
+    group: 'Dojah',
+    name: 'dojah.secretKey',
+    label: 'Secret key',
+    env: 'DOJAH_SECRET_KEY',
+    hint: 'Authorises every paid identity lookup and AML screen. The server IP must also be whitelisted on the Dojah app.',
+  },
+  {
     group: 'Email',
     name: 'smtp.password',
     label: 'SMTP password',

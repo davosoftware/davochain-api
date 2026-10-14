@@ -59,3 +59,7 @@ describe('permission catalogue', () => {
     }
   });
 });
+
+it('offers compliance.view and compliance.review', () => {
+  expect(ALL_PERMISSIONS).toEqual(expect.arrayContaining(['compliance.view', 'compliance.review']));
+});

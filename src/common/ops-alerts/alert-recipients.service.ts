@@ -10,6 +10,9 @@ import { PrismaService } from '../../prisma/prisma.service';
 export const SECURITY_ALERT_TYPES: ReadonlySet<AlertType> = new Set<AlertType>([
   AlertType.ADMIN_LOCKOUT,
   AlertType.RATE_LIMIT_DEGRADED,
+  AlertType.DOJAH_CONFIG,
+  AlertType.AML_REVIEW,
+  AlertType.AML_SANCTIONS,
 ]);
 
 const LAST_SECURITY_RECIPIENT = 'This is the last enabled recipient of a security alert. Add another first.';
@@ -31,6 +34,9 @@ const CATALOGUE: Record<AlertType, { label: string; description: string }> = {
   VIRTUAL_ACCOUNT_SYNC: { label: 'Virtual account sync', description: 'A customer deposit account could not be kept in step with Flutterwave.' },
   ADMIN_LOCKOUT: { label: 'Admin account locked', description: 'An admin account was locked after repeated wrong passwords; someone may be guessing it.' },
   RATE_LIMIT_DEGRADED: { label: 'Rate limiting degraded', description: 'Redis is unreachable: sign-in is refusing requests and other routes run without limits.' },
+  DOJAH_CONFIG: { label: 'Verification provider problem', description: 'Dojah refused our keys, IP or wallet, or stopped answering; Basic verification is paused.' },
+  AML_REVIEW: { label: 'AML review needed', description: 'A verification matched a PEP, adverse-media or unclear AML result and waits for a compliance reviewer.' },
+  AML_SANCTIONS: { label: 'Sanctions match', description: 'A possible or confirmed sanctions match. Confirmed matches are blocked automatically and need an owner.' },
 };
 
 /** Who made a change, for the audit row written in the same transaction. */

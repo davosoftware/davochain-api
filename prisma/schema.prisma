@@ -38,6 +38,75 @@ enum KycStatus {
   EXPIRED // documents aged out; re-verification required
 }
 
+/// The user's AML standing. Read by the KYC guard on every gated request (spec §7.2).
+enum AmlStatus {
+  NOT_SCREENED
+  PENDING
+  CLEAR
+  UNDER_REVIEW
+  RESTRICTED
+  BLOCKED
+}
+
+enum KycIdType {
+  BVN
+  NIN
+}
+
+enum KycVerificationState {
+  CREATED
+  LOOKED_UP
+  APPROVED
+  IDENTITY_REVIEW
+  COMPLIANCE_REVIEW
+  REJECTED_NOT_FOUND
+  REJECTED_BY_REVIEW
+  FAILED_SYSTEM
+}
+
+/// What we know about one paid Dojah call (plan §R1.2).
+enum DojahCallOutcome {
+  IN_FLIGHT
+  SUCCEEDED
+  DEFINITELY_FAILED
+  UNKNOWN
+}
+
+/// The screening's RESULT. UNKNOWN here means Dojah answered match_status "Unknown".
+enum AmlScreeningStatus {
+  PENDING
+  CLEAR
+  POSSIBLE_MATCH
+  CONFIRMED_MATCH
+  UNKNOWN
+  ERROR
+}
+
+enum AmlCaseStatus {
+  OPEN
+  CLEARANCE_PROPOSED
+  CLEARED
+  PEP_APPROVED_EDD
+  RESTRICTED
+  SANCTIONS_CONFIRMED
+  SANCTIONS_FALSE_POSITIVE
+}
+
+enum AmlCaseCategory {
+  SANCTIONS
+  PEP
+  ADVERSE_MEDIA
+  WARNING
+  UNKNOWN
+  ERROR
+}
+
+enum AmlCasePriority {
+  CRITICAL
+  HIGH
+  NORMAL
+}
+
 enum KycDocumentType {
   BVN
   NIN
@@ -153,6 +222,9 @@ enum AlertType {
   VIRTUAL_ACCOUNT_SYNC
   ADMIN_LOCKOUT
   RATE_LIMIT_DEGRADED
+  DOJAH_CONFIG
+  AML_REVIEW
+  AML_SANCTIONS
 }
 
 // ─────────────────────────────────────────────── identity
@@ -179,8 +251,11 @@ model User {
   lockedUntil     DateTime? // brute-force backoff
 
   /// Denormalised from KycProfile so a guard can check without a join.
-  kycTier   KycTier   @default(TIER_0)
-  kycStatus KycStatus @default(NOT_STARTED)
+  kycTier          KycTier           @default(TIER_0)
+  kycStatus        KycStatus         @default(NOT_STARTED)
+  /// Separate from KYC on purpose: identity can be fine while AML is not (spec §7).
+  amlStatus        AmlStatus         @default(NOT_SCREENED)
+  kycVerifications KycVerification[]
 
   // ── referrals ─────────────────────────────────────────────
 
@@ -990,10 +1065,13 @@ model KycProfile {
   ninHash  String?
   ninLast4 String?
 
-  addressLine String?
-  city        String?
-  state       String?
-  country     String  @default("NG")
+  addressLine   String?
+  city          String?
+  state         String?
+  country       String  @default("NG")
+  lga           String?
+  postcode      String?
+  stateOfOrigin String?
 
   providerName String?
   providerRef  String?
@@ -1921,4 +1999,146 @@ model JobLease {
   lockedUntil DateTime
 
   @@map("job_leases")
+}
+
+/// One row per Basic submission. Never edited by an API, only moved by compare-and-set (spec §14.5).
+model KycVerification {
+  id        String               @id @default(uuid())
+  userId    String
+  /// = userId while not terminal; NULL once terminal. UNIQUE, so one active verification per user (spec §8.1).
+  activeFor String?              @unique
+  state     KycVerificationState @default(CREATED)
+  /// Africa/Lagos calendar day of creation, for the daily attempt limit.
+  lagosDay  String
+
+  idType  KycIdType
+  /// KycHashService hash (h1:…). NEVER the raw number.
+  idHash  String
+  idLast4 String
+
+  typedFirstName   String
+  typedMiddleName  String?
+  typedLastName    String
+  typedDateOfBirth String
+  /// Address as typed (plan ruling 9): street, city, state, lga, postcode, stateOfOrigin, country.
+  typedAddress     Json
+
+  /// The normalised record (principle 1). Raw Dojah fields are never stored.
+  recordFirstName     String?
+  recordMiddleName    String?
+  recordLastName      String?
+  recordDateOfBirth   String?
+  recordGender        String?
+  recordUsable        Boolean?
+  /// Name-match result (spec §5).
+  match               Json?
+  /// IDENTITY_REVIEW cause: NAME_MISMATCH | DOB_MISMATCH | UNUSABLE_RECORD.
+  reviewReason        String?
+  providerCustomerRef String?
+
+  lookupOutcome     DojahCallOutcome?
+  lookupHttpStatus  Int?
+  lookupStartedAt   DateTime?
+  lookupCompletedAt DateTime?
+  possiblyCharged   Boolean           @default(false)
+  failureReason     String?
+
+  screeningId String?
+
+  decidedBy      String?
+  decidedAt      DateTime?
+  decisionReason String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User          @relation(fields: [userId], references: [id])
+  screening AmlScreening? @relation(fields: [screeningId], references: [id])
+
+  @@index([userId, createdAt])
+  @@index([state, createdAt])
+  @@index([lookupOutcome, lookupStartedAt])
+  @@map("kyc_verifications")
+}
+
+model AmlScreening {
+  id     String @id @default(uuid())
+  userId String
+
+  /// Exactly what is sent: { names, date_of_birth?, gender?, nationality }. Derived from verified data only (spec §14.3).
+  inputs           Json
+  inputFingerprint String
+
+  status      AmlScreeningStatus @default(PENDING)
+  /// Dojah's own words, trimmed, at most 64 characters.
+  matchStatus String?
+  riskLevel   String?
+  /// Dojah's reference. Recorded in the same commit as the result.
+  entityId    String?
+  /// Minimal match details (spec §9.1).
+  matches     Json?
+  /// SANCTIONS | PEP | ADVERSE_MEDIA | WARNING | UNKNOWN | null: the strongest category in the result.
+  category    String?
+
+  callOutcome             DojahCallOutcome?
+  sendCount               Int               @default(0)
+  unknownCount            Int               @default(0)
+  definiteFailCount       Int               @default(0)
+  nextAttemptAt           DateTime?
+  screenStartedAt         DateTime?
+  screenCompletedAt       DateTime?
+  /// A re-send followed an UNKNOWN outcome: Dojah may have billed twice (plan §R1.3).
+  possibleDuplicateCharge Boolean           @default(false)
+  lastError               String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  verifications KycVerification[]
+  case          AmlReviewCase?
+
+  @@unique([userId, inputFingerprint])
+  @@index([callOutcome, screenStartedAt])
+  @@index([status, nextAttemptAt])
+  @@map("aml_screenings")
+}
+
+model AmlReviewCase {
+  id          String @id @default(uuid())
+  userId      String
+  screeningId String @unique
+
+  status    AmlCaseStatus   @default(OPEN)
+  category  AmlCaseCategory
+  priority  AmlCasePriority
+  /// Sanctions category, but match_status was not "Confirmed Match".
+  possible  Boolean         @default(false)
+  riskLevel String?
+  entityId  String?
+  matches   Json?
+
+  rescreenCount  Int                 @default(0)
+  rescreenResult AmlScreeningStatus?
+
+  proposedBy     String?
+  proposedAt     DateTime?
+  proposalReason String?
+  confirmedBy    String?
+  confirmedAt    DateTime?
+
+  decidedBy           String?
+  decidedAt           DateTime?
+  reason              String?
+  reportedToAuthority Boolean?
+  reportReference     String?
+  reportedAt          DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  screening AmlScreening @relation(fields: [screeningId], references: [id])
+
+  @@index([status, priority, createdAt])
+  @@index([userId])
+  @@map("aml_review_cases")
 }
