@@ -26,6 +26,11 @@ const STATUS_MAP: Record<string, TxStatus> = {
   canceled: TxStatus.FAILED,
 };
 
+/** Quidax marks coins moved between its own accounts with type "internal". */
+export function isInternalTransfer(d: Pick<QuidaxDeposit, 'type'>): boolean {
+  return typeof d.type === 'string' && d.type.trim().toLowerCase() === 'internal';
+}
+
 @Injectable()
 export class DepositsService {
   private readonly log = new Logger(DepositsService.name);
@@ -46,6 +51,13 @@ export class DepositsService {
    * re-delivered event finds the transaction already COMPLETED and does nothing.
    */
   async applyWebhook(event: string, data: QuidaxDeposit): Promise<void> {
+    // Coins that arrived from another Quidax account are our own settlement
+    // transfers (every buy ends main -> sub-account), never a customer deposit.
+    // Recording them made a phantom deposit after every buy (PROJECT_REVIEW H12).
+    if (isInternalTransfer(data)) {
+      this.log.debug(`Deposit ${data.id} is an internal transfer: not a customer deposit`);
+      return;
+    }
     const userId = await this.provisioning.findUserByQuidax({
       quidaxUserId: data.user?.id ?? null,
       quidaxSn: data.user?.sn ?? null,
@@ -273,6 +285,7 @@ export class DepositsService {
   async sweepGaps(deposits: QuidaxDeposit[]): Promise<number> {
     let recovered = 0;
     for (const d of deposits) {
+      if (isInternalTransfer(d)) continue;
       const reference = `quidax_deposit_${d.id}`;
       const existing = await this.prisma.transaction.findUnique({ where: { reference } });
       if (existing?.status === TxStatus.COMPLETED) continue;
