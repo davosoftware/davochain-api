@@ -9,7 +9,8 @@ import {
 import { Reflector } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { KycStatus, KycTier } from '@prisma/client';
+import { KycStatus, KycTier, UserStatus } from '@prisma/client';
+import { PrismaService } from '../prisma/prisma.service';
 import { IS_PUBLIC_KEY } from './public.decorator';
 import type { JwtPayload } from './auth.service';
 
@@ -62,11 +63,17 @@ export const REQUIRED_TIER_KEY = 'requiredTier';
 /**
  * Gate an action behind a verification tier.
  *
- * The JWT carries the tier at issue time, so a token minted before an upgrade
- * still says TIER_0 until it refreshes — deliberate. Approving KYC should also
- * revoke sessions, or the user waits up to the access-token lifetime.
+ * The tier, KYC status and AML status are read from the database on every
+ * gated request, never from the token, so a block or an approval takes effect
+ * at once (spec §7.3). Approving KYC still revokes sessions, so the app's own
+ * view of the tier catches up.
  */
 export const RequiresKyc = (tier: KycTier) => SetMetadata(REQUIRED_TIER_KEY, tier);
+
+export const GATE_VERIFY = 'Verification required before you can do this';
+export const GATE_PENDING = 'Your verification is still being completed.';
+/** The same words for every reason, so nobody is tipped off (spec §9.2). */
+export const GATE_REVIEW = 'Your account is under review. Contact support.';
 
 const TIER_ORDER: Record<KycTier, number> = {
   TIER_0: 0,
@@ -75,11 +82,18 @@ const TIER_ORDER: Record<KycTier, number> = {
   TIER_3: 3,
 };
 
+/**
+ * Trade, crypto and naira withdrawals: approved identity at the required tier
+ * AND amlStatus CLEAR AND an active account.
+ */
 @Injectable()
 export class KycGuard implements CanActivate {
-  constructor(private readonly reflector: Reflector) {}
+  constructor(
+    private readonly reflector: Reflector,
+    private readonly prisma: PrismaService,
+  ) {}
 
-  canActivate(ctx: ExecutionContext): boolean {
+  async canActivate(ctx: ExecutionContext): Promise<boolean> {
     const required = this.reflector.getAllAndOverride<KycTier>(REQUIRED_TIER_KEY, [
       ctx.getHandler(),
       ctx.getClass(),
@@ -87,17 +101,20 @@ export class KycGuard implements CanActivate {
     if (!required) return true;
 
     const req = ctx.switchToHttp().getRequest<{ user?: JwtPayload }>();
-    const user = req.user;
-    if (!user) throw new UnauthorizedException();
+    if (!req.user) throw new UnauthorizedException();
 
-    if (user.kyc !== KycStatus.APPROVED || TIER_ORDER[user.tier] < TIER_ORDER[required]) {
-      throw new ForbiddenException({
-        message: 'Verification required before you can do this',
-        requiredTier: required,
-        currentTier: user.tier,
-        kycStatus: user.kyc,
-      });
+    const u = await this.prisma.user.findUnique({
+      where: { id: req.user.sub },
+      select: { status: true, kycTier: true, kycStatus: true, amlStatus: true },
+    });
+    const review = () => new ForbiddenException({ message: GATE_REVIEW, code: 'ACCOUNT_UNDER_REVIEW' });
+    if (!u || u.status !== UserStatus.ACTIVE) throw review();
+    if (u.amlStatus === 'BLOCKED' || u.amlStatus === 'RESTRICTED' || u.amlStatus === 'UNDER_REVIEW') throw review();
+    if (u.kycStatus !== KycStatus.APPROVED || TIER_ORDER[u.kycTier] < TIER_ORDER[required] || u.amlStatus === 'NOT_SCREENED') {
+      // The fields the app opens the verification screen on (FLUTTER_API.md §1).
+      throw new ForbiddenException({ message: GATE_VERIFY, requiredTier: required, currentTier: u.kycTier, kycStatus: u.kycStatus });
     }
+    if (u.amlStatus !== 'CLEAR') throw new ForbiddenException({ message: GATE_PENDING, code: 'VERIFICATION_PENDING' });
     return true;
   }
 }
