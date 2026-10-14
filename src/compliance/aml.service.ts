@@ -205,8 +205,15 @@ export class AmlService {
     const effects: Effect[] = [];
 
     if (s.status === 'CLEAR') {
-      await this.setAmlStatus(tx, s.userId, 'CLEAR', ['PENDING']);
-      // An old open case still holds UNDER_REVIEW; only a person lifts that (principle 3).
+      const errCase = await tx.amlReviewCase.findUnique({ where: { screeningId } });
+      if (errCase && errCase.category === 'ERROR') {
+        // A manual re-screen came back clear (plan ruling 5): recorded for the
+        // reviewer, who still decides. Never clears the person by itself.
+        await tx.amlReviewCase.update({ where: { id: errCase.id }, data: { rescreenResult: 'CLEAR' } });
+      } else {
+        await this.setAmlStatus(tx, s.userId, 'CLEAR', ['PENDING']);
+        // An old open case still holds UNDER_REVIEW; only a person lifts that (principle 3).
+      }
     } else {
       const sanctions = s.category === 'SANCTIONS';
       const confirmedSanctions = sanctions && s.status === 'CONFIRMED_MATCH';
@@ -214,6 +221,21 @@ export class AmlService {
       const priority: AmlCasePriority = sanctions ? 'CRITICAL' : category === 'PEP' || category === 'ADVERSE_MEDIA' ? 'HIGH' : 'NORMAL';
 
       const existing = await tx.amlReviewCase.findUnique({ where: { screeningId } });
+      if (existing && existing.category === 'ERROR' && s.status !== 'ERROR') {
+        // A manual re-screen produced a real result (plan ruling 5): describe it, never close it.
+        await tx.amlReviewCase.update({
+          where: { id: existing.id },
+          data: {
+            category,
+            priority,
+            possible: sanctions && !confirmedSanctions,
+            riskLevel: s.riskLevel,
+            entityId: s.entityId,
+            matches: (s.matches ?? undefined) as Prisma.InputJsonValue | undefined,
+            rescreenResult: s.status,
+          },
+        });
+      }
       const caseRow =
         existing ??
         (await tx.amlReviewCase.create({

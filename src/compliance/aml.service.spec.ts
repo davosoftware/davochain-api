@@ -160,3 +160,44 @@ describe('AmlService', () => {
     expect(alerts.raise).toHaveBeenCalledWith('DOJAH_CONFIG', 'dojah:WALLET', expect.any(String), expect.any(Array));
   });
 });
+
+it('a re-screen result updates the ERROR case (category, rescreenResult) but never closes it', async () => {
+  const db = new FakePrisma();
+  const dojah = new DojahMockClient();
+  const svc = new AmlService(db as never, dojah, { raise: jest.fn(async () => true) } as never, { setDesiredForUser: jest.fn() } as never);
+  await db.user.create({ data: { id: 'u1', email: 'u1@x.test', firstName: 'John', lastName: 'Pep', amlStatus: 'UNDER_REVIEW' } });
+  const s = await db.amlScreening.create({ data: { userId: 'u1', inputs: { names: 'John Pep', nationality: 'NG' }, inputFingerprint: 'f', status: 'ERROR' } });
+  await db.$transaction((tx) => svc.finalise(tx as never, s.id as string)); // opens the ERROR case
+  expect(db.rows('amlReviewCase')[0]).toMatchObject({ category: 'ERROR' });
+  await db.amlScreening.updateMany({ where: { id: s.id }, data: { status: 'PENDING', callOutcome: null, unknownCount: 0, definiteFailCount: 0 } });
+  await svc.send(s.id as string);
+  expect(db.rows('amlReviewCase')).toHaveLength(1);
+  expect(db.rows('amlReviewCase')[0]).toMatchObject({ category: 'PEP', rescreenResult: 'POSSIBLE_MATCH', status: 'OPEN', priority: 'HIGH' });
+  expect(db.rows('user')[0].amlStatus).toBe('UNDER_REVIEW');
+});
+
+it('a CLEAR re-screen on an ERROR case records the result but never clears the person', async () => {
+  const db = new FakePrisma();
+  const dojah = new DojahMockClient();
+  const svc = new AmlService(db as never, dojah, { raise: jest.fn(async () => true) } as never, { setDesiredForUser: jest.fn() } as never);
+  await db.user.create({ data: { id: 'u1', email: 'u1@x.test', firstName: 'John', lastName: 'Clean', amlStatus: 'UNDER_REVIEW' } });
+  const s = await db.amlScreening.create({ data: { userId: 'u1', inputs: { names: 'John Clean', nationality: 'NG' }, inputFingerprint: 'f', status: 'ERROR' } });
+  await db.$transaction((tx) => svc.finalise(tx as never, s.id as string));
+  await db.amlScreening.updateMany({ where: { id: s.id }, data: { status: 'PENDING', callOutcome: null, unknownCount: 0, definiteFailCount: 0 } });
+  await svc.send(s.id as string);
+  expect(db.rows('amlReviewCase')[0]).toMatchObject({ category: 'ERROR', rescreenResult: 'CLEAR', status: 'OPEN' });
+  expect(db.rows('user')[0].amlStatus).toBe('UNDER_REVIEW');
+});
+
+it('a confirmed sanctions re-screen blocks a person under review (plan ruling 5)', async () => {
+  const db = new FakePrisma();
+  const dojah = new DojahMockClient();
+  const svc = new AmlService(db as never, dojah, { raise: jest.fn(async () => true) } as never, { setDesiredForUser: jest.fn(async () => undefined) } as never);
+  await db.user.create({ data: { id: 'u1', email: 'u1@x.test', firstName: 'A', lastName: 'Sanctioned', amlStatus: 'UNDER_REVIEW' } });
+  const s = await db.amlScreening.create({ data: { userId: 'u1', inputs: { names: 'A Sanctioned', nationality: 'NG' }, inputFingerprint: 'f', status: 'ERROR' } });
+  await db.$transaction((tx) => svc.finalise(tx as never, s.id as string));
+  await db.amlScreening.updateMany({ where: { id: s.id }, data: { status: 'PENDING', callOutcome: null, unknownCount: 0, definiteFailCount: 0 } });
+  await svc.send(s.id as string);
+  expect(db.rows('user')[0].amlStatus).toBe('BLOCKED');
+  expect(db.rows('amlReviewCase')[0]).toMatchObject({ category: 'SANCTIONS', priority: 'CRITICAL', rescreenResult: 'CONFIRMED_MATCH' });
+});

@@ -144,6 +144,12 @@ const MODELS = {
       reportReference: null, reportedAt: null,
     }),
   },
+  adminUser: {
+    unique: [['id'], ['email']],
+    autoId: true,
+    decimals: [],
+    defaults: () => ({ isActive: true, role: 'SUB_ADMIN', permissions: [] }),
+  },
   refreshToken: {
     unique: [['id']],
     autoId: true,
@@ -476,6 +482,7 @@ export class FakePrisma {
   readonly amlScreening = new FakeModel(this, 'amlScreening');
   readonly amlReviewCase = new FakeModel(this, 'amlReviewCase');
   readonly refreshToken = new FakeModel(this, 'refreshToken');
+  readonly adminUser = new FakeModel(this, 'adminUser');
 
   /** Raw SQL the code under test ran (advisory locks and the like): recorded, not executed. */
   readonly rawCalls: string[] = [];
