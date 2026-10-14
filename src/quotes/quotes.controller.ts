@@ -8,6 +8,7 @@ import { RequiresKyc } from '../auth/jwt-auth.guard';
 import { IdempotencyInterceptor } from '../common/idempotency.interceptor';
 import { dec } from '../common/money';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { PausedDuringMaintenance } from '../common/maintenance.guard';
 
 @ApiTags('trading')
 @ApiBearerAuth('user')
@@ -24,6 +25,7 @@ export class QuotesController {
    * refreshes a price the user is looking at.
    */
   @RequiresKyc(KycTier.TIER_1)
+  @PausedDuringMaintenance()
   @Post('quotes')
   async quote(@CurrentUser('sub') userId: string, @Body() dto: QuoteDto) {
     const amount = dec(dto.amount);
@@ -41,6 +43,7 @@ export class QuotesController {
   /** Execute a quote. Idempotency-Key required — this one moves money. */
   @RequiresKyc(KycTier.TIER_1)
   @UseInterceptors(IdempotencyInterceptor)
+  @PausedDuringMaintenance()
   @Post('trades')
   async execute(@CurrentUser('sub') userId: string, @Body() dto: ExecuteTradeDto) {
     // Consume first: single-use, and expiry is enforced here rather than deeper in.

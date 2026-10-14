@@ -4,6 +4,7 @@ import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { IsOptional, IsString, Matches } from 'class-validator';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { VirtualAccountsService } from './virtual-accounts.service';
+import { PausedDuringMaintenance } from '../common/maintenance.guard';
 
 /** Exactly one of the two; the service enforces "exactly one". Messages never echo the value. */
 export class OpenNgnAccountDto {
@@ -24,6 +25,7 @@ export class VirtualAccountsController {
   }
 
   /** 201 created, 200 already had one, 202 Flutterwave has not confirmed yet. */
+  @PausedDuringMaintenance()
   @Post('account')
   async open(
     @CurrentUser('sub') userId: string,

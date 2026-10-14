@@ -6,6 +6,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { RequiresKyc } from '../auth/jwt-auth.guard';
 import { IdempotencyInterceptor } from '../common/idempotency.interceptor';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { PausedDuringMaintenance } from '../common/maintenance.guard';
 
 @ApiTags('withdrawals')
 @ApiBearerAuth('user')
@@ -46,6 +47,7 @@ export class WithdrawalsController {
 
   @RequiresKyc(KycTier.TIER_1)
   @RequiresKyc(KycTier.TIER_1)
+  @PausedDuringMaintenance()
   @Post('ngn/verify-account')
   verifyNgnBankAccount(@Body() dto: VerifyNgnBankAccountDto) {
     return this.withdrawals.verifyNgnBankAccount(dto);
@@ -53,6 +55,7 @@ export class WithdrawalsController {
 
   @RequiresKyc(KycTier.TIER_1)
   @UseInterceptors(IdempotencyInterceptor)
+  @PausedDuringMaintenance()
   @Post('ngn')
   withdrawNgn(@CurrentUser('sub') userId: string, @Body() dto: WithdrawNgnDto) {
     return this.withdrawals.withdrawNgn(userId, dto);
@@ -60,6 +63,7 @@ export class WithdrawalsController {
 
   @RequiresKyc(KycTier.TIER_1)
   @UseInterceptors(IdempotencyInterceptor)
+  @PausedDuringMaintenance()
   @Post('crypto')
   withdraw(@CurrentUser('sub') userId: string, @Body() dto: WithdrawCryptoDto) {
     return this.withdrawals.withdrawCrypto(userId, dto);

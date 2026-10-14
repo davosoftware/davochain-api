@@ -6,6 +6,7 @@ import { SubmitGiftCardDto } from './dto';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { Public } from '../auth/public.decorator';
 import { RateLimit } from '../rate-limit/rate-limit.decorator';
+import { PausedDuringMaintenance } from '../common/maintenance.guard';
 
 @ApiTags('giftcards')
 @ApiBearerAuth('user')
@@ -39,6 +40,7 @@ export class GiftCardsController {
     res.end(image);
   }
 
+  @PausedDuringMaintenance()
   @Post('trades')
   submit(@CurrentUser('sub') userId: string, @Body() dto: SubmitGiftCardDto) {
     return this.giftcards.submit(userId, {

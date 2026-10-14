@@ -8,6 +8,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { Public } from '../auth/public.decorator';
 import { RateLimit } from '../rate-limit/rate-limit.decorator';
 import { NG_STATES } from './ng-states';
+import { PausedDuringMaintenance } from '../common/maintenance.guard';
 
 /** A letter first, then letters, accents, apostrophes, spaces, dots and hyphens. */
 const NAME = /^[\p{L}][\p{L}\p{M}' .-]{0,59}$/u;
@@ -54,6 +55,7 @@ export class KycController {
   }
 
   /** Basic verification (spec §11). Off until KYC_BASIC_ENABLED and readiness are green. */
+  @PausedDuringMaintenance()
   @Post('basic')
   @RateLimit('kyc.basic')
   submitBasic(@CurrentUser('sub') userId: string, @Body() dto: SubmitBasicDto) {

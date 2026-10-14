@@ -5,6 +5,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { RequiresKyc } from '../auth/jwt-auth.guard';
 import { KycTier } from '@prisma/client';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { PausedDuringMaintenance } from '../common/maintenance.guard';
 
 export class CreateAddressDto {
   @IsString()
@@ -28,6 +29,7 @@ export class AddressesController {
    * not be retried by a browser or prefetched.
    */
   @RequiresKyc(KycTier.TIER_1)
+  @PausedDuringMaintenance()
   @Post('address')
   create(@CurrentUser('sub') userId: string, @Body() dto: CreateAddressDto) {
     return this.addresses.getOrCreate(userId, dto.asset, dto.network);

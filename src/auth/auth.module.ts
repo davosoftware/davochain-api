@@ -8,6 +8,7 @@ import { UserOtpService } from './user-otp.service';
 import { AuthController } from './auth.controller';
 import { PasswordService } from './password.service';
 import { JwtAuthGuard, KycGuard } from './jwt-auth.guard';
+import { MaintenanceGuard } from '../common/maintenance.guard';
 import { RateLimitGuard } from '../rate-limit/rate-limit.guard';
 
 @Global()
@@ -21,6 +22,8 @@ import { RateLimitGuard } from '../rate-limit/rate-limit.guard';
     // Global. Auth is on by default; a route opts out with @Public().
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: KycGuard },
+    // Money-moving routes answer 503 while an admin has maintenance mode on.
+    { provide: APP_GUARD, useClass: MaintenanceGuard },
     // Last, so the signed-in user is known when a per-user limit is counted.
     { provide: APP_GUARD, useClass: RateLimitGuard },
   ],
