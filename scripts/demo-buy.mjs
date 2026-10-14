@@ -2,12 +2,15 @@
 /**
  * Walk the full money path against a running server, so you can watch it work:
  *
- *   register -> blocked at TIER_0 -> KYC -> approve -> fund -> quote -> buy
+ *   register -> blocked at TIER_0 -> Basic verification -> fund -> quote -> buy
  *
  *   npm run demo -- --admin-email you@example.com --admin-password '...'
  *
  * Read-only apart from creating one throwaway user and one small trade against
  * the Quidax mock. Nothing here touches real money.
+ *
+ * Basic verification needs KYC_BASIC_ENABLED=true and DOJAH_USE_MOCK=true on the
+ * API: the mock's identity "Someone Clean" passes the lookup and a clear AML screen.
  */
 import { execSync } from 'node:child_process';
 
@@ -76,7 +79,7 @@ async function main() {
 
   // ── 1 ────────────────────────────────────────────────────────
   step('Register a user');
-  const reg = await post('/v1/auth/register', { email, password, firstName: 'Ada', lastName: 'Lovelace' });
+  const reg = await post('/v1/auth/register', { email, password, firstName: 'Ada', lastName: 'Lovelace', phone: '+23480' + String(Date.now()).slice(-8) });
   if (!reg?.tokens) throw new Error(`register failed: ${JSON.stringify(reg)}`);
   ok(email);
   info(`user ${reg.userId}`);
@@ -96,13 +99,20 @@ async function main() {
   }
 
   // ── 3 ────────────────────────────────────────────────────────
-  step('Submit KYC and approve it as admin');
-  await post('/v1/kyc/tier1', { bvn: '12345678901', dateOfBirth: '1990-05-15' }, reg.accessToken);
+  step('Basic verification: lookup, name match and AML screen (the Dojah mock)');
+  const basic = await post(
+    '/v1/kyc/basic',
+    {
+      idType: 'BVN', idNumber: '33333333333', firstName: 'Someone', lastName: 'Clean', dateOfBirth: '1995-03-03',
+      address: { street: '1 Test Street', city: 'Ikeja', state: 'Lagos', lga: 'Ikeja' }, stateOfOrigin: 'Lagos', country: 'NG',
+    },
+    reg.accessToken,
+  );
+  if (basic?.state !== 'APPROVED') throw new Error(`Basic not approved (is KYC_BASIC_ENABLED=true with DOJAH_USE_MOCK=true?): ${JSON.stringify(basic)}`);
+  ok('approved to Basic (TIER_1) automatically');
+  info('approval revokes the user session on purpose — the tier lives in the JWT');
   const admin = await post('/v1/admin/auth/login', { email: ADMIN_EMAIL, password: ADMIN_PASSWORD });
   if (!admin?.accessToken) throw new Error(`admin login failed: ${JSON.stringify(admin)}`);
-  await post(`/v1/admin/kyc/${reg.userId}/review`, { approve: true, tier: 'TIER_1' }, admin.accessToken);
-  ok('approved to TIER_1');
-  info('approval revokes the user session on purpose — the tier lives in the JWT');
 
   // ── 4 ────────────────────────────────────────────────────────
   step('User signs in again to pick up the new tier');

@@ -8,6 +8,9 @@
  * Safe to run repeatedly — it registers a fresh throwaway user each time.
  *
  * Runs against the MOCK Quidax client, so nothing here touches real money.
+ *
+ * Basic verification needs KYC_BASIC_ENABLED=true and DOJAH_USE_MOCK=true on the
+ * API it targets; with Basic switched off (the default) that step reports it and passes.
  */
 
 const BASE = process.env.SMOKE_BASE ?? 'http://localhost:3000';
@@ -122,7 +125,7 @@ let userId;
 
 await step('a user can register', async () => {
   const out = await call('POST', '/auth/register', {
-    body: { email, password, firstName: 'Smoke', lastName: 'Test' },
+    body: { email, password, firstName: 'Smoke', lastName: 'Test', phone: '+23480' + String(Date.now()).slice(-8) },
   });
   token = out.accessToken;
   refreshToken = out.tokens.refreshToken;
@@ -199,13 +202,23 @@ await step('KYC status is readable', async () => {
   return `${tiers.length} tiers, deposit cap ₦${today.singleNgn} / ₦${today.dailyNgn} daily`;
 });
 
-await step('a KYC submission is accepted', async () => {
-  const out = await call('POST', '/kyc/tier1', {
-    token,
-    body: { bvn: '12345678901', dateOfBirth: '1995-06-15' },
+await step('a Basic verification is answered', async () => {
+  // The Dojah mock's clean identity (src/dojah/dojah.mock.ts): its AML screen is clear.
+  const res = await fetch(`${API}/kyc/basic`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      idType: 'BVN', idNumber: '33333333333', firstName: 'Someone', lastName: 'Clean', dateOfBirth: '1995-03-03',
+      address: { street: '1 Test Street', city: 'Ikeja', state: 'Lagos', lga: 'Ikeja' }, stateOfOrigin: 'Lagos', country: 'NG',
+    }),
   });
-  if (out.status !== 'PENDING') throw new Error(`expected PENDING, got ${out.status}`);
-  return 'awaiting review';
+  const out = await res.json().catch(() => ({}));
+  if (res.status === 503) return `switched off or not ready: ${out.message}`;
+  if (!res.ok) throw new Error(`${res.status} ${JSON.stringify(out)}`);
+  if (!['APPROVED', 'IDENTITY_REVIEW', 'COMPLIANCE_REVIEW', 'LOOKED_UP', 'REJECTED_NOT_FOUND'].includes(out.state)) {
+    throw new Error(`unexpected state ${out.state}`);
+  }
+  return `${out.state} (${out.level})`;
 });
 
 // ── summary ───────────────────────────────────────────────────

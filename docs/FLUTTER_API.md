@@ -34,7 +34,7 @@
 | 1 | [Health](#1-health) | 1.1 Server health |
 | 2 | [Authentication](#2-authentication) | 2.1 Register · 2.2 Log in · 2.3 Refresh token · 2.4 Log out · 2.5 Change password · 2.6 Request reset code · 2.7 Reset password · 2.8 Who am I (token) |
 | 3 | [Profile & wallets](#3-profile--wallets) | 3.1 Get profile · 3.2 Get wallet balances |
-| 4 | [KYC](#4-kyc-identity-verification) | 4.1 Get KYC status · 4.2 Submit Tier 1 · 4.3 Attach document (not ready) |
+| 4 | [KYC](#4-kyc-identity-verification) | 4.1 Get KYC status · 4.2 Basic verification · 4.3 Attach document (not ready) · 4.4 States and LGAs |
 | 5 | [Assets](#5-assets--networks) | 5.1 List coins · 5.2 List a coin's networks |
 | 6 | [Deposits](#6-deposits) | 6.1 Get deposit address · 6.2 List my addresses · 6.3 Deposit history · 6.4 Naira account · 6.5 Open naira account |
 | 7 | [Trading](#7-trading-buy-sell-swap) | 7.1 Get a quote · 7.2 Execute a quote · 7.3 Trade history · 7.4 Get one transaction |
@@ -109,6 +109,8 @@ In development you can try every endpoint in the browser at `http://<host>/docs`
 { "code": "ACCOUNT_SUSPENDED", "message": "<reason written by an admin>", "suspendedAt": "2026-10-01T09:00:00.000Z" }
 { "code": "ACCOUNT_CLOSED", "message": "This account is closed. Contact support." }
 { "message": "Verification required before you can do this", "requiredTier": "TIER_1", "currentTier": "TIER_0", "kycStatus": "NOT_STARTED" }
+{ "code": "VERIFICATION_PENDING", "message": "Your verification is still being completed." }
+{ "code": "ACCOUNT_UNDER_REVIEW", "message": "Your account is under review. Contact support." }
 ```
 
 **Rules:**
@@ -138,6 +140,7 @@ Every endpoint has a request limit. Going over it returns **`429`** with a `Retr
 | 2.7 Reset password | 20 per hour | IP address |
 | 2.3 Refresh token | 60 per minute | IP address |
 | 2.5 Change password | 5 per hour | Signed-in user |
+| 4.2 Basic verification | 5 per hour | Signed-in user |
 | Public endpoints (1.1, 5.1, 5.2, 9.1, 9.2, 10.1, 13.x) | 120 per minute | IP address |
 | Everything else | 300 per minute | Signed-in user |
 
@@ -189,9 +192,15 @@ Some endpoints need the user to be **verified: TIER_1 with status APPROVED**. In
 
 7.1 quote · 7.2 execute trade · 6.1 deposit address · 8.2 withdraw crypto · 8.6 verify bank account · 8.7 withdraw naira
 
-If the user isn't verified you get `403` with `requiredTier`, `currentTier` and `kycStatus`. Open the verification screen.
+The server checks the user's **current** verification on every one of these requests (not the copy inside the token), and also their compliance standing. Three `403` answers:
 
-**Important:** the check uses the verification level **inside the access token**. Right after an admin approves a user, their old token still says "not verified" until they **sign in again** (§0.5).
+| Body | Meaning | What the app does |
+| --- | --- | --- |
+| `requiredTier`, `currentTier`, `kycStatus` | Not verified (yet) | Open the verification screen (4.2) |
+| `code: "VERIFICATION_PENDING"` | Basic was submitted and is still being completed | Show `message`; re-check 4.1 later |
+| `code: "ACCOUNT_UNDER_REVIEW"` | The account is under review | Show `message` **exactly as sent**. Don't guess or explain why; the API never says. |
+
+Right after approval the user's sessions are signed out on purpose, so the app's own copy of the tier catches up when they **sign in again** (§0.5).
 
 ## 0.7 Idempotency-Key
 
@@ -285,7 +294,7 @@ Creates a new user account **and signs them in** (returns tokens, so there's no 
 | `password` | string | ✅ | 10–128 chars, ≥ 1 letter, ≥ 1 number | `"correcthorse42"` |
 | `firstName` | string | ✅ | 1–60 chars | `"Ada"` |
 | `lastName` | string | ✅ | 1–60 chars | `"Obi"` |
-| `phone` | string | ❌ | `+` optional, then 7–15 digits. Must not belong to another account. | `"+2348012345678"` |
+| `phone` | string | ✅ | `+` optional, then 7–15 digits. Must not belong to another account. Required since Basic verification; not yet confirmed by SMS. | `"+2348012345678"` |
 | `referralCode` | string | ❌ | Max 16 chars. An invalid code is **ignored**; it never blocks signup. | `"ADA4K9"` |
 
 ```http
@@ -323,9 +332,8 @@ Content-Type: application/json
 
 | Status | When | `message` |
 | --- | --- | --- |
-| 400 | Email already registered | `"Unable to register with those details"` |
-| 400 | Invalid field | Array, e.g. `["Enter a valid email address", "Password must be at least 10 characters", "Password must contain a number", "Enter a valid phone number"]` |
-| 500 | Phone number already used by another account (backend bug, Appendix F) | Generic. Show "That phone number is already in use." |
+| 400 | Email or phone number already registered (the API doesn't say which) | `"Unable to register with those details"` |
+| 400 | Invalid field, or `phone` missing | Array, e.g. `["Enter a valid email address", "Password must be at least 10 characters", "Password must contain a number", "Enter a valid phone number"]` |
 | 429 | More than 5 sign-ups from this IP in an hour (§0.4.1) | `"Too many attempts. Try again in N seconds."` + `Retry-After` |
 | 503 | Sign-up protection briefly unavailable, or the server is busy | `"Temporarily unavailable. Try again shortly."` / `"The service is busy, try again shortly"` |
 
@@ -713,7 +721,7 @@ Authorization: Bearer eyJhbGciOi…
 
 ## 4. KYC (identity verification)
 
-Tier 1 = BVN **or** NIN plus date of birth, **checked by a person** (no automatic check yet). Tiers 2 and 3 aren't available yet.
+**Basic** (`TIER_1`) = BVN **or** NIN, names, date of birth and address, **checked automatically**: the number is looked up, the names and date of birth must match the record, and the person is screened. A clear pass is Basic at once; anything else goes to a person, and the app is only told "under review". Advanced (Tier 2/3) isn't available yet.
 
 ### 4.1 Get KYC status
 
@@ -737,6 +745,11 @@ Authorization: Bearer eyJhbGciOi…
   "submittedAt": "2026-10-02T09:00:00.000Z",
   "bvnLast4": "5678",
   "documents": [],
+  "level": "NONE",
+  "basicState": "COMPLIANCE_REVIEW",
+  "underReview": true,
+  "attemptsLeftToday": 2,
+  "attemptsLeftTotal": 9,
   "limits": {
     "current": {
       "deposit":  { "singleNgn": "0.00", "dailyNgn": "0.00", "usedTodayNgn": "0.00", "remainingTodayNgn": "0.00" },
@@ -758,6 +771,10 @@ Authorization: Bearer eyJhbGciOi…
 | `submittedAt` | string \| null | Last submission |
 | `bvnLast4` | string \| null | Last 4 BVN digits (for "BVN ending 5678") |
 | `documents[]` | array | `{ "type": "PASSPORT", "status": "PENDING", "uploadedAt": "…" }`. Empty for now. |
+| `level` | string | `NONE` or `BASIC` |
+| `basicState` | string \| null | The latest Basic submission: `CREATED`, `LOOKED_UP`, `APPROVED`, `IDENTITY_REVIEW`, `COMPLIANCE_REVIEW`, `REJECTED_NOT_FOUND`, `REJECTED_BY_REVIEW`, `FAILED_SYSTEM`. `null` if never submitted. |
+| `underReview` | boolean | `true` while a person is reviewing. Never says why. |
+| `attemptsLeftToday` / `attemptsLeftTotal` | number | Basic submissions left (3 a day, 10 in all, by default). A "temporarily unavailable" failure doesn't use one. |
 | `limits.current.deposit` / `.withdraw` | object | **This user, today** (resets at midnight Lagos time) |
 | `…singleNgn` | string | Max per transaction |
 | `…dailyNgn` | string | Max per day |
@@ -770,57 +787,86 @@ Authorization: Bearer eyJhbGciOi…
 - The numbers in `tiers` are set by admins and are all `0` on a fresh install.
 - Show the right screen for each `status`:
   - `NOT_STARTED`: show the form (4.2).
-  - `PENDING`: "We're reviewing your details". Re-check when the screen opens.
-  - `REJECTED`: show `rejectionReason` and the form again.
+  - `PENDING`: "We're reviewing your details". Re-check when the screen opens. Don't show the form while `underReview` is `true` (a second submission is refused with `409`).
+  - `REJECTED`: show `rejectionReason` and the form again, if `attemptsLeftToday` > 0.
   - `APPROVED` with a token that still says unverified: ask the user to sign in again (§0.5).
 
 ---
 
-### 4.2 Submit Tier 1 (BVN or NIN)
+### 4.2 Basic verification (BVN or NIN)
 
-**Endpoint:** `POST /v1/kyc/tier1` · **Auth:** **Bearer** · **KYC:** none · **Success:** `201`
+**Endpoint:** `POST /v1/kyc/basic` · **Auth:** **Bearer** · **KYC:** none · **Success:** `201`
 
 **What it does**
-Sends the user's BVN **or** NIN and date of birth for review. Sets the status to `PENDING` and emails the user a confirmation. An admin then approves or rejects it. The BVN/NIN is **not stored** in readable form (only a hash and the last 4 digits).
+Checks the user's BVN **or** NIN with the verification provider, compares the names and date of birth they typed with the record, and screens them. It answers in about 2–5 seconds:
+- **clear pass:** the user is **Basic** at once. Their sessions are signed out on purpose so the new tier takes effect; they sign in again (§0.5);
+- **anything that needs a person:** "under review". The user is emailed when it's decided;
+- **number not found:** rejected, and the user may try again (it uses an attempt).
+
+The BVN/NIN is **never stored** in readable form (only a keyed hash and the last 4 digits). The phone number is **not** compared with the BVN record.
 
 **Request**
 
 | Field | Type | Required | Rules | Example |
 | --- | --- | --- | --- | --- |
-| `bvn` | string | one of `bvn`/`nin` | Exactly 11 digits | `"22212345678"` |
-| `nin` | string | one of `bvn`/`nin` | Exactly 11 digits | `"12345678901"` |
-| `dateOfBirth` | string | ✅ | ISO date `YYYY-MM-DD` | `"1994-05-20"` |
+| `idType` | string | ✅ | `BVN` or `NIN` | `"BVN"` |
+| `idNumber` | string | ✅ | Exactly 11 digits | `"22222222222"` |
+| `firstName` | string | ✅ | As on the ID. Letters, accents, `'`, `-`, `.`, spaces; max 60 | `"Adébáyọ̀"` |
+| `middleName` | string | ❌ | Same rules. Compared only when the record has one too | `"Oluwaseun"` |
+| `lastName` | string | ✅ | Same rules | `"Okafor"` |
+| `dateOfBirth` | string | ✅ | `YYYY-MM-DD` | `"1994-05-20"` |
+| `address.street` | string | ✅ | Max 200 | `"12 Marina Road"` |
+| `address.city` | string | ✅ | Max 80 | `"Ikeja"` |
+| `address.state` | string | ✅ | A state name from 4.4 | `"Lagos"` |
+| `address.lga` | string | ✅ | An LGA of that state, from 4.4 | `"Ikeja"` |
+| `address.postcode` | string | ❌ | 6 digits | `"100001"` |
+| `stateOfOrigin` | string | ✅ | A state name from 4.4 | `"Ogun"` |
+| `country` | string | ✅ | `NG` (the only value for now) | `"NG"` |
 
-If you send both `bvn` and `nin`, `bvn` is used.
+**Names match "exactly after cleanup":** accents, case, spaces, apostrophes and hyphens are ignored, and first and last name may be swapped. Anything else (a nickname, a missing letter) goes to a person, not to rejection.
 
 ```http
-POST /v1/kyc/tier1
+POST /v1/kyc/basic
 Authorization: Bearer eyJhbGciOi…
 Content-Type: application/json
 
-{ "bvn": "22212345678", "dateOfBirth": "1994-05-20" }
+{
+  "idType": "BVN", "idNumber": "22222222222",
+  "firstName": "John", "middleName": "Doe", "lastName": "Ajayi", "dateOfBirth": "2000-05-01",
+  "address": { "street": "12 Marina Road", "city": "Ikeja", "state": "Lagos", "lga": "Ikeja" },
+  "stateOfOrigin": "Ogun", "country": "NG"
+}
 ```
 
 **Response** `201`
 ```json
-{ "status": "PENDING", "submittedAt": "2026-10-02T09:00:00.000Z" }
+{ "state": "APPROVED", "level": "BASIC", "message": "You are verified." }
 ```
 
-| Field | Type | Description |
-| --- | --- | --- |
-| `status` | string | Always `PENDING` after submitting |
-| `submittedAt` | string | Submission time |
+| `state` | `level` | `message` | What the app does |
+| --- | --- | --- | --- |
+| `APPROVED` | `BASIC` | `"You are verified."` | Success screen, then sign in again (§0.5) |
+| `IDENTITY_REVIEW` / `COMPLIANCE_REVIEW` / `LOOKED_UP` | `NONE` | `"We are reviewing your details. We will email you when it is done."` | Show the message. Treat all three the same; never explain why. |
+| `REJECTED_NOT_FOUND` | `NONE` | `"We could not find that BVN/NIN. Check the number and try again."` | Show the message and the form again |
 
 **Errors**
 
 | Status | When | `message` |
 | --- | --- | --- |
-| 400 | Neither BVN nor NIN sent | `"Provide either a BVN or a NIN"` |
-| 400 | Not 11 digits | `"BVN and NIN are 11 digits"` or a validation array |
-| 400 | Bad date | `["dateOfBirth must be a valid ISO 8601 date string"]` |
+| 400 | Invalid field | Validation array, e.g. `["BVN and NIN are 11 digits", "Use YYYY-MM-DD"]` |
+| 400 | State or LGA not on the list | `"Choose your state and LGA from the list"` / `"Choose your state of origin from the list"` |
+| 409 | A submission is already being processed or reviewed | `"A verification is already in progress."` |
+| 409 | Already verified | `"You are already verified."` |
+| 429 | 3 submissions today | `"You have reached today’s verification limit. Try again tomorrow."` |
+| 429 | 10 submissions in all | `"You have used all your verification attempts. Contact support."` |
+| 429 | More than 5 requests in an hour (rate limit, §0.4.1) | `"Too many attempts. Try again in N seconds."` + `Retry-After` |
+| 503 | Basic is switched off (before launch) | `"Verification is not available yet."` |
+| 503 | The provider is unavailable | `"Verification is temporarily unavailable. Please try again later."` (doesn't use an attempt) |
 
 **Integration notes**
-- **Hide this form once the user is `APPROVED`.** Submitting again sets them back to `PENDING` and blocks trading until it's reviewed again.
+- **Never auto-retry** this call: each one can cost a paid lookup. On `503`, let the user press the button again.
+- Load the state and LGA pickers from 4.4; don't hard-code them.
+- After `APPROVED`, call 4.1 to refresh the screen; the gated features (§0.6) work after the user signs in again.
 
 ---
 
@@ -844,6 +890,24 @@ Today it only **saves information about** a document (type, storage key, file ty
 ```json
 { "id": "3c1e…", "type": "PASSPORT", "status": "PENDING", "uploadedAt": "2026-10-02T09:05:00.000Z" }
 ```
+
+---
+
+### 4.4 States and LGAs
+
+**Endpoint:** `GET /v1/kyc/states` · **Auth:** none · **KYC:** none · **Success:** `200`
+
+**What it does**
+Returns Nigeria's 36 states and the FCT, each with its local government areas, for the address and state-of-origin pickers in 4.2.
+
+**Response** `200`
+```json
+{ "states": [ { "name": "Abia", "lgas": ["Aba North", "Aba South", "…"] }, { "name": "FCT", "lgas": ["Abaji", "Bwari", "…"] } ] }
+```
+
+**Integration notes**
+- Send the names **exactly as returned** in 4.2.
+- The list rarely changes; cache it for the session.
 
 ---
 
@@ -3011,7 +3075,8 @@ Locally the API uses a **fake ("mock") version of Quidax**, the crypto provider.
 | --- | --- | --- |
 | 1 | **No in-app naira top-up** | A funding endpoint is coming. Add a "Fund wallet" placeholder. |
 | 2 | **Naira bank withdrawals** switched off (8.5–8.7) | Gate on `payoutAvailable` from 8.4 |
-| 3 | **KYC document upload** not built (4.3); Tier 2/3 unavailable | A proper upload flow will replace 4.3 |
+| 3 | **KYC document upload** not built (4.3); Advanced verification (Tier 2/3) unavailable | A proper upload flow will replace 4.3 |
+| 3a | **Basic verification (4.2) is switched off** until launch (`503 "Verification is not available yet."`) | Show `message`. Build the form now; it works against a test server with Basic switched on. |
 | 4 | **Gift-card photos** limited by the 1 MB request size | A separate upload endpoint is planned |
 | 5 | **No email verification** after signup | Will be added. Plan for a "verify your email" step after 2.1. |
 | 6 | **Withdrawals need only a token** | An OTP/2FA confirm step, saved addresses and a new-address waiting period are planned. Leave room in the confirm screen. |
@@ -3021,7 +3086,7 @@ Locally the API uses a **fake ("mock") version of Quidax**, the crypto provider.
 | 10 | **Phantom deposit after a buy** (a `PENDING` "deposit" of the bought coin + a "BTC added" notification) | Backend bug, fix pending. Not an app bug. |
 | 11 | 8.1 / 8.4 return **500** if `amount` is missing or invalid | Validate before calling |
 | 12 | Provider transfer-limit errors in 7.1 return **404** instead of 400 | Show `message`. Will become 400. |
-| 13 | Registering with a phone already in use returns **500** | Will become a clear 409 |
+| 13 | ~~Registering with a phone already in use returns 500~~ **Fixed:** it now returns the same `400` as a taken email | Show `message` |
 | 14 | 8.7 returns **500** if the account details are invalid at submit | Always call 8.6 first |
 | 15 | Maintenance mode isn't enforced by the API | The app must check 13.1 |
 | 16 | Error **wording** may change | Never write logic on message text |
@@ -3045,7 +3110,8 @@ Locally the API uses a **fake ("mock") version of Quidax**, the crypto provider.
 | 3.1 | GET | `/v1/me` | ✅ | — | — | 200 |
 | 3.2 | GET | `/v1/wallets` | ✅ | — | — | 200 |
 | 4.1 | GET | `/v1/kyc` | ✅ | — | — | 200 |
-| 4.2 | POST | `/v1/kyc/tier1` | ✅ | — | — | 201 |
+| 4.2 | POST | `/v1/kyc/basic` | ✅ | — | — | 201 |
+| 4.4 | GET | `/v1/kyc/states` | — | — | — | 200 |
 | 4.3 | POST | `/v1/kyc/documents` ⚠️ | ✅ | — | — | 201 |
 | 5.1 | GET | `/v1/assets` | — | — | — | 200 |
 | 5.2 | GET | `/v1/assets/{code}/networks?purpose=` | — | — | — | 200 |

@@ -165,10 +165,10 @@ ${SIGN_OFF}`),
   {
     key: 'kyc.submitted',
     label: 'Verification submitted',
-    hint: 'Sent when a user submits their BVN or NIN for review.',
+    hint: 'Sent when Basic verification needs a person to review it.',
     group: 'Verification',
     variables: [],
-    sentBy: 'KycService.submitTier1',
+    sentBy: 'BasicVerificationService.submit',
     subject: 'We have your verification details',
     body: html(`Hi {{firstName}},
 
