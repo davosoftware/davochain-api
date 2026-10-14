@@ -21,9 +21,9 @@ import { RateLimitGuard } from '../rate-limit/rate-limit.guard';
     PasswordService,
     // Global. Auth is on by default; a route opts out with @Public().
     { provide: APP_GUARD, useClass: JwtAuthGuard },
-    { provide: APP_GUARD, useClass: KycGuard },
-    // Money-moving routes answer 503 while an admin has maintenance mode on.
+    // Money-moving routes answer 503 while an admin has maintenance mode on, whoever asks.
     { provide: APP_GUARD, useClass: MaintenanceGuard },
+    { provide: APP_GUARD, useClass: KycGuard },
     // Last, so the signed-in user is known when a per-user limit is counted.
     { provide: APP_GUARD, useClass: RateLimitGuard },
   ],
