@@ -18,6 +18,19 @@ import { FeeBandsService } from '../rates/fee-bands.service';
 import { KycLimitsService } from '../kyc/kyc-limits.service';
 import { ZERO, dec, str, type Decimal } from '../common/money';
 
+/** A plain positive decimal, as the app types it: "5000", "0.0125". No signs, exponents or separators. */
+const PLAIN_AMOUNT = /^\d+(\.\d+)?$/;
+
+/**
+ * The amount from a quote's query string. Query strings skip the DTO pipe, so a
+ * missing or malformed one reached `new Decimal()` and surfaced as a 500.
+ */
+export function positiveAmount(raw: unknown): Decimal {
+  const text = typeof raw === 'string' ? raw.trim() : '';
+  if (!PLAIN_AMOUNT.test(text) || dec(text).lte(0)) throw new BadRequestException('Enter an amount greater than zero');
+  return dec(text);
+}
+
 /**
  * Crypto leaves from the user's own Quidax sub-account; NGN bank payouts leave
  * the merchant's main Quidax account against the user's Davochain ledger claim.
@@ -116,13 +129,15 @@ export class WithdrawalsService {
 
   /** Quote the fee before the user commits. Three lines, never one blended number. */
   async quoteFee(assetCode: string, amount: string, networkId: string) {
+    if (typeof assetCode !== 'string' || !assetCode.trim()) throw new BadRequestException('Choose a coin');
+    if (typeof networkId !== 'string' || !networkId.trim()) throw new BadRequestException('Choose a network');
+    const total = positiveAmount(amount);
     const code = assetCode.toLowerCase();
     const [asset, cfg] = await Promise.all([
       this.assets.require(code),
       this.rates.rateConfig(code),
     ]);
 
-    const total = dec(amount);
     const { platformFee, platformFeeUsd, networkFee } = await this.fees(
       code,
       total,
@@ -158,8 +173,7 @@ export class WithdrawalsService {
    * can be shown before payouts are on; `payoutAvailable` says whether they are.
    */
   async quoteNgnWithdrawalFee(userId: string, ngnAmount: string) {
-    const amount = dec(ngnAmount);
-    if (amount.lte(0)) throw new BadRequestException('Enter an amount greater than zero');
+    const amount = positiveAmount(ngnAmount);
 
     // The tier caps naira, so the quote says whether this one is allowed before
     // anybody types their bank details.
