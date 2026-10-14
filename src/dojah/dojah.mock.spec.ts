@@ -28,3 +28,13 @@ describe('DojahMockClient scenarios (principle 5)', () => {
     expect(c.calls.aml).toBe(2);
   });
 });
+
+describe('mock identities whose AML screen reaches the sanctions paths (AML screens the RECORD names)', () => {
+  it('66666666666 is "Test Sanctioned" (confirmed sanctions); 77777777777 is "Test Maybesanctioned" (possible)', async () => {
+    const c = m();
+    const a = await c.lookup('BVN', '66666666666');
+    const b = await c.lookup('BVN', '77777777777');
+    expect(a).toMatchObject({ found: true, identity: { firstName: 'Test', lastName: 'Sanctioned', usable: true } });
+    expect(b).toMatchObject({ found: true, identity: { lastName: 'Maybesanctioned', usable: true } });
+  });
+});

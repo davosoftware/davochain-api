@@ -7,13 +7,16 @@ const rec = (first: string, middle: string, last: string, dob: string | null, ge
   entity: { first_name: first, middle_name: middle, last_name: last, date_of_birth: dob, gender, customer: 'mock-customer' },
 });
 
-/** Lookup scenarios by number. The two clean ones mirror the sandbox's own data (spec §2). */
+/** Lookup scenarios by number. The first two use the sandbox's test numbers and dates of birth; the sandbox's own record is named "John Doe Adamu" (live run, 2026-10-14). */
 const LOOKUPS: Record<string, unknown> = {
   '22222222222': rec('John', 'Doe', 'Ajayi', '2000-05-01'),
   '70123456789': rec('John', 'Doe', 'Ajayi', '1990-01-01', 'M'),
   '33333333333': rec('Someone', '', 'Clean', '1995-03-03'),
   '44444444444': rec('Test', '', 'Clean', '1980-12-12'),
   '55555555555': rec('Test', '', 'Clean', null),
+  // AML screens the record's names, so these reach the sanctions paths end to end.
+  '66666666666': rec('Test', '', 'Sanctioned', '1985-06-06'),
+  '77777777777': rec('Test', '', 'Maybesanctioned', '1985-06-06'),
 };
 const LOOKUP_FAILURES: Record<string, () => DojahError> = {
   '40100000001': () => new DojahError('AUTH', 'mock 401', 401),
