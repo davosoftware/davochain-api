@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { QuoteSide, RateQuote } from '@prisma/client';
+import { formatQuoteRate } from './quote-rate';
 import { PrismaService } from '../prisma/prisma.service';
 import { RatesService } from '../rates/rates.service';
 import { FeeKind } from '@prisma/client';
@@ -349,7 +350,7 @@ export class QuotesService {
       toAsset: input.toAsset,
       fromAmount: str(input.fromAmount, input.fromAsset === 'ngn' ? 2 : 8),
       toAmount: str(input.toAmount, input.toAsset === 'ngn' ? 2 : 8),
-      rate: str(input.rate, 4),
+      rate: formatQuoteRate(input.side, input.rate),
       fee: str(input.fee, 8),
       feeAsset: input.feeAsset,
       minimum: input.minimumUsd.toFixed(2),
