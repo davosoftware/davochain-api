@@ -592,8 +592,10 @@ export class WithdrawalsService {
       },
     });
 
+    // The call out, alone in its try: only ITS failure can be a refund.
+    let result: Awaited<ReturnType<QuidaxClient['createCryptoWithdrawal']>>;
     try {
-      const result = await this.quidax.createCryptoWithdrawal(subId, {
+      result = await this.quidax.createCryptoWithdrawal(subId, {
         currency: code,
         amount: amount.toFixed(),
         fund_uid: input.address,
@@ -601,32 +603,6 @@ export class WithdrawalsService {
         network: input.network,
         reference,
       });
-
-      await this.prisma.transaction.update({
-        where: { id: tx.id },
-        data: {
-          status: TxStatus.PROCESSING,
-          quidaxRef: result.id,
-          quidaxRawStatus: result.status,
-          networkFee: dec(result.fee).toFixed(),
-        },
-      });
-      await this.prisma.settlementLeg.update({
-        where: { reference },
-        data: {
-          state: result.status.toLowerCase() === 'done' ? 'CONFIRMED' : 'SENT',
-          quidaxRef: result.id,
-          attempts: { increment: 1 },
-        },
-      });
-
-      return {
-        transactionId: tx.id,
-        status: TxStatus.PROCESSING,
-        asset: code,
-        amount: str(amount, asset.displayScale),
-        address: input.address,
-      };
     } catch (err) {
       // Unknown outcome: the send may have gone out. Funds stay locked.
       if (this.settlement.isUnknown(err)) {
@@ -660,6 +636,57 @@ export class WithdrawalsService {
         `${this.settlement.describe(err)}. Nothing was deducted from your balance.`,
       );
     }
+
+    try {
+      await this.prisma.transaction.update({
+        where: { id: tx.id },
+        data: {
+          status: TxStatus.PROCESSING,
+          quidaxRef: result.id,
+          quidaxRawStatus: result.status,
+          networkFee: dec(result.fee).toFixed(),
+        },
+      });
+      await this.prisma.settlementLeg.update({
+        where: { reference },
+        data: {
+          state: result.status.toLowerCase() === 'done' ? 'CONFIRMED' : 'SENT',
+          quidaxRef: result.id,
+          attempts: { increment: 1 },
+        },
+      });
+    } catch (err) {
+      // C3: Quidax accepted the send, so the coins are on their way. A failure
+      // in our own database must never refund it: hold the funds for the
+      // reconciler instead.
+      await this.prisma.settlementLeg
+        .update({
+          where: { reference },
+          data: {
+            state: 'UNKNOWN',
+            quidaxRef: result.id,
+            attempts: { increment: 1 },
+            lastError: (err as Error).message.slice(0, 1000),
+          },
+        })
+        .catch(() => undefined);
+      await this.settlement.markReconciling(tx.id, `Provider accepted withdrawal but local update failed: ${(err as Error).message}`);
+      return {
+        transactionId: tx.id,
+        status: TxStatus.RECONCILING,
+        asset: code,
+        amount: str(amount, asset.displayScale),
+        address: input.address,
+      };
+    }
+
+    return {
+      transactionId: tx.id,
+      status: TxStatus.PROCESSING,
+      asset: code,
+      amount: str(amount, asset.displayScale),
+      address: input.address,
+    };
   }
 
   async history(userId: string, limit = 50) {
