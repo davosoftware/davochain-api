@@ -2119,7 +2119,9 @@ Returns the brand's logo image (JPEG/PNG/WebP bytes). Usually you just load `ima
 
 ### 9.3 Sell a gift card
 
-**Endpoint:** `POST /v1/giftcards/trades` · **Auth:** **Bearer** · **KYC:** none · **Success:** `201`
+**Endpoint:** `POST /v1/giftcards/trades` · **Auth:** **Bearer** · **KYC:** **TIER_1 (Basic)** · **Success:** `201`
+
+> **Since 15 Oct 2026:** selling a gift card needs Basic verification. An unverified user gets `403` with `requiredTier: "TIER_1"`: open the verification screen (4.2).
 
 **What it does**
 Submits a card for review, with photos and/or the card code. The rate is locked at this moment. No money moves until an admin approves it (fully or partly) or rejects it. The card code is encrypted and **never shown again**, not even to the user.
@@ -3223,7 +3225,7 @@ Locally the API uses a **fake ("mock") version of Quidax**, the crypto provider.
 | 8.7 | POST | `/v1/withdrawals/ngn` 🔒 | ✅ | TIER_1 | **required** | 201 |
 | 9.1 | GET | `/v1/giftcards/catalogue` | — | — | — | 200 |
 | 9.2 | GET | `/v1/giftcards/brands/{id}/image` | — | — | — | 200 |
-| 9.3 | POST | `/v1/giftcards/trades` | ✅ | — | — | 201 |
+| 9.3 | POST | `/v1/giftcards/trades` | ✅ | TIER_1 | — | 201 |
 | 9.4 | GET | `/v1/giftcards/trades` | ✅ | — | — | 200 |
 | 9.5 | GET | `/v1/giftcards/trades/{id}` | ✅ | — | — | 200 |
 | 9.6 | GET | `/v1/giftcards/trades/{id}/images/{imageId}` | ✅ | — | — | 200 |
