@@ -107,8 +107,35 @@ describe.each(services)('C5: $name', ({ make }) => {
 
   it('refuses an expired code', async () => {
     const table = fakeTable(freshRow({ expiresAt: new Date(Date.now() - 1000) }));
-    await expect(make(table).consume('u1', CODE)).rejects.toMatchObject({
-      response: expect.objectContaining({ message: 'That code has expired. Ask for a new one.' }),
-    });
+    await expect(make(table).consume('u1', CODE)).rejects.toMatchObject({ status: 400 });
+  });
+});
+
+/**
+ * M3 (PROJECT_REVIEW): the admin reset must not reveal which emails are admins.
+ * An unknown email already got "That code is not right."; a real admin got
+ * "Ask for a code first", "That code has expired", or "N attempt(s) left",
+ * each of which confirmed the account. Every failure now reads the same.
+ */
+describe('M3: the admin code check says the same thing for every failure', () => {
+  const SAME = 'That code is not right.';
+  const admin = (table: ReturnType<typeof fakeTable>) => new AdminOtpService({ adminOtp: table } as never, {} as never, {} as never);
+  const message = (p: Promise<unknown>) => p.then(() => 'passed', (e: { message: string }) => e.message);
+
+  it('no code was requested', async () => {
+    const table = fakeTable(freshRow({ consumedAt: new Date() }));
+    expect(await message(admin(table).consume('a1', CODE))).toBe(SAME);
+  });
+
+  it('a wrong code (no "attempts left" count)', async () => {
+    expect(await message(admin(fakeTable(freshRow())).consume('a1', '000000'))).toBe(SAME);
+  });
+
+  it('an expired code', async () => {
+    expect(await message(admin(fakeTable(freshRow({ expiresAt: new Date(Date.now() - 1000) }))).consume('a1', CODE))).toBe(SAME);
+  });
+
+  it('a code with every attempt used', async () => {
+    expect(await message(admin(fakeTable(freshRow({ attempts: 5 }))).consume('a1', CODE))).toBe(SAME);
   });
 });

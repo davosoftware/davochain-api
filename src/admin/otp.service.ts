@@ -10,6 +10,11 @@ const TTL_MS = 10 * 60_000;
 
 /** Six digits is a million combinations; five guesses makes that a wall. */
 const MAX_ATTEMPTS = 5;
+/**
+ * M3: the only answer to a failed admin code, whatever the reason. Unknown
+ * emails already got it; anything more specific confirms an admin account.
+ */
+const NOT_RIGHT = 'That code is not right.';
 
 /** One code at a time, and not a fresh one every second. */
 const RESEND_COOLDOWN_MS = 60_000;
@@ -167,14 +172,14 @@ export class AdminOtpService {
       where: { adminUserId: adminId, purpose: AdminOtpPurpose.PASSWORD_RESET, consumedAt: null },
       orderBy: { createdAt: 'desc' },
     });
-    if (!otp) throw new BadRequestException('Ask for a code first');
+    if (!otp) throw new BadRequestException(NOT_RIGHT);
 
     if (otp.expiresAt.getTime() <= Date.now()) {
       await this.prisma.adminOtp.update({
         where: { id: otp.id },
         data: { consumedAt: new Date() },
       });
-      throw new BadRequestException('That code has expired. Ask for a new one.');
+      throw new BadRequestException(NOT_RIGHT);
     }
 
     // Take one of the tries BEFORE looking at the code, in a single UPDATE.
@@ -186,7 +191,7 @@ export class AdminOtpService {
     });
     if (slot.count === 0) {
       await this.prisma.adminOtp.updateMany({ where: { id: otp.id, consumedAt: null }, data: { consumedAt: new Date() } });
-      throw new BadRequestException('Too many wrong codes. Ask for a new one.');
+      throw new BadRequestException(NOT_RIGHT);
     }
 
     const given = Buffer.from(this.hash(code.trim()));
@@ -199,9 +204,7 @@ export class AdminOtpService {
       if (left <= 0) {
         await this.prisma.adminOtp.updateMany({ where: { id: otp.id, consumedAt: null }, data: { consumedAt: new Date() } });
       }
-      throw new BadRequestException(
-        left > 0 ? `That code is not right. ${left} attempt(s) left.` : 'Too many wrong codes. Ask for a new one.',
-      );
+      throw new BadRequestException(NOT_RIGHT);
     }
 
     // Single use, even when two right answers arrive together.
@@ -209,6 +212,6 @@ export class AdminOtpService {
       where: { id: otp.id, consumedAt: null },
       data: { consumedAt: new Date() },
     });
-    if (used.count !== 1) throw new BadRequestException('That code is not right.');
+    if (used.count !== 1) throw new BadRequestException(NOT_RIGHT);
   }
 }
