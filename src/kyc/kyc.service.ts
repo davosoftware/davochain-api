@@ -47,11 +47,13 @@ export class KycService {
       this.limits.check(userId, tier, 'withdraw', ZERO),
     ]);
 
-    const spend = (c: { singleLimit: Decimal; dailyLimit: Decimal; usedToday: Decimal; remainingToday: Decimal }) => ({
-      singleNgn: c.singleLimit.toFixed(2),
-      dailyNgn: c.dailyLimit.toFixed(2),
+    // null = no limit set. The figures are in the rule's currency (naira unless an admin chose dollars).
+    const spend = (c: { singleLimit: Decimal | null; dailyLimit: Decimal | null; usedToday: Decimal; remainingToday: Decimal | null; currency: 'NGN' | 'USD' }) => ({
+      singleNgn: c.singleLimit ? c.singleLimit.toFixed(2) : null,
+      dailyNgn: c.dailyLimit ? c.dailyLimit.toFixed(2) : null,
       usedTodayNgn: c.usedToday.toFixed(2),
-      remainingTodayNgn: (c.remainingToday.lt(0) ? ZERO : c.remainingToday).toFixed(2),
+      remainingTodayNgn: c.remainingToday ? (c.remainingToday.lt(0) ? ZERO : c.remainingToday).toFixed(2) : null,
+      currency: c.currency,
     });
 
     return {

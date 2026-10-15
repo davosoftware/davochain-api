@@ -257,6 +257,7 @@ export class PayInService {
     const balanced = depositBalances(f.amount, f.amountSettled, f.appFee);
     // Network calls stay outside the database transaction, which may be re-run.
     const usdValue = balanced && f.amount ? await this.usdValue(f.amount) : null;
+    const fx = await this.kycLimits.fx();
     const nameMismatch = nameMatches(user.firstName, user.lastName, f.payerName) === false;
 
     let result: Credit;
@@ -274,7 +275,7 @@ export class PayInService {
           }
 
           // Before this deposit exists: the check sums today's deposits and must not count it twice.
-          const limit = await this.kycLimits.checkInTransaction(t, userId, user.kycTier, 'deposit', f.amount);
+          const limit = await this.kycLimits.checkInTransaction(t, userId, user.kycTier, 'deposit', f.amount, fx);
           const held = !limit.allowed;
           const created = await t.transaction.create({
             data: {

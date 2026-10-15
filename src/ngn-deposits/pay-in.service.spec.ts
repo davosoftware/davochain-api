@@ -47,7 +47,7 @@ async function setup(o: Options = {}) {
       posts.push({ legs, transactionId });
     }),
   };
-  const kycLimits = { checkInTransaction: jest.fn(async () => o.limit ?? { allowed: true }) };
+  const kycLimits = { fx: jest.fn(async () => ({ ngnPerUsd: '1500' })), checkInTransaction: jest.fn(async () => o.limit ?? { allowed: true }) };
   const notifications = { notify: jest.fn(async () => undefined) };
   const rates = { price: jest.fn(async () => ({ ngnPerUsd: dec('1500') })) };
   const queue = { add: jest.fn(async () => undefined) };

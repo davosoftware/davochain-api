@@ -223,10 +223,12 @@ export class WithdrawalsService {
       limit: {
         allowed: limit.allowed,
         reason: limit.reason ?? null,
-        singleLimit: str(limit.singleLimit, 2),
-        dailyLimit: str(limit.dailyLimit, 2),
+        /** null = no limit. */
+        singleLimit: limit.singleLimit ? str(limit.singleLimit, 2) : null,
+        dailyLimit: limit.dailyLimit ? str(limit.dailyLimit, 2) : null,
         usedToday: str(limit.usedToday, 2),
-        remainingToday: str(limit.remainingToday.lt(0) ? ZERO : limit.remainingToday, 2),
+        remainingToday: limit.remainingToday ? str(limit.remainingToday.lt(0) ? ZERO : limit.remainingToday, 2) : null,
+        currency: limit.currency,
       },
       /** Mirrors the switch (System → Withdrawals). The app disables payout while false. */
       payoutAvailable: await this.flags.ngnWithdrawalsEnabled(),
@@ -303,6 +305,7 @@ export class WithdrawalsService {
     const platformFee = dec(quote.feeNgn);
     const totalDebit = amount.plus(platformFee);
     const reference = this.quidax.newReference('ngnwd');
+    const fx = await this.kycLimits.fx();
     const tx = await this.prisma.serializable(async (t) => {
       // An admin may have switched payouts off while Quidax was answering.
       await this.flags.assertNgnWithdrawalsAllowedIn(t);
@@ -317,6 +320,7 @@ export class WithdrawalsService {
         user?.kycTier ?? 'TIER_0',
         'withdraw',
         amount,
+        fx,
       );
       if (!currentLimit.allowed) {
         throw new BadRequestException(currentLimit.reason ?? 'Withdrawal limit exceeded');

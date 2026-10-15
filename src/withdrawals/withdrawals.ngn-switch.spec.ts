@@ -49,6 +49,7 @@ function build(opts: { override?: boolean; serverSetting?: boolean } = {}) {
   };
   const kycLimits = {
     check: jest.fn().mockResolvedValue(allowed),
+    fx: jest.fn().mockResolvedValue({ ngnPerUsd: '1500' }),
     checkInTransaction: jest.fn().mockResolvedValue(allowed),
   };
   const feeBands = { resolve: jest.fn().mockResolvedValue(null) };

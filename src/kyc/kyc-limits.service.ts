@@ -1,200 +1,86 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { KycTier, Prisma, TxStatus, TxType } from '@prisma/client';
+import { KycTier, PolicyAction, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { Decimal, ZERO, dec, str } from '../common/money';
-
-/**
- * Lagos is UTC+1 all year — no daylight saving to get wrong.
- *
- * "Daily" has to mean midnight to midnight where the customer lives. A rolling
- * 24 hours would be easier and would surprise somebody who moved ₦400,000 at
- * 11pm and cannot move ₦200,000 at 9am the next morning.
- */
-const LAGOS_OFFSET_MS = 60 * 60 * 1000;
+import { Decimal, dec } from '../common/money';
+import { Fx, LevelPolicyService, Verdict } from '../levels/level-policy.service';
+import { levelOf } from '../levels/levels';
 
 export interface LimitCheck {
   allowed: boolean;
   reason?: string;
-  singleLimit: Decimal;
-  dailyLimit: Decimal;
+  /** null = no limit set by an admin. */
+  singleLimit: Decimal | null;
+  dailyLimit: Decimal | null;
   usedToday: Decimal;
-  remainingToday: Decimal;
+  remainingToday: Decimal | null;
+  currency: 'NGN' | 'USD';
 }
 
 /**
- * How much real money a verified identity may move in a day.
- *
- * Naira only. A tier caps the leg that touches a bank, because that is what
- * identity verification is for — a coin moving between two wallets we control
- * moves no real money and is governed by the trade limits instead.
+ * How much naira a person may move in a day: the NGN_DEPOSIT and NGN_WITHDRAW
+ * rows of the admin's level rules (level policy spec §5.3). Kept as its own
+ * service so the deposit, withdrawal and review code keep asking one question.
  */
 @Injectable()
 export class KycLimitsService {
   private readonly log = new Logger(KycLimitsService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly policy: LevelPolicyService,
+  ) {}
 
-  /** ₦20,000, not ₦20000.00. A limit is read by a person, not parsed. */
-  private naira(value: Decimal): string {
-    return '₦' + Number(value.toFixed(2)).toLocaleString('en-NG', {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 2,
-    });
+  /** The ₦/$ rate for checkInTransaction, fetched before the write that locks money. */
+  fx(): Promise<Fx> {
+    return this.policy.fx();
   }
 
-  /** Midnight in Lagos, expressed as the UTC instant it happened. */
-  private startOfDay(now = new Date()): Date {
-    const lagos = new Date(now.getTime() + LAGOS_OFFSET_MS);
-    const midnight = Date.UTC(lagos.getUTCFullYear(), lagos.getUTCMonth(), lagos.getUTCDate());
-    return new Date(midnight - LAGOS_OFFSET_MS);
-  }
-
-  async limitsFor(tier: KycTier) {
-    const row = await this.prisma.kycTierLimit.findUnique({ where: { tier } });
-    return {
-      depositSingle: dec(row?.ngnDepositSingle ?? 0),
-      depositDaily: dec(row?.ngnDepositDaily ?? 0),
-      withdrawSingle: dec(row?.ngnWithdrawSingle ?? 0),
-      withdrawDaily: dec(row?.ngnWithdrawDaily ?? 0),
-    };
-  }
-
-  /**
-   * Naira already moved today, in one direction.
-   *
-   * Counts COMPLETED and everything still in flight. A pending withdrawal has
-   * not landed but the money is committed, and letting a second one through
-   * because the first has not settled is how a daily cap is walked past.
-   */
-  private async usedToday(
-    userId: string,
-    direction: 'deposit' | 'withdraw',
-    now = new Date(),
-    /**
-     * One transaction to leave out of the total.
-     *
-     * For re-asking "would this held deposit be allowed if I released it now?".
-     * A held deposit already counts towards today's usage, so without this the
-     * amount would be counted twice — once in the total and once as the amount
-     * being tested — and a deposit well inside the cap would report as over it.
-     */
-    excludeTransactionId?: string,
-  ): Promise<Decimal> {
-    const since = this.startOfDay(now);
-    const where = {
-      userId,
-      createdAt: { gte: since },
-      status: {
-        in: [TxStatus.COMPLETED, TxStatus.PENDING, TxStatus.PROCESSING, TxStatus.ON_HOLD],
-      },
-      ...(direction === 'deposit'
-        ? { type: TxType.DEPOSIT, toAsset: 'ngn' }
-        : { type: TxType.WITHDRAWAL, fromAsset: 'ngn' }),
-      ...(excludeTransactionId ? { NOT: { id: excludeTransactionId } } : {}),
-    };
-
-    // Summed separately rather than through a computed key, because the two
-    // branches return different shapes and narrowing a union of _sum results
-    // costs more than writing the query twice.
-    if (direction === 'deposit') {
-      const r = await this.prisma.transaction.aggregate({ where, _sum: { toAmount: true } });
-      return r._sum.toAmount ? dec(r._sum.toAmount) : ZERO;
-    }
-    const r = await this.prisma.transaction.aggregate({ where, _sum: { toAmount: true } });
-    return r._sum.toAmount ? dec(r._sum.toAmount) : ZERO;
-  }
-
-  /**
-   * May this user move this much naira right now?
-   *
-   * A zero limit means the tier cannot do it at all, which reads differently
-   * from being over a cap and deserves its own sentence.
-   */
+  /** Fetches the ₦/$ rate itself, so never call it inside a write. */
   async check(
     userId: string,
     tier: KycTier,
     direction: 'deposit' | 'withdraw',
     amount: Decimal,
     now = new Date(),
-    /** Left out of today's total — see usedToday. */
+    /**
+     * Left out of today's total: re-asking "would this held deposit fit if
+     * released now?" must not count its own amount twice.
+     */
     excludeTransactionId?: string,
   ): Promise<LimitCheck> {
-    const limits = await this.limitsFor(tier);
-    const single = direction === 'deposit' ? limits.depositSingle : limits.withdrawSingle;
-    const daily = direction === 'deposit' ? limits.depositDaily : limits.withdrawDaily;
-    const used = await this.usedToday(userId, direction, now, excludeTransactionId);
-    return this.result(direction, amount, single, daily, used);
+    const fx = await this.policy.fx();
+    return this.toCheck(
+      await this.policy.evaluate(this.prisma, userId, levelOf(tier), this.action(direction), amount, 'NGN', fx, { now, excludeTransactionId }),
+    );
   }
 
-  /** Recheck a spend limit in the same serializable transaction as its lock. */
+  /** Recheck inside the serializable write that locks the money; fx was fetched before it. */
   async checkInTransaction(
     tx: Prisma.TransactionClient,
     userId: string,
     tier: KycTier,
     direction: 'deposit' | 'withdraw',
     amount: Decimal,
+    fx: Fx,
     now = new Date(),
   ): Promise<LimitCheck> {
-    const row = await tx.kycTierLimit.findUnique({ where: { tier } });
-    const single = dec(direction === 'deposit' ? row?.ngnDepositSingle ?? 0 : row?.ngnWithdrawSingle ?? 0);
-    const daily = dec(direction === 'deposit' ? row?.ngnDepositDaily ?? 0 : row?.ngnWithdrawDaily ?? 0);
-    const where = {
-      userId,
-      createdAt: { gte: this.startOfDay(now) },
-      status: {
-        in: [TxStatus.COMPLETED, TxStatus.PENDING, TxStatus.PROCESSING, TxStatus.ON_HOLD],
-      },
-      ...(direction === 'deposit'
-        ? { type: TxType.DEPOSIT, toAsset: 'ngn' }
-        : { type: TxType.WITHDRAWAL, fromAsset: 'ngn' }),
-    };
-    const usage = direction === 'deposit'
-      ? await tx.transaction.aggregate({ where, _sum: { toAmount: true } })
-      : await tx.transaction.aggregate({ where, _sum: { toAmount: true } });
-    const used = usage._sum.toAmount ? dec(usage._sum.toAmount) : ZERO;
-    return this.result(direction, amount, single, daily, used);
+    return this.toCheck(await this.policy.evaluate(tx, userId, levelOf(tier), this.action(direction), amount, 'NGN', fx, { now }));
   }
 
-  private result(
-    direction: 'deposit' | 'withdraw',
-    amount: Decimal,
-    single: Decimal,
-    daily: Decimal,
-    used: Decimal,
-  ): LimitCheck {
-    const remaining = daily.minus(used);
+  private action(direction: 'deposit' | 'withdraw'): PolicyAction {
+    return direction === 'deposit' ? PolicyAction.NGN_DEPOSIT : PolicyAction.NGN_WITHDRAW;
+  }
 
-    const base = { singleLimit: single, dailyLimit: daily, usedToday: used, remainingToday: remaining };
-    const verb = direction === 'deposit' ? 'deposit' : 'withdraw';
-
-    if (single.lte(0) && daily.lte(0)) {
-      return {
-        ...base,
-        allowed: false,
-        reason: `Your account cannot ${verb} naira yet. Complete the next verification tier to unlock it.`,
-      };
-    }
-
-    if (amount.gt(single)) {
-      return {
-        ...base,
-        allowed: false,
-        reason: `The most you can ${verb} in one go is ${this.naira(single)}. Verify a higher tier to raise it.`,
-      };
-    }
-
-    if (used.plus(amount).gt(daily)) {
-      return {
-        ...base,
-        allowed: false,
-        reason:
-          remaining.lte(0)
-            ? `You have used your ${this.naira(daily)} daily ${verb} limit. It resets at midnight.`
-            : `That would take you past your ${this.naira(daily)} daily ${verb} limit. You have ${this.naira(remaining)} left today.`,
-      };
-    }
-
-    return { ...base, allowed: true };
+  private toCheck(v: Verdict): LimitCheck {
+    return {
+      allowed: v.allowed,
+      reason: v.reason,
+      singleLimit: v.maxPerTx,
+      dailyLimit: v.maxPerDay,
+      usedToday: v.usedToday,
+      remainingToday: v.remainingToday,
+      currency: v.currency,
+    };
   }
 
   /** The same check, as a guard. Used where the answer is simply yes or no. */
