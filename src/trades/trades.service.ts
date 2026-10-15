@@ -12,6 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { QuidaxClient } from '../quidax/quidax.client';
 import { LedgerService } from '../ledger/ledger.service';
 import { SettlementService } from './settlement.service';
+import { closeOpen } from './close-open';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ReferralsService } from '../referrals/referrals.service';
 import { SystemFlagsService } from '../common/system-flags.service';
@@ -380,7 +381,9 @@ export class TradesService {
     amountOut: ReturnType<typeof dec>,
     counterparty: LedgerAccount,
   ): Promise<TradeResult> {
-    await this.prisma.serializable(async (t) => {
+    // H6: close first, conditionally; money moves only if this call closed it.
+    const won = await this.prisma.serializable(async (t) => {
+      if (!(await closeOpen(t, transactionId, { status: TxStatus.COMPLETED, completedAt: new Date() }))) return false;
       await this.ledger.settleLocked(t, {
         userId,
         assetCode: quote.fromAsset,
@@ -397,11 +400,23 @@ export class TradesService {
         transactionId,
         memo: `trade out`,
       });
-      await t.transaction.update({
-        where: { id: transactionId },
-        data: { status: TxStatus.COMPLETED, completedAt: new Date() },
-      });
+      return true;
     });
+
+    const result = {
+      transactionId,
+      status: TxStatus.COMPLETED as TxStatus,
+      fromAsset: quote.fromAsset,
+      fromAmount: str(amountIn, quote.fromAsset === 'ngn' ? 2 : 8),
+      toAsset: quote.toAsset,
+      toAmount: str(amountOut, quote.toAsset === 'ngn' ? 2 : 8),
+      rate: str(dec(quote.displayedRate as string), 4),
+    };
+    if (!won) {
+      // Something else already closed it; report what it is, move nothing, tell nobody.
+      const current = await this.prisma.transaction.findUniqueOrThrow({ where: { id: transactionId }, select: { status: true } });
+      return { ...result, status: current.status };
+    }
 
     // A sale ends in naira; a purchase starts there. The two get different
     // emails because the figures read the opposite way round.
@@ -432,15 +447,7 @@ export class TradesService {
     // their referral bonus. Never throws — see ReferralsService.evaluate.
     await this.referrals.evaluate(userId);
 
-    return {
-      transactionId,
-      status: TxStatus.COMPLETED,
-      fromAsset: quote.fromAsset,
-      fromAmount: str(amountIn, quote.fromAsset === 'ngn' ? 2 : 8),
-      toAsset: quote.toAsset,
-      toAmount: str(amountOut, quote.toAsset === 'ngn' ? 2 : 8),
-      rate: str(dec(quote.displayedRate as string), 4),
-    };
+    return result;
   }
 
   /**

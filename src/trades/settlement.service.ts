@@ -9,6 +9,7 @@ import { ReferralsService } from '../referrals/referrals.service';
 import { ProvisioningService } from '../users/provisioning.service';
 import { Decimal, dec, str } from '../common/money';
 import type { QuidaxSwapTransaction, QuidaxWithdrawal } from '../quidax/quidax.types';
+import { closeOpen, OPEN_STATUSES } from './close-open';
 
 export type SettlementSource = 'INVENTORY' | 'FALLBACK_SWAP';
 
@@ -260,7 +261,16 @@ export class SettlementService {
         });
       }
 
-      await this.prisma.serializable(async (t) => {
+      // H6: close first, conditionally; only the caller that closes it settles.
+      const won = await this.prisma.serializable(async (t) => {
+        const closed = await closeOpen(t, tx.id, {
+          status: TxStatus.COMPLETED,
+          completedAt: new Date(),
+          quidaxRawStatus: data.status,
+          quidaxRef: data.id,
+          networkFee: providerFee.toFixed(),
+        });
+        if (!closed) return false;
         await this.ledger.settleLockedWithEntries(t, {
           userId: tx.userId,
           assetCode: tx.fromAsset!,
@@ -274,17 +284,9 @@ export class SettlementService {
             data: { state: LegState.CONFIRMED, quidaxRef: data.id },
           });
         }
-        await t.transaction.update({
-          where: { id: tx.id },
-          data: {
-            status: TxStatus.COMPLETED,
-            completedAt: new Date(),
-            quidaxRawStatus: data.status,
-            quidaxRef: data.id,
-            networkFee: providerFee.toFixed(),
-          },
-        });
+        return true;
       });
+      if (!won) return;
 
       const amountText = str(payoutAmount, isNgn ? 2 : 8);
       await this.notifications.notify({
@@ -318,7 +320,13 @@ export class SettlementService {
     } else {
       // Rejected — release the lock. The money never left, so this is a clean
       // unlock rather than a compensating credit.
-      await this.prisma.serializable(async (t) => {
+      const won = await this.prisma.serializable(async (t) => {
+        const closed = await closeOpen(t, tx.id, {
+          status: TxStatus.FAILED,
+          failureReason: data.reason ?? 'Rejected by provider',
+          quidaxRawStatus: data.status,
+        });
+        if (!closed) return false;
         await this.ledger.unlock(t, tx.userId, tx.fromAsset!, lockedAmount);
         if (leg) {
           await t.settlementLeg.update({
@@ -326,15 +334,9 @@ export class SettlementService {
             data: { state: LegState.FAILED, quidaxRef: data.id, lastError: data.reason ?? null },
           });
         }
-        await t.transaction.update({
-          where: { id: tx.id },
-          data: {
-            status: TxStatus.FAILED,
-            failureReason: data.reason ?? 'Rejected by provider',
-            quidaxRawStatus: data.status,
-          },
-        });
+        return true;
       });
+      if (!won) return;
 
       await this.notifications.notify({
         userId: tx.userId,
@@ -397,7 +399,8 @@ export class SettlementService {
     const tx = await this.prisma.transaction.findUniqueOrThrow({ where: { id: transactionId } });
     if (tx.status === TxStatus.COMPLETED) return;
 
-    await this.prisma.serializable(async (t) => {
+    const won = await this.prisma.serializable(async (t) => {
+      if (!(await closeOpen(t, tx.id, { status: TxStatus.COMPLETED, completedAt: new Date() }))) return false;
       await this.ledger.settleLocked(t, {
         userId: tx.userId,
         assetCode: tx.fromAsset!,
@@ -414,11 +417,9 @@ export class SettlementService {
         transactionId: tx.id,
         memo: 'swap out',
       });
-      await t.transaction.update({
-        where: { id: tx.id },
-        data: { status: TxStatus.COMPLETED, completedAt: new Date() },
-      });
+      return true;
     });
+    if (!won) return;
 
     await this.notifications.notify({
       userId: tx.userId,
@@ -455,15 +456,14 @@ export class SettlementService {
     const tx = await this.prisma.transaction.findUniqueOrThrow({ where: { id: transactionId } });
     if (tx.status === TxStatus.FAILED || tx.status === TxStatus.COMPLETED) return;
 
-    await this.prisma.serializable(async (t) => {
+    const won = await this.prisma.serializable(async (t) => {
+      if (!(await closeOpen(t, tx.id, { status: TxStatus.FAILED, failureReason: reason }))) return false;
       if (tx.fromAsset && tx.fromAmount) {
         await this.ledger.unlock(t, tx.userId, tx.fromAsset, dec(tx.fromAmount));
       }
-      await t.transaction.update({
-        where: { id: tx.id },
-        data: { status: TxStatus.FAILED, failureReason: reason },
-      });
+      return true;
     });
+    if (!won) return;
 
     const isWithdrawal = tx.type === TxType.WITHDRAWAL;
     const isNgnWithdrawal = isWithdrawal && tx.fromAsset === 'ngn';
@@ -505,10 +505,12 @@ export class SettlementService {
 
   /** Park a transaction whose outcome is genuinely unknown. Funds stay locked. */
   async markReconciling(transactionId: string, reason: string): Promise<void> {
-    await this.prisma.transaction.update({
-      where: { id: transactionId },
+    // Only an open transaction: never re-open one a webhook already finished.
+    const { count } = await this.prisma.transaction.updateMany({
+      where: { id: transactionId, status: { in: OPEN_STATUSES } },
       data: { status: TxStatus.RECONCILING, failureReason: reason },
     });
+    if (count === 0) return;
     this.log.error(`RECONCILING ${transactionId}: ${reason} — funds remain locked`);
   }
 
