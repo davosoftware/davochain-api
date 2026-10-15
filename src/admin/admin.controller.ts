@@ -1200,6 +1200,17 @@ export class AdminController {
     return this.admins.sessionsFor(actor.sub, actor.jti);
   }
 
+  /**
+   * M7: sign out. Ends THIS session on the server, so the token stops working
+   * at once; deleting the browser cookie alone left it valid until it idled out.
+   */
+  @Post('me/logout')
+  @HttpCode(204)
+  async logout(@CurrentAdmin() actor: AdminJwtPayload): Promise<void> {
+    await this.sessions.revoke(actor.jti, 'signed out');
+    await this.admin.audit(actor.sub, 'admin.logout', 'AdminUser', actor.sub, null, null);
+  }
+
   /** Sign out everywhere but here, without changing the password. */
   @Post('me/sessions/end-others')
   @HttpCode(200)

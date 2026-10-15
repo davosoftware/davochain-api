@@ -1,10 +1,10 @@
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
-import helmet from 'helmet';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { setupSwagger } from './common/swagger';
+import { securityHeaders } from './common/security-headers';
 import { assertExactJsonSupported } from './common/exact-json';
 import { trustProxySetting } from './rate-limit/trust-proxy';
 
@@ -31,15 +31,14 @@ async function bootstrap(): Promise<void> {
   });
   app.set('trust proxy', trustedProxy);
 
-  // Swagger UI loads inline scripts and styles, which helmet's default CSP
-  // blocks outright — the page renders blank with a console full of CSP errors.
   // An admin avatar arrives as a base64 data URL, and base64 costs a third on
   // top. The default 100 KB would reject a perfectly ordinary picture with
   // Express's own "request entity too large" instead of a message that says
   // what the actual limit is.
   app.useBodyParser('json', { limit: '1mb' });
 
-  app.use(helmet({ contentSecurityPolicy: false }));
+  // M7: CSP everywhere except the Swagger page (see securityHeaders).
+  app.use(securityHeaders());
 
   /*
    * Who may call this API from inside a browser.
