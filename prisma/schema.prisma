@@ -245,12 +245,15 @@ model User {
   suspendedReason String?
   suspendedBy     String?
 
-  emailVerifiedAt DateTime?
-  lastLoginAt     DateTime?
-  failedLogins    Int       @default(0)
-  lockedUntil     DateTime? // brute-force backoff
+  emailVerifiedAt      DateTime?
+  lastLoginAt          DateTime?
+  failedLogins         Int                  @default(0)
+  lockedUntil          DateTime? // brute-force backoff
   /// When the password or email last changed. Withdrawal cool-off (level policy).
   credentialsChangedAt DateTime?
+  /// Saved withdrawal destinations (Part 2, C6): withdrawals go only to these.
+  savedBankAccounts    SavedBankAccount[]
+  savedCryptoAddresses SavedCryptoAddress[]
 
   /// Denormalised from KycProfile so a guard can check without a join.
   kycTier          KycTier           @default(TIER_0)
@@ -485,9 +488,14 @@ model Transaction {
   networkFee   Decimal? @db.Decimal(38, 18)
   rateConfigId String?
 
-  payoutBankCode     String?
-  payoutBankName     String?
-  payoutAccountLast4 String?
+  payoutBankCode       String?
+  payoutBankName       String?
+  payoutAccountLast4   String?
+  /// The saved destination a withdrawal was sent to (Part 2). Details are also copied above.
+  savedBankAccountId   String?
+  savedBankAccount     SavedBankAccount?   @relation(fields: [savedBankAccountId], references: [id])
+  savedCryptoAddressId String?
+  savedCryptoAddress   SavedCryptoAddress? @relation(fields: [savedCryptoAddressId], references: [id])
 
   reference                 String          @unique // our idempotency key, sent to Quidax
   quidaxRef                 String? // their id
@@ -1175,11 +1183,14 @@ model LevelCooloff {
 
 /// The whole platform's buy + sell + swap per Lagos day. Single row, id "default".
 model PlatformLimit {
-  id               String        @id @default("default")
-  tradingMaxPerDay Decimal?      @db.Decimal(38, 18)
-  currency         LimitCurrency @default(USD)
-  updatedAt        DateTime      @updatedAt
-  updatedBy        String?
+  id                      String        @id @default("default")
+  tradingMaxPerDay        Decimal?      @db.Decimal(38, 18)
+  /// How many withdrawal destinations a customer may keep (admin-set, each >= 1).
+  maxSavedBankAccounts    Int           @default(5)
+  maxSavedCryptoAddresses Int           @default(10)
+  currency                LimitCurrency @default(USD)
+  updatedAt               DateTime      @updatedAt
+  updatedBy               String?
 
   @@map("platform_limits")
 }
@@ -2215,4 +2226,48 @@ model AmlReviewCase {
   @@index([status, priority, createdAt])
   @@index([userId])
   @@map("aml_review_cases")
+}
+
+/// A bank account a customer saved for naira withdrawals (Part 2, C6). Its name is
+/// the one the bank returned when it was saved; no name-match rule (decision 15 Oct).
+model SavedBankAccount {
+  id            String        @id @default(uuid())
+  userId        String
+  bankCode      String
+  bankName      String
+  accountNumber String
+  accountName   String
+  nickname      String?
+  /// createdAt + the level's "after new address/bank" hours, fixed at save time.
+  usableFrom    DateTime
+  createdAt     DateTime      @default(now())
+  /// Soft delete: old withdrawals still point here.
+  removedAt     DateTime?
+  /// 'user' or the admin's id.
+  removedBy     String?
+  user          User          @relation(fields: [userId], references: [id])
+  transactions  Transaction[]
+
+  @@index([userId, removedAt])
+  @@map("saved_bank_accounts")
+}
+
+/// A crypto address a customer saved for withdrawals (Part 2, C6).
+model SavedCryptoAddress {
+  id             String        @id @default(uuid())
+  userId         String
+  assetCode      String
+  networkId      String
+  address        String
+  destinationTag String?
+  nickname       String?
+  usableFrom     DateTime
+  createdAt      DateTime      @default(now())
+  removedAt      DateTime?
+  removedBy      String?
+  user           User          @relation(fields: [userId], references: [id])
+  transactions   Transaction[]
+
+  @@index([userId, removedAt])
+  @@map("saved_crypto_addresses")
 }
