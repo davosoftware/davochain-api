@@ -84,6 +84,7 @@ import {
   RecordRefillDto,
   ReferralSettingsDto,
   RejectDepositDto,
+  ResolveTransactionDto,
   ReviewKycDto,
   SetGateDto,
   ResetNgnWithdrawalsDto,
@@ -467,6 +468,25 @@ export class AdminController {
     const after = await this.txs.release(id);
     await this.admin.audit(adminId, 'transaction.release', 'Transaction', id, before, after);
     return after;
+  }
+
+  /**
+   * H4: settle or refund a transaction stuck in RECONCILING, after checking
+   * Quidax by hand. Owner only (enforced in the service), with a note, audited.
+   */
+  @Post('transactions/:id/resolve')
+  @HttpCode(200)
+  @RequirePermissions('transactions.approve')
+  async resolveTransaction(
+    @CurrentAdmin() actor: AdminJwtPayload,
+    @Param('id') id: string,
+    @Body() dto: ResolveTransactionDto,
+  ) {
+    const before = await this.txs.one(id);
+    const result = await this.reconciliation.resolveByOwner({ id: actor.sub, role: actor.role }, id, dto.outcome, dto.note);
+    const after = await this.txs.one(id);
+    await this.admin.audit(actor.sub, 'transaction.resolve', 'Transaction', id, before, { ...after, note: dto.note });
+    return result;
   }
 
   /** Refuse a held naira deposit. No money moves; the user is told why. */

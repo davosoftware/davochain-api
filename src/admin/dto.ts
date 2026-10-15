@@ -74,6 +74,12 @@ export class RejectDepositDto {
   @IsString() @MaxLength(500) reason!: string;
 }
 
+/** H4: an owner's decision on a transaction that is being checked. */
+export class ResolveTransactionDto {
+  @IsIn(['COMPLETED', 'FAILED'], { message: 'Choose COMPLETED or FAILED' }) outcome!: 'COMPLETED' | 'FAILED';
+  @IsString() @MaxLength(1000) note!: string;
+}
+
 /**
  * The referral offer.
  *

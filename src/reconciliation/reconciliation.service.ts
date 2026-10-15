@@ -1,6 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { AlertType, LegState, SettlementLegKind, TxType } from '@prisma/client';
+import { AdminRole, AlertType, LegState, SettlementLegKind, TxStatus, TxType } from '@prisma/client';
 import { OPEN_STATUSES } from '../trades/close-open';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuidaxClient } from '../quidax/quidax.client';
@@ -315,6 +315,62 @@ export class ReconciliationService {
     if (failed && !wentOut && !pending) {
       await this.settlement.reverse(transactionId, 'Confirmed failed upstream');
     }
+  }
+
+  /**
+   * H4: an owner decides a transaction the reconciler could not (a swap whose
+   * confirm never answered, a trade half done, a payout Quidax has no record
+   * of). Owner only, a written note, and only from RECONCILING. The outcome
+   * goes through the same run-once paths as the automatic flow, so a late
+   * webhook afterwards changes nothing. Open legs are closed so the reconciler
+   * stops polling them.
+   */
+  async resolveByOwner(
+    actor: { id: string; role: AdminRole },
+    transactionId: string,
+    outcome: 'COMPLETED' | 'FAILED',
+    note: string,
+  ): Promise<{ transactionId: string; outcome: 'COMPLETED' | 'FAILED' }> {
+    if (actor.role !== AdminRole.OWNER) {
+      throw new ForbiddenException('Only an owner can resolve a transaction that is being checked');
+    }
+    const reason = (note ?? '').trim();
+    if (reason.length < 10) {
+      throw new BadRequestException('Write a note (at least 10 characters) saying what you checked');
+    }
+    const tx = await this.prisma.transaction.findUnique({ where: { id: transactionId } });
+    if (!tx) throw new NotFoundException('Transaction not found');
+    if (tx.status !== TxStatus.RECONCILING) {
+      throw new ConflictException('Only a transaction that is being checked (RECONCILING) can be resolved');
+    }
+
+    if (outcome === 'FAILED') {
+      await this.settlement.reverse(tx.id, `Resolved by an owner: ${reason}`);
+    } else if (tx.type === TxType.BUY || tx.type === TxType.SELL) {
+      await this.settlement.completeTrade(tx.id);
+    } else if (tx.type === TxType.SWAP) {
+      await this.settlement.finaliseSwap(tx.id);
+    } else if (tx.type === TxType.WITHDRAWAL) {
+      await this.settlement.applyWithdrawalWebhook('withdraw.successful', {
+        id: tx.quidaxRef ?? `owner-resolved-${tx.id}`,
+        reference: tx.reference,
+        status: 'Done',
+        fee: tx.networkFee ?? '0',
+        txid: null,
+      } as never);
+    } else {
+      throw new BadRequestException(`A ${tx.type.toLowerCase()} cannot be resolved here`);
+    }
+
+    await this.prisma.settlementLeg.updateMany({
+      where: { transactionId: tx.id, state: { in: [LegState.PENDING, LegState.SENT, LegState.UNKNOWN] } },
+      data: {
+        state: outcome === 'COMPLETED' ? LegState.CONFIRMED : LegState.FAILED,
+        lastError: `Resolved by an owner (${actor.id})`,
+      },
+    });
+    this.log.warn(`Transaction ${tx.id} resolved ${outcome} by owner ${actor.id}`);
+    return { transactionId: tx.id, outcome };
   }
 
   async sweepWebhookGaps(): Promise<number> {
