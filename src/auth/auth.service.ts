@@ -281,10 +281,23 @@ export class AuthService {
       throw new UnauthorizedException('Session expired. Please sign in again.');
     }
 
+    // M1: claim the old token first, in one conditional update. Two refreshes
+    // with the same token at the same moment both passed the check above;
+    // only one of them now moves revokedAt, so only one gets new tokens.
+    const claimed = await this.prisma.refreshToken.updateMany({
+      where: { id: record.id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+    if (claimed.count === 0) {
+      // Lost a race by a moment: almost always the app sending two refreshes at
+      // once, so no family sign-out. A later reuse lands in the branch above.
+      throw new UnauthorizedException('Session expired. Please sign in again.');
+    }
+
     const tokens = await this.issueTokens(record.userId, ctx, record.family);
     await this.prisma.refreshToken.update({
       where: { id: record.id },
-      data: { revokedAt: new Date(), replacedBy: this.hashToken(tokens.refreshToken) },
+      data: { replacedBy: this.hashToken(tokens.refreshToken) },
     });
 
     return tokens;
