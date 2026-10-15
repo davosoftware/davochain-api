@@ -13,6 +13,7 @@ function build(bands: Partial<Record<FeeKind, string>>) {
   const created: Array<Record<string, unknown>> = [];
   const svc = new QuotesService(
     {
+      user: { findUnique: jest.fn(async () => ({ kycTier: 'TIER_1' })) },
       transaction: { aggregate: jest.fn(async () => ({ _sum: { usdValue: dec('0') } })) },
       rateQuote: { create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => (created.push(data), { id: 'q1', ...data, expiresAt: new Date(Date.now() + 12_000) })) },
     } as never,
@@ -36,7 +37,8 @@ function build(bands: Partial<Record<FeeKind, string>>) {
     } as never,
     { getBalance: jest.fn(async () => ({ available: dec('1000000000') })) } as never,
     { assertTradingAllowed: jest.fn(async () => undefined) } as never,
-    { get: (k: string) => ({ MAX_USER_DAILY_USD: 1e9, MAX_PLATFORM_DAILY_USD: 1e9 })[k] } as never,
+    { get: () => undefined } as never,
+    { fx: async () => ({ ngnPerUsd: dec('1500') }), assertWithinLimits: async () => undefined } as never,
   );
   return { svc, resolved, created };
 }

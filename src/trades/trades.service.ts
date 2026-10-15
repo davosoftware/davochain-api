@@ -6,7 +6,7 @@ import {
   NotFoundException,
   forwardRef,
 } from '@nestjs/common';
-import { AlertType, LedgerAccount, LegState, QuoteSide, SettlementLegKind, TxStatus, TxType } from '@prisma/client';
+import { AlertType, KycTier, LedgerAccount, LegState, PolicyAction, Prisma, QuoteSide, SettlementLegKind, TxStatus, TxType } from '@prisma/client';
 import { RateQuote } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuidaxClient } from '../quidax/quidax.client';
@@ -22,7 +22,8 @@ import { Decimal, dec, str } from '../common/money';
 import { OpsAlertsService } from '../common/ops-alerts/ops-alerts.service';
 import { SYSTEM_ACTOR_ID } from '../common/system-actor';
 import { ConfigService } from '@nestjs/config';
-import { assertDailyCaps, dailyCapsFrom } from './daily-limits';
+import { Fx, LevelPolicyService } from '../levels/level-policy.service';
+import { levelOf } from '../levels/levels';
 
 export interface TradeResult {
   transactionId: string;
@@ -62,6 +63,7 @@ export class TradesService {
     private readonly referrals: ReferralsService,
     private readonly config: ConfigService,
     private readonly alerts: OpsAlertsService,
+    private readonly policy: LevelPolicyService,
   ) {}
 
   /**
@@ -96,9 +98,10 @@ export class TradesService {
     return true;
   }
 
-  /** H10: today's limits, checked in the same write that locks the trade's funds. */
-  private checkDailyCaps(t: Parameters<typeof assertDailyCaps>[0], userId: string, usdValue: unknown): Promise<void> {
-    return assertDailyCaps(t, userId, dec((usdValue as string | null) ?? 0), dailyCapsFrom(this.config));
+  /** Level rules for a trade, inside the write that locks its funds (spec §5.3). */
+  private async checkLimits(t: Prisma.TransactionClient, userId: string, action: PolicyAction, usdValue: unknown, fx: Fx): Promise<void> {
+    const u = await t.user.findUnique({ where: { id: userId }, select: { kycTier: true } });
+    await this.policy.assertWithinLimits(t, userId, levelOf(u?.kycTier ?? KycTier.TIER_0), action, dec((usdValue as string | null) ?? 0), 'USD', fx);
   }
 
   /**
@@ -162,8 +165,9 @@ export class TradesService {
     }
 
     // Lock + debit + pending record, all in one transaction, before any call out.
+    const fx = await this.policy.fx();
     const tx = await this.prisma.serializable(async (t) => {
-      await this.checkDailyCaps(t, userId, quote.usdValue);
+      await this.checkLimits(t, userId, PolicyAction.BUY, quote.usdValue, fx);
       await this.ledger.lock(t, userId, 'ngn', ngnIn);
       return t.transaction.create({
         data: {
@@ -267,8 +271,9 @@ export class TradesService {
       this.settlement.quidaxIdFor(userId),
     ]);
 
+    const fx = await this.policy.fx();
     const tx = await this.prisma.serializable(async (t) => {
-      await this.checkDailyCaps(t, userId, quote.usdValue);
+      await this.checkLimits(t, userId, PolicyAction.SELL, quote.usdValue, fx);
       await this.ledger.lock(t, userId, quote.fromAsset, coinIn);
       return t.transaction.create({
         data: {
@@ -337,8 +342,9 @@ export class TradesService {
     const fee = dec(quote.feeAmount as string);
     const subId = await this.settlement.quidaxIdFor(userId);
 
+    const fx = await this.policy.fx();
     const tx = await this.prisma.serializable(async (t) => {
-      await this.checkDailyCaps(t, userId, quote.usdValue);
+      await this.checkLimits(t, userId, PolicyAction.SWAP, quote.usdValue, fx);
       await this.ledger.lock(t, userId, quote.fromAsset, amountIn);
       return t.transaction.create({
         data: {

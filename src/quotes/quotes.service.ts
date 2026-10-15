@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { QuoteSide, RateQuote } from '@prisma/client';
+import { KycTier, PolicyAction, QuoteSide, RateQuote } from '@prisma/client';
 import { formatQuoteRate } from './quote-rate';
 import { PrismaService } from '../prisma/prisma.service';
 import { RatesService } from '../rates/rates.service';
@@ -10,7 +10,8 @@ import { AssetsService } from '../assets/assets.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { SystemFlagsService } from '../common/system-flags.service';
 import { Decimal, ZERO, dec, floorToStep, str } from '../common/money';
-import { assertDailyCaps, dailyCapsFrom } from '../trades/daily-limits';
+import { LevelPolicyService } from '../levels/level-policy.service';
+import { levelOf } from '../levels/levels';
 
 export interface QuoteView {
   quoteId: string;
@@ -43,6 +44,7 @@ export class QuotesService {
     private readonly ledger: LedgerService,
     private readonly flags: SystemFlagsService,
     private readonly config: ConfigService,
+    private readonly policy: LevelPolicyService,
   ) {}
 
   /**
@@ -265,8 +267,8 @@ export class QuotesService {
     const netOut = floorToStep(grossOut.minus(feeInToAsset), toAsset.transferStep);
     if (netOut.lte(0)) throw new BadRequestException('Amount is too small to swap');
 
-    // H10: swaps had no maximum size; the same single-trade cap as buy and sell.
-    const maxUsd = this.maxTradeUsd(cfg.maxTradeUsd);
+    // H10: swaps had no maximum size; the same per-coin cap as buy and sell.
+    const maxUsd = dec(cfg.maxTradeUsd);
     if (usdValue.gt(maxUsd)) {
       throw new BadRequestException(`Maximum single trade is $${maxUsd.toFixed(2)}.`);
     }
@@ -316,20 +318,10 @@ export class QuotesService {
           `This one is worth $${usdValue.toFixed(2)}.`,
       );
     }
-    const max = this.maxTradeUsd(cfg.maxTradeUsd);
+    const max = dec(cfg.maxTradeUsd as string);
     if (usdValue.gt(max)) {
       throw new BadRequestException(`Maximum single trade is $${max.toFixed(2)}.`);
     }
-  }
-
-  /**
-   * H10: the per-coin cap, never above the platform-wide MAX_TRADE_USD (which
-   * was validated at boot and never read).
-   */
-  private maxTradeUsd(perCoin: unknown): Decimal {
-    const coin = dec(perCoin as string);
-    const env = this.config.get<number>('MAX_TRADE_USD');
-    return env !== undefined && dec(env).lt(coin) ? dec(env) : coin;
   }
 
   private async persist(input: {
@@ -359,8 +351,11 @@ export class QuotesService {
     const ttl = this.config.get<number>('QUOTE_TTL_SECONDS') ?? 12;
     const expiresAt = new Date(Date.now() + ttl * 1000);
 
-    // H10: tell the person now; the binding check runs again when the trade locks its funds.
-    await assertDailyCaps(this.prisma, input.userId, input.usdValue, dailyCapsFrom(this.config));
+    // Level rules: tell the person now; the binding check runs again when the trade locks its funds.
+    const fx = await this.policy.fx();
+    const u = await this.prisma.user.findUnique({ where: { id: input.userId }, select: { kycTier: true } });
+    const action = input.side === QuoteSide.SELL ? PolicyAction.SELL : input.side === QuoteSide.SWAP ? PolicyAction.SWAP : PolicyAction.BUY;
+    await this.policy.assertWithinLimits(this.prisma, input.userId, levelOf(u?.kycTier ?? KycTier.TIER_0), action, input.usdValue, 'USD', fx);
 
     const quote = await this.prisma.rateQuote.create({
       data: {

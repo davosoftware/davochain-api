@@ -51,6 +51,7 @@ describe('H3: the buy moves the coin only after the purchase landed', () => {
     const order: string[] = [];
     const svc = Object.create(TradesService.prototype) as Record<string, unknown>;
     Object.assign(svc, {
+      policy: { fx: async () => ({ ngnPerUsd: '1500' }), assertWithinLimits: async () => undefined },
       flags: { assertTradingAllowed: jest.fn(async () => undefined) },
       assets: { require: jest.fn(async () => ({ code: 'btc' })), chunkForTransfer: () => ['0.001'] },
       quidax: { newReference: () => 'buy-ref' },

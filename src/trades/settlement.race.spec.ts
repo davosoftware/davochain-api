@@ -220,6 +220,7 @@ describe('H2: a swap fee is booked only when the swap completes', () => {
     Object.assign(svc, {
       flags: { assertTradingAllowed: jest.fn(async () => undefined) },
       settlement: { quidaxIdFor: jest.fn(async () => 'sub1'), swapInSubAccount: jest.fn(async () => undefined) },
+      policy: { fx: async () => ({ ngnPerUsd: '1500' }), assertWithinLimits: async () => undefined },
       ledger: { lock: jest.fn() },
       quidax: { newReference: () => 'ref' },
       prisma: {

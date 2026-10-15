@@ -64,7 +64,7 @@ describe('H10: a swap checks the margin after Quidax executes it', () => {
       },
       ledger: { lock: jest.fn() },
       quidax: { newReference: () => 'ref' },
-      config: { get: () => 1e9 },
+      policy: { fx: async () => ({ ngnPerUsd: dec('1500') }), assertWithinLimits: async () => undefined },
       prisma: { serializable: jest.fn(async () => ({ id: 'tx3' })), transaction: { update: jest.fn(async () => ({})) } },
     });
     const swap = (svc.swap as (...a: unknown[]) => Promise<unknown>).bind(svc);

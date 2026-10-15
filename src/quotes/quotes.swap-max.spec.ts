@@ -4,11 +4,12 @@ import { dec } from '../common/money';
 
 /**
  * H10 (PROJECT_REVIEW): a swap quote returned a "maximum" but never checked it,
- * so swaps had no size limit at all. And the platform-wide MAX_TRADE_USD was
- * never read for any trade.
+ * so swaps had no size limit at all. (Daily and per-trade limits per level now
+ * come from the admin rules; the per-coin maximum is a market-safety cap.)
  */
-function build(opts: { maxTradeUsdEnv?: number } = {}) {
+function build() {
   const prisma = {
+    user: { findUnique: jest.fn(async () => ({ kycTier: 'TIER_1' })) },
     transaction: { aggregate: jest.fn(async () => ({ _sum: { usdValue: dec('0') } })) },
     rateQuote: { create: jest.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: 'q1', ...data, expiresAt: new Date(Date.now() + 12_000) })) },
   };
@@ -17,10 +18,7 @@ function build(opts: { maxTradeUsdEnv?: number } = {}) {
     price: jest.fn(async (code: string) => ({ priceUsd: code === 'btc' ? dec('60000') : dec('3000') })),
   };
   const assets = { require: jest.fn(async (code: string) => ({ code, transferStep: '0.00000001', displayScale: 8 })) };
-  const config = {
-    get: (k: string) =>
-      ({ MAX_TRADE_USD: opts.maxTradeUsdEnv, MAX_USER_DAILY_USD: 1e9, MAX_PLATFORM_DAILY_USD: 1e9, QUOTE_TTL_SECONDS: 12 })[k],
-  };
+  const config = { get: (k: string) => ({ QUOTE_TTL_SECONDS: 12 })[k] };
   return new QuotesService(
     prisma as never,
     rates as never,
@@ -29,6 +27,7 @@ function build(opts: { maxTradeUsdEnv?: number } = {}) {
     { getBalance: jest.fn(async () => ({ available: dec('100') })) } as never,
     { assertTradingAllowed: jest.fn(async () => undefined) } as never,
     config as never,
+    { fx: async () => ({ ngnPerUsd: dec('1500') }), assertWithinLimits: async () => undefined } as never,
   );
 }
 
@@ -43,9 +42,9 @@ describe('H10: swaps have a maximum size', () => {
     await expect(build().quoteSwap('u1', 'btc', 'eth', dec('0.01'))).resolves.toBeDefined(); // $600
   });
 
-  it('MAX_TRADE_USD caps every trade below the per-coin maximum', async () => {
-    const err = await build({ maxTradeUsdEnv: 500 }).quoteSwap('u1', 'btc', 'eth', dec('0.01')).catch((e) => e); // $600
+  it('the per-coin maximum still applies to swaps', async () => {
+    const err = await build().quoteSwap('u1', 'btc', 'eth', dec('0.034')).catch((e) => e); // $2,040
     expect(err).toBeInstanceOf(BadRequestException);
-    expect(err.message).toBe('Maximum single trade is $500.00.');
+    expect(err.message).toBe('Maximum single trade is $2000.00.');
   });
 });
