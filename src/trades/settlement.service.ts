@@ -92,7 +92,7 @@ export class SettlementService {
       return result;
     } catch (err) {
       // A timeout on a transfer is NOT a failure. It may well have landed.
-      const unknown = err instanceof QuidaxUnknownError;
+      const unknown = this.isUnknown(err);
       await this.prisma.settlementLeg.update({
         where: { id: leg.id },
         data: {
@@ -145,7 +145,7 @@ export class SettlementService {
       });
       return result;
     } catch (err) {
-      const unknown = err instanceof QuidaxUnknownError;
+      const unknown = this.isUnknown(err);
       await this.prisma.settlementLeg.update({
         where: { id: leg.id },
         data: {
@@ -192,7 +192,7 @@ export class SettlementService {
       });
       return result;
     } catch (err) {
-      const unknown = err instanceof QuidaxUnknownError;
+      const unknown = this.isUnknown(err);
       await this.prisma.settlementLeg.update({
         where: { id: leg.id },
         data: {
@@ -519,8 +519,20 @@ export class SettlementService {
   }
 
   /** Convert an upstream error into the right terminal state. */
+  /**
+   * C4: an error is a DEFINITE failure only when Quidax plainly refused: a
+   * business rejection (4xx, or 200 with status "error") or a rate-limit
+   * refusal, where nothing happened. Everything else may have come after a
+   * call that worked (an unknown outcome, a gateway page, our own database, a
+   * bug), so it is never grounds for a refund: the funds stay locked and the
+   * transaction goes to RECONCILING.
+   */
+  isDefiniteRejection(err: unknown): boolean {
+    return err instanceof QuidaxError && err.httpStatus < 500;
+  }
+
   isUnknown(err: unknown): boolean {
-    return err instanceof QuidaxUnknownError;
+    return !this.isDefiniteRejection(err);
   }
 
   describe(err: unknown): string {

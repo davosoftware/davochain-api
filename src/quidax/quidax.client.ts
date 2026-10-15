@@ -94,6 +94,11 @@ export class QuidaxClient {
       this.bootSecretKey;
 
     const maxAttempts = opts.idempotent === false ? 1 : 4;
+    // A write that does not come back with a clear answer may have been carried
+    // out anyway (C4). Same test as the network-failure branch below.
+    const isWrite = opts.idempotent === false || method !== 'GET';
+    const unknown = (why: string) =>
+      new QuidaxUnknownError(`Quidax ${method} ${path} did not return a definite result: ${why}`, method, path, opts.reference);
     let lastRetryable: Error | null = null;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -125,10 +130,18 @@ export class QuidaxClient {
           throw lastRetryable;
         }
 
+        // C4: a server error or a timeout on a write is not a refusal. A gateway
+        // can answer 502/504 after Quidax already committed the transfer.
+        if (isWrite && (res.statusCode >= 500 || res.statusCode === 408)) {
+          throw unknown(`HTTP ${res.statusCode}`);
+        }
+
         let parsed: QuidaxEnvelope<T> | undefined;
         try {
           parsed = text ? (JSON.parse(text) as QuidaxEnvelope<T>) : undefined;
         } catch {
+          // An HTML or empty page is not Quidax speaking: for a write, unknown.
+          if (isWrite) throw unknown(`non-JSON response (${res.statusCode})`);
           throw new QuidaxError(
             `Non-JSON response from Quidax (${res.statusCode})`,
             null,
@@ -163,7 +176,7 @@ export class QuidaxClient {
           page: this.num(res.headers['x-page']),
         };
       } catch (err) {
-        if (err instanceof QuidaxError) throw err;
+        if (err instanceof QuidaxError || err instanceof QuidaxUnknownError) throw err;
 
         // Network-level failure. For a write, we genuinely do not know whether
         // it landed — do not retry, hand it to the reconciler.

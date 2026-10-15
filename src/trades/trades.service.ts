@@ -6,7 +6,7 @@ import {
   NotFoundException,
   forwardRef,
 } from '@nestjs/common';
-import { LedgerAccount, QuoteSide, SettlementLegKind, TxStatus, TxType } from '@prisma/client';
+import { LedgerAccount, LegState, QuoteSide, SettlementLegKind, TxStatus, TxType } from '@prisma/client';
 import { RateQuote } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuidaxClient } from '../quidax/quidax.client';
@@ -466,7 +466,13 @@ export class TradesService {
   ): Promise<TradeResult> {
     const reason = this.settlement.describe(err);
 
-    if (this.settlement.isUnknown(err)) {
+    // A step that already went out to Quidax (sent, confirmed or unknown) means
+    // part of the trade may have happened: never refund the whole of it (C4, H3).
+    const wentOut = await this.prisma.settlementLeg.count({
+      where: { transactionId, state: { in: [LegState.SENT, LegState.CONFIRMED, LegState.UNKNOWN] } },
+    });
+
+    if (this.settlement.isUnknown(err) || wentOut > 0) {
       await this.settlement.markReconciling(transactionId, reason);
       return {
         transactionId,
