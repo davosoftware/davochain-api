@@ -99,16 +99,17 @@ export class DepositsService {
       this.log.warn(`Deposit in unlisted asset ${assetCode} — recorded but not credited`);
     }
 
-    const existing = await this.prisma.transaction.findUnique({ where: { reference } });
+    const seen = await this.prisma.transaction.findUnique({ where: { reference }, select: { status: true } });
 
-    // Already final. A duplicate delivery must not credit a second time.
-    if (existing?.status === TxStatus.COMPLETED) return;
+    // Already final: a cheap early exit. The decision that counts is taken
+    // again inside the write below, where two deliveries cannot both pass it.
+    if (seen?.status === TxStatus.COMPLETED) return;
 
     /*
      * Priced at the moment it lands, so a deposit can be totalled beside the
      * trades. Best effort: a price lookup is a call to Quidax, and money
      * arriving must never be held up by one — a null costs a dashboard row,
-     * not a credit.
+     * not a credit. Done before the write: no network call inside it.
      */
     const usdValue = await this.rates
       .price(assetCode)
@@ -119,47 +120,46 @@ export class DepositsService {
       )
       .catch(() => null);
 
-    const tx = existing
-      ? await this.prisma.transaction.update({
-          where: { id: existing.id },
-          data: {
-            status,
-            quidaxRawStatus: data.status,
-            failureReason: heldReason ?? data.reason ?? null,
-            completedAt: status === TxStatus.COMPLETED ? new Date() : null,
-            usdValue,
-          },
-        })
-      : await this.prisma.transaction.create({
-          data: {
-            userId,
-            type: TxType.DEPOSIT,
-            status,
-            toAsset: assetCode,
-            toAmount: amount.toFixed(),
-            usdValue,
-            reference,
-            quidaxRef: data.id,
-            quidaxRawStatus: data.status,
-            failureReason: heldReason ?? data.reason ?? null,
-          },
-        });
+    // The row exists before the money step, so every delivery meets on one row.
+    const row = await this.depositRow(userId, assetCode, amount.toFixed(), reference, data);
 
-    if (status === TxStatus.COMPLETED && asset) {
-      await this.prisma.serializable(async (t) => {
+    /*
+     * C2: the status change and the credit are ONE serializable write, and the
+     * change is conditional on the deposit not being COMPLETED yet. Two
+     * deliveries at the same moment (Quidax re-sends, the gap sweep, parallel
+     * workers) cannot both credit; and a credit that fails rolls the status
+     * back, so a retry can still credit instead of finding "completed" with no
+     * money behind it.
+     */
+    const credited = status === TxStatus.COMPLETED && !!asset;
+    const changed = await this.prisma.serializable(async (t) => {
+      const moved = await t.transaction.updateMany({
+        where: { id: row.id, status: { notIn: [TxStatus.COMPLETED] } },
+        data: {
+          status,
+          quidaxRawStatus: data.status,
+          failureReason: heldReason ?? data.reason ?? null,
+          completedAt: status === TxStatus.COMPLETED ? new Date() : null,
+          usdValue,
+        },
+      });
+      if (moved.count === 0) return false;
+      if (credited) {
         await this.ledger.credit(t, {
           userId,
           assetCode,
           amount,
           counterparty: LedgerAccount.EXTERNAL,
-          transactionId: tx.id,
+          transactionId: row.id,
           memo: `deposit ${data.txid ?? data.id}`,
         });
-        await t.transaction.update({
-          where: { id: tx.id },
-          data: { completedAt: new Date() },
-        });
-      });
+      }
+      return true;
+    });
+    if (!changed) return;
+    const tx = row;
+
+    if (credited) {
       this.log.log(`Credited ${amount.toFixed()} ${assetCode} to ${userId}`);
     }
 
@@ -275,6 +275,29 @@ export class DepositsService {
       createdAt: t.createdAt,
       completedAt: t.completedAt,
     }));
+  }
+
+  /** Find this deposit's row, or create it (PENDING). Two creators racing meet on the unique reference. */
+  private async depositRow(userId: string, assetCode: string, amount: string, reference: string, data: QuidaxDeposit) {
+    const existing = await this.prisma.transaction.findUnique({ where: { reference } });
+    if (existing) return existing;
+    try {
+      return await this.prisma.transaction.create({
+        data: {
+          userId,
+          type: TxType.DEPOSIT,
+          status: TxStatus.PENDING,
+          toAsset: assetCode,
+          toAmount: amount,
+          reference,
+          quidaxRef: data.id,
+          quidaxRawStatus: data.status,
+        },
+      });
+    } catch (err) {
+      if ((err as { code?: string }).code !== 'P2002') throw err;
+      return this.prisma.transaction.findUniqueOrThrow({ where: { reference } });
+    }
   }
 
   /**

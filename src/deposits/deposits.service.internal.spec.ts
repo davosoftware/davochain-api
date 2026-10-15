@@ -9,7 +9,8 @@ import { DepositsService } from './deposits.service';
  */
 function build() {
   const prisma = {
-    transaction: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn(), update: jest.fn() },
+    transaction: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn(), update: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+    serializable: jest.fn((fn: (t: unknown) => unknown): unknown => fn(prisma)),
     user: { findUnique: jest.fn() },
     asset: { findUnique: jest.fn().mockResolvedValue({ code: 'btc' }) },
   };
