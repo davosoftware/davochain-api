@@ -56,6 +56,7 @@ import { SiteSettingsService } from './site-settings.service';
 import { CredentialsService } from '../common/credentials.service';
 import { LevelAdminService } from '../levels/level-admin.service';
 import { SavedDestinationsService } from '../withdrawals/saved-destinations.service';
+import { BalanceCorrectionsService } from '../reconciliation/balance-corrections.service';
 import { FeeBandsService } from '../rates/fee-bands.service';
 import { PriceReferenceService } from '../rates/price-reference.service';
 import { AdminGuard } from './admin.guard';
@@ -76,6 +77,7 @@ import {
   SetPermissionsDto,
   SetRoleDto,
   SaveLevelsDto,
+  BalanceCorrectionDto,
   RemoveDestinationDto,
   SetCredentialDto,
   SiteLogoDto,
@@ -165,6 +167,7 @@ export class AdminController {
     private readonly credentials: CredentialsService,
     private readonly levelAdmin: LevelAdminService,
     private readonly savedDestinations: SavedDestinationsService,
+    private readonly corrections: BalanceCorrectionsService,
     private readonly priceReference: PriceReferenceService,
     private readonly bands: FeeBandsService,
     private readonly prisma: PrismaService,
@@ -341,6 +344,33 @@ export class AdminController {
   }
 
   /** One coin: the customers whose record doesn't match their sub-account, and the likely reason. */
+  /** The latest owner balance corrections, newest first. */
+  @Get('reconciliation/corrections')
+  @RequirePermissions('reconciliation.view')
+  recentCorrections() {
+    return this.corrections.recent();
+  }
+
+  /**
+   * An owner corrects a customer's record to match what is really held. Owner
+   * only (the service refuses anyone else), with a reason; audited before → after.
+   */
+  @Post('reconciliation/corrections')
+  @RequirePermissions('reconciliation.view')
+  async correctBalance(@CurrentAdmin() actor: AdminJwtPayload, @Body() dto: BalanceCorrectionDto, @Req() req: Request) {
+    const result = await this.corrections.correct({ id: actor.sub, role: actor.role }, dto);
+    await this.admin.audit(
+      actor.sub,
+      'reconciliation.correct',
+      'Balance',
+      `${dto.userId}:${dto.asset.toLowerCase()}`,
+      { available: result.before },
+      { available: result.after, direction: dto.direction, amount: dto.amount, reason: dto.reason.trim(), transactionId: result.transactionId },
+      req.ip,
+    );
+    return result;
+  }
+
   @Get('reconciliation/:asset/customers')
   @RequirePermissions('reconciliation.view')
   reconcileCustomers(@Param('asset') asset: string) {

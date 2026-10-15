@@ -5,10 +5,11 @@ import { TradesModule } from '../trades/trades.module';
 import { DepositsModule } from '../deposits/deposits.module';
 import { InventoryModule } from '../inventory/inventory.module';
 import { ReconciliationService } from './reconciliation.service';
+import { BalanceCorrectionsService } from './balance-corrections.service';
 
 @Module({
   imports: [QuidaxModule, LedgerModule, TradesModule, DepositsModule, InventoryModule],
-  providers: [ReconciliationService],
-  exports: [ReconciliationService],
+  providers: [ReconciliationService, BalanceCorrectionsService],
+  exports: [ReconciliationService, BalanceCorrectionsService],
 })
 export class ReconciliationModule {}

@@ -530,7 +530,8 @@ export class TradesService {
 
   async history(userId: string, limit = 50) {
     const rows = await this.prisma.transaction.findMany({
-      where: { userId, type: { in: [TxType.BUY, TxType.SELL, TxType.SWAP] } },
+      // ADJUSTMENT: an owner's balance correction, shown as "Balance correction" (never the internal reason).
+      where: { userId, type: { in: [TxType.BUY, TxType.SELL, TxType.SWAP, TxType.ADJUSTMENT] } },
       orderBy: { createdAt: 'desc' },
       take: Math.min(limit, 100),
     });
@@ -538,6 +539,7 @@ export class TradesService {
     return rows.map((t) => ({
       id: t.id,
       type: t.type,
+      ...(t.type === TxType.ADJUSTMENT ? { label: 'Balance correction' } : {}),
       status: t.status,
       fromAsset: t.fromAsset,
       fromAmount: t.fromAmount ? str(t.fromAmount) : null,

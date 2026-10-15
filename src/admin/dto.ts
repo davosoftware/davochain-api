@@ -72,6 +72,15 @@ export class RemoveDestinationDto {
   @IsString() @MinLength(10, { message: 'Give a reason of at least 10 characters' }) @MaxLength(500) reason!: string;
 }
 
+/** An owner's balance correction from the reconciliation screen. The service checks every rule and says why in plain words. */
+export class BalanceCorrectionDto {
+  @IsString() @MaxLength(64) userId!: string;
+  @IsString() @MaxLength(20) asset!: string;
+  @IsIn(['CREDIT', 'DEBIT']) direction!: 'CREDIT' | 'DEBIT';
+  @IsString() @MaxLength(40) amount!: string;
+  @IsString() @MaxLength(500) reason!: string;
+}
+
 export class SuspendUserDto {
   @IsString() @MaxLength(500) reason!: string;
 }
