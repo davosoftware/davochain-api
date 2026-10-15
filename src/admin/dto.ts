@@ -1,6 +1,7 @@
 import { Type } from 'class-transformer';
-import { AdminRole, AlertType, FeeKind, KycTier } from '@prisma/client';
+import { AdminRole, AlertType, FeeKind, KycTier, LimitCurrency, PolicyAction, PolicyLevel } from '@prisma/client';
 import {
+  ArrayMaxSize,
   IsArray,
   IsEnum,
   IsIn,
@@ -245,12 +246,34 @@ export class SiteLogoDto {
   @IsString() @MaxLength(1_500_000) dataUrl!: string;
 }
 
-export class KycLimitsDto {
-  @IsEnum(KycTier) tier!: KycTier;
-  @IsNumberString() ngnDepositSingle!: string;
-  @IsNumberString() ngnDepositDaily!: string;
-  @IsNumberString() ngnWithdrawSingle!: string;
-  @IsNumberString() ngnWithdrawDaily!: string;
+class LevelRuleDto {
+  @IsEnum(PolicyLevel) level!: PolicyLevel;
+  @IsEnum(PolicyAction) action!: PolicyAction;
+  @IsBoolean() allowed!: boolean;
+  @IsEnum(LimitCurrency) currency!: LimitCurrency;
+  /** Blank or null = no limit. The service checks each is a plain number. */
+  @IsOptional() @IsString() @MaxLength(30) minPerTx!: string | null;
+  @IsOptional() @IsString() @MaxLength(30) maxPerTx!: string | null;
+  @IsOptional() @IsString() @MaxLength(30) maxPerDay!: string | null;
+}
+
+class LevelCooloffDto {
+  @IsEnum(PolicyLevel) level!: PolicyLevel;
+  @IsInt() afterSignupHours!: number;
+  @IsInt() afterCredentialChangeHours!: number;
+  @IsInt() afterNewPayeeHours!: number;
+}
+
+class PlatformLimitDto {
+  @IsOptional() @IsString() @MaxLength(30) tradingMaxPerDay!: string | null;
+  @IsEnum(LimitCurrency) currency!: LimitCurrency;
+}
+
+/** PUT /v1/admin/levels: the whole table at once, so one save is one audit entry. */
+export class SaveLevelsDto {
+  @IsArray() @ArrayMaxSize(64) @ValidateNested({ each: true }) @Type(() => LevelRuleDto) rules!: LevelRuleDto[];
+  @IsArray() @ArrayMaxSize(8) @ValidateNested({ each: true }) @Type(() => LevelCooloffDto) cooloffs!: LevelCooloffDto[];
+  @ValidateNested() @Type(() => PlatformLimitDto) platform!: PlatformLimitDto;
 }
 
 export class SetCredentialDto {

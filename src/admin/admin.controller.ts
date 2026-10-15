@@ -54,7 +54,7 @@ import {
 } from '../giftcards/dto';
 import { SiteSettingsService } from './site-settings.service';
 import { CredentialsService } from '../common/credentials.service';
-import { KycLimitsService } from '../kyc/kyc-limits.service';
+import { LevelAdminService } from '../levels/level-admin.service';
 import { FeeBandsService } from '../rates/fee-bands.service';
 import { PriceReferenceService } from '../rates/price-reference.service';
 import { AdminGuard } from './admin.guard';
@@ -74,7 +74,7 @@ import {
   ResetPasswordDto,
   SetPermissionsDto,
   SetRoleDto,
-  KycLimitsDto,
+  SaveLevelsDto,
   SetCredentialDto,
   SiteLogoDto,
   SiteSettingsDto,
@@ -161,7 +161,7 @@ export class AdminController {
     private readonly userGiftcards: GiftCardsService,
     private readonly site: SiteSettingsService,
     private readonly credentials: CredentialsService,
-    private readonly kycLimits: KycLimitsService,
+    private readonly levelAdmin: LevelAdminService,
     private readonly priceReference: PriceReferenceService,
     private readonly bands: FeeBandsService,
     private readonly prisma: PrismaService,
@@ -1403,26 +1403,21 @@ export class AdminController {
     return result;
   }
 
-  // ── KYC limits ────────────────────────────────────────────
+  // ── verification levels ───────────────────────────────
   //
-  // Naira only. A tier caps the leg that touches a bank, because that is what
-  // verifying an identity is for; a coin moving between our own wallets moves
-  // no real money.
+  // What None, Basic and Advanced may do, their limits and cool-offs. Every
+  // number is an admin's (level policy spec §4); saving is audited before → after.
 
-  @Get('kyc-limits')
-  @RequirePermissions('kyc.view')
-  listKycLimits() {
-    return this.kycLimits.all();
+  @Get('levels')
+  @RequirePermissions('levels.view')
+  levels() {
+    return this.levelAdmin.view();
   }
 
-  @Put('kyc-limits')
-  @RequirePermissions('kyc.limits')
-  async setKycLimits(@CurrentAdmin() actor: AdminJwtPayload, @Body() dto: KycLimitsDto) {
-    const before = await this.kycLimits.all();
-    const after = await this.kycLimits.setLimits(dto.tier, dto, actor.sub);
-    // Raising a limit is a financial act, so it is recorded like one.
-    await this.admin.audit(actor.sub, 'kyc.limits.set', 'KycTierLimit', dto.tier, before, after);
-    return after;
+  @Put('levels')
+  @RequirePermissions('levels.manage')
+  saveLevels(@CurrentAdmin() actor: AdminJwtPayload, @Body() dto: SaveLevelsDto) {
+    return this.levelAdmin.save(dto, actor.sub);
   }
 
   // ── partner API keys ──────────────────────────────────────

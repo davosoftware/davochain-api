@@ -28,6 +28,7 @@ import { GiftCardsModule } from '../giftcards/giftcards.module';
 import { NgnDepositsModule } from '../ngn-deposits/ngn-deposits.module';
 import { FlutterwaveModule } from '../flutterwave/flutterwave.module';
 import { QUEUES } from '../common/queues';
+import { LevelAdminService } from '../levels/level-admin.service';
 
 @Module({
   imports: [
@@ -46,7 +47,7 @@ import { QUEUES } from '../common/queues';
     KycModule,
   ],
   controllers: [AdminController, AdminAuthController, AlertRecipientsController, KycBasicReviewController, ComplianceController, DojahAdminController],
-  providers: [AdminService, UsersAdminService, AdminsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService, AdminSessionsService, AdminOtpService, NgnWithdrawalsService, AdminGuard],
+  providers: [AdminService, UsersAdminService, AdminsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService, AdminSessionsService, AdminOtpService, NgnWithdrawalsService, AdminGuard, LevelAdminService],
   exports: [AdminService, UsersAdminService, AdminsService, AdminSessionsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService],
 })
 export class AdminModule {}

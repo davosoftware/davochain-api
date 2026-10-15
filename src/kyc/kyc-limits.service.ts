@@ -1,7 +1,7 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { KycTier, PolicyAction, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { Decimal, dec } from '../common/money';
+import { Decimal } from '../common/money';
 import { Fx, LevelPolicyService, Verdict } from '../levels/level-policy.service';
 import { levelOf } from '../levels/levels';
 
@@ -23,8 +23,6 @@ export interface LimitCheck {
  */
 @Injectable()
 export class KycLimitsService {
-  private readonly log = new Logger(KycLimitsService.name);
-
   constructor(
     private readonly prisma: PrismaService,
     private readonly policy: LevelPolicyService,
@@ -92,84 +90,5 @@ export class KycLimitsService {
   ): Promise<void> {
     const result = await this.check(userId, tier, direction, amount);
     if (!result.allowed) throw new BadRequestException(result.reason);
-  }
-
-  /** Every tier's naira limits, for the admin screen and the app. */
-  async all() {
-    const rows = await this.prisma.kycTierLimit.findMany({ orderBy: { tier: 'asc' } });
-    return rows.map((r) => ({
-      tier: r.tier,
-      canTrade: r.canTrade,
-      canWithdrawCrypto: r.canWithdrawCrypto,
-      canWithdrawFiat: r.canWithdrawFiat,
-      ngnDepositSingle: dec(r.ngnDepositSingle).toFixed(2),
-      ngnDepositDaily: dec(r.ngnDepositDaily).toFixed(2),
-      ngnWithdrawSingle: dec(r.ngnWithdrawSingle).toFixed(2),
-      ngnWithdrawDaily: dec(r.ngnWithdrawDaily).toFixed(2),
-      updatedAt: r.updatedAt,
-      updatedBy: r.updatedBy,
-    }));
-  }
-
-  /**
-   * Set the naira limits for one tier.
-   *
-   * A daily limit below the single limit is refused: it would let somebody pass
-   * the per-transaction check and fail the daily one every time, which reads as
-   * a broken product rather than a policy.
-   */
-  async setLimits(
-    tier: KycTier,
-    input: {
-      ngnDepositSingle: string;
-      ngnDepositDaily: string;
-      ngnWithdrawSingle: string;
-      ngnWithdrawDaily: string;
-    },
-    updatedBy: string,
-  ) {
-    const values = {
-      ngnDepositSingle: dec(input.ngnDepositSingle),
-      ngnDepositDaily: dec(input.ngnDepositDaily),
-      ngnWithdrawSingle: dec(input.ngnWithdrawSingle),
-      ngnWithdrawDaily: dec(input.ngnWithdrawDaily),
-    };
-
-    for (const [field, value] of Object.entries(values)) {
-      if (value.lt(0)) throw new BadRequestException(`${field} cannot be negative`);
-    }
-    if (values.ngnDepositDaily.gt(0) && values.ngnDepositDaily.lt(values.ngnDepositSingle)) {
-      throw new BadRequestException(
-        'The daily deposit limit is below the single-transaction limit, so no deposit of that size could ever succeed',
-      );
-    }
-    if (values.ngnWithdrawDaily.gt(0) && values.ngnWithdrawDaily.lt(values.ngnWithdrawSingle)) {
-      throw new BadRequestException(
-        'The daily withdrawal limit is below the single-transaction limit, so no withdrawal of that size could ever succeed',
-      );
-    }
-
-    await this.prisma.kycTierLimit.upsert({
-      where: { tier },
-      create: {
-        tier,
-        maxTradeUsd: 0,
-        maxDailyTradeUsd: 0,
-        maxDailyWithdrawUsd: 0,
-        ...Object.fromEntries(Object.entries(values).map(([k, v]) => [k, v.toFixed()])),
-        updatedBy,
-      },
-      update: {
-        ...Object.fromEntries(Object.entries(values).map(([k, v]) => [k, v.toFixed()])),
-        updatedBy,
-      },
-    });
-
-    this.log.warn(
-      `KYC naira limits for ${tier} set by ${updatedBy}: ` +
-        `deposit ${input.ngnDepositSingle}/${input.ngnDepositDaily}, ` +
-        `withdraw ${input.ngnWithdrawSingle}/${input.ngnWithdrawDaily}`,
-    );
-    return this.all();
   }
 }

@@ -134,10 +134,11 @@ export const PERMISSION_GROUPS = [
         label: 'Manage partner API keys',
         hint: 'The Quidax key can move money. Owners only, whatever else is granted.',
       },
+      { key: 'levels.view', label: 'See verification levels' },
       {
-        key: 'kyc.limits',
-        label: 'Set KYC limits',
-        hint: 'How much naira each tier may move in a day',
+        key: 'levels.manage',
+        label: 'Manage verification levels',
+        hint: 'What None, Basic and Advanced may do, their limits and cool-offs.',
       },
       {
         key: 'team.manage',
