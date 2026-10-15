@@ -144,12 +144,14 @@ export class TradesService {
 
     try {
       if (needsFallback) {
-        await this.settlement.fallbackSwap({
+        const swap = await this.settlement.fallbackSwap({
           transactionId: tx.id,
           fromCurrency: 'ngn',
           toCurrency: quote.toAsset,
           toAmount: coinOut,
         });
+        // H3: the coin is not ours to send until the swap has landed.
+        if (swap.status?.toLowerCase() !== 'completed') await this.settlement.awaitSwap(swap.id);
       }
 
       // Chunk if the amount exceeds Quidax's transfer maximum.

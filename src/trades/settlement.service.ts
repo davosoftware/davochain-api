@@ -158,6 +158,44 @@ export class SettlementService {
     }
   }
 
+  /**
+   * Wait for a main-account swap to land before anything relies on its coin
+   * (H3). confirmSwap only says "initiated"; moving the coin before the swap
+   * completes fails, or worse, takes inventory the swap never replaced.
+   *
+   * completed -> leg CONFIRMED, return.
+   * failed    -> leg FAILED, a definite failure (nothing happened: safe to refund).
+   * otherwise, after the wait -> unknown: no refund, nothing moved; the trade
+   *              goes to RECONCILING with the swap leg still SENT.
+   */
+  async awaitSwap(swapId: string, owner = 'me', attempts = 10, intervalMs = 1500): Promise<void> {
+    for (let i = 0; i < attempts; i++) {
+      const swaps = await this.quidax.fetchSwapTransactions(owner).catch((): QuidaxSwapTransaction[] => []);
+      const status = swaps.find((s) => s.id === swapId)?.status?.toLowerCase();
+      if (status === 'completed') {
+        await this.prisma.settlementLeg.updateMany({
+          where: { quidaxRef: swapId, kind: SettlementLegKind.SWAP },
+          data: { state: LegState.CONFIRMED },
+        });
+        return;
+      }
+      if (status === 'failed') {
+        await this.prisma.settlementLeg.updateMany({
+          where: { quidaxRef: swapId, kind: SettlementLegKind.SWAP },
+          data: { state: LegState.FAILED, lastError: 'Swap failed upstream' },
+        });
+        throw new QuidaxError('The swap could not be completed', null, 422);
+      }
+      if (i < attempts - 1) await this.pause(intervalMs);
+    }
+    throw new QuidaxUnknownError(`Swap ${swapId} not completed after waiting`, 'GET', `/users/${owner}/swap_transactions`);
+  }
+
+  /** A seam for tests: the real wait. */
+  protected pause(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
   /** Swap inside the user's own sub-account. Nothing crosses accounts. */
   async swapInSubAccount(params: {
     transactionId: string;
