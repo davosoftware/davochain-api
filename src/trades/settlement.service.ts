@@ -2,7 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { LedgerAccount, LegState, SettlementLegKind, TxStatus, TxType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuidaxClient } from '../quidax/quidax.client';
-import { QuidaxError, QuidaxUnknownError } from '../quidax/quidax.errors';
+import { QuidaxError, QuidaxRateLimitError, QuidaxUnknownError } from '../quidax/quidax.errors';
 import { LedgerService } from '../ledger/ledger.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ReferralsService } from '../referrals/referrals.service';
@@ -620,14 +620,18 @@ export class SettlementService {
   }
 
   /** Park a transaction whose outcome is genuinely unknown. Funds stay locked. */
-  async markReconciling(transactionId: string, reason: string): Promise<void> {
+  /**
+   * `reason` is shown to the customer (M5: use describe()); `detail` is the
+   * staff-only cause, written to the log.
+   */
+  async markReconciling(transactionId: string, reason: string, detail?: string): Promise<void> {
     // Only an open transaction: never re-open one a webhook already finished.
     const { count } = await this.prisma.transaction.updateMany({
       where: { id: transactionId, status: { in: OPEN_STATUSES } },
       data: { status: TxStatus.RECONCILING, failureReason: reason },
     });
     if (count === 0) return;
-    this.log.error(`RECONCILING ${transactionId}: ${reason} — funds remain locked`);
+    this.log.error(`RECONCILING ${transactionId}: ${detail ?? reason} — funds remain locked`);
   }
 
   async quidaxIdFor(userId: string): Promise<string> {
@@ -651,9 +655,33 @@ export class SettlementService {
     return !this.isDefiniteRejection(err);
   }
 
+  /**
+   * The full detail, for staff only: settlement-leg lastError and logs. Never
+   * put this where a customer reads it.
+   */
+  internalReason(err: unknown): string {
+    if (err instanceof QuidaxError) {
+      return 'Quidax ' + err.httpStatus + (err.code ? ' ' + err.code : '') + ': ' + err.message;
+    }
+    return (err as Error)?.message ?? String(err);
+  }
+
+  /**
+   * M5: what a CUSTOMER is told (errors, refund messages, failureReason in their
+   * history). A fixed set of plain messages: never Quidax's wording, never our
+   * internals, and never whose balance ran short.
+   */
   describe(err: unknown): string {
-    if (err instanceof QuidaxError) return err.message;
     if (err instanceof QuidaxUnknownError) return 'Outcome unknown — awaiting confirmation';
-    return (err as Error)?.message ?? 'Unexpected error';
+    if (err instanceof QuidaxRateLimitError) return 'The service is busy. Please try again in a moment';
+    if (err instanceof QuidaxError) {
+      if (err.isExpiredQuotation || /quotation/i.test(err.message)) {
+        return 'The rate changed before we could complete this. Please try again';
+      }
+      if (err.isBelowMinimum) return 'This amount is below the minimum allowed';
+      if (err.isInsufficientBalance) return 'This could not be completed right now. Please try again shortly';
+      return 'Our provider could not complete this request';
+    }
+    return 'Something went wrong on our side';
   }
 }

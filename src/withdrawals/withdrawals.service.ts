@@ -387,10 +387,10 @@ export class WithdrawalsService {
           data: {
             state: 'UNKNOWN',
             attempts: { increment: 1 },
-            lastError: this.settlement.describe(err).slice(0, 1000),
+            lastError: this.settlement.internalReason(err).slice(0, 1000),
           },
         });
-        await this.settlement.markReconciling(tx.id, this.settlement.describe(err));
+        await this.settlement.markReconciling(tx.id, this.settlement.describe(err), this.settlement.internalReason(err));
         return {
           transactionId: tx.id,
           status: TxStatus.RECONCILING,
@@ -406,7 +406,7 @@ export class WithdrawalsService {
         data: {
           state: 'FAILED',
           attempts: { increment: 1 },
-          lastError: this.settlement.describe(err).slice(0, 1000),
+          lastError: this.settlement.internalReason(err).slice(0, 1000),
         },
       });
       await this.settlement.reverse(tx.id, this.settlement.describe(err));
@@ -449,7 +449,7 @@ export class WithdrawalsService {
           },
         })
         .catch(() => undefined);
-      await this.settlement.markReconciling(tx.id, `Provider accepted payout but local update failed: ${(err as Error).message}`);
+      await this.settlement.markReconciling(tx.id, 'Being checked — awaiting confirmation', `Provider accepted payout but local update failed: ${(err as Error).message}`);
       return {
         transactionId: tx.id,
         status: TxStatus.RECONCILING,
@@ -611,10 +611,10 @@ export class WithdrawalsService {
           data: {
             state: 'UNKNOWN',
             attempts: { increment: 1 },
-            lastError: this.settlement.describe(err).slice(0, 1000),
+            lastError: this.settlement.internalReason(err).slice(0, 1000),
           },
         });
-        await this.settlement.markReconciling(tx.id, this.settlement.describe(err));
+        await this.settlement.markReconciling(tx.id, this.settlement.describe(err), this.settlement.internalReason(err));
         return {
           transactionId: tx.id,
           status: TxStatus.RECONCILING,
@@ -628,7 +628,7 @@ export class WithdrawalsService {
         data: {
           state: 'FAILED',
           attempts: { increment: 1 },
-          lastError: this.settlement.describe(err).slice(0, 1000),
+          lastError: this.settlement.internalReason(err).slice(0, 1000),
         },
       });
       await this.settlement.reverse(tx.id, this.settlement.describe(err));
@@ -670,7 +670,7 @@ export class WithdrawalsService {
           },
         })
         .catch(() => undefined);
-      await this.settlement.markReconciling(tx.id, `Provider accepted withdrawal but local update failed: ${(err as Error).message}`);
+      await this.settlement.markReconciling(tx.id, 'Being checked — awaiting confirmation', `Provider accepted withdrawal but local update failed: ${(err as Error).message}`);
       return {
         transactionId: tx.id,
         status: TxStatus.RECONCILING,

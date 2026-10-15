@@ -506,7 +506,7 @@ export class TradesService {
     });
 
     if (this.settlement.isUnknown(err) || wentOut > 0) {
-      await this.settlement.markReconciling(transactionId, reason);
+      await this.settlement.markReconciling(transactionId, reason, this.settlement.internalReason(err));
       return {
         transactionId,
         status: TxStatus.RECONCILING,

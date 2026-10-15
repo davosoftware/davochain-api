@@ -70,6 +70,7 @@ describe('H3: the buy moves the coin only after the purchase landed', () => {
         transfer: jest.fn(async () => order.push('transfer')),
         isUnknown: (e: unknown) => !(e instanceof QuidaxError && e.httpStatus < 500),
         describe: (e: unknown) => (e as Error).message,
+        internalReason: (e: unknown) => (e as Error).message,
         markReconciling: jest.fn(async () => order.push('reconciling')),
         reverse: jest.fn(async () => order.push('refund')),
       },

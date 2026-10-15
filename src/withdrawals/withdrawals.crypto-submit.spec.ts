@@ -18,6 +18,7 @@ function build(opts: { send?: () => Promise<unknown>; dbFailsAfterSend?: boolean
     quidaxIdFor: jest.fn().mockResolvedValue('sub-1'),
     isUnknown: (err: unknown) => err instanceof QuidaxUnknownError,
     describe: (err: unknown) => (err as Error).message,
+    internalReason: (err: unknown) => (err as Error).message,
     reverse: jest.fn().mockResolvedValue(undefined),
     markReconciling: jest.fn().mockResolvedValue(undefined),
   };
@@ -60,7 +61,8 @@ describe('C3: a crypto withdrawal is never refunded after Quidax accepted it', (
     const { service, settlement } = build({ dbFailsAfterSend: true });
     const result = await service.withdrawCrypto('u1', INPUT);
     expect(settlement.reverse).not.toHaveBeenCalled();
-    expect(settlement.markReconciling).toHaveBeenCalled();
+    // M5: the customer reads a plain reason; the database error goes to the log only.
+    expect(settlement.markReconciling).toHaveBeenCalledWith('tx-1', 'Being checked — awaiting confirmation', expect.stringContaining('connection terminated'));
     expect(result.status).toBe(TxStatus.RECONCILING);
   });
 
