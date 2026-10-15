@@ -1,10 +1,10 @@
-import { BadRequestException, ForbiddenException, Injectable, ServiceUnavailableException } from '@nestjs/common';
-import { GiftCardTradeStatus, KycTier, LevelRule, PolicyAction, PolicyLevel, Prisma, TxStatus, TxType } from '@prisma/client';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { GiftCardTradeStatus, KycStatus, KycTier, LevelRule, PolicyAction, PolicyLevel, Prisma, TxStatus, TxType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { RatesService } from '../rates/rates.service';
 import { Decimal, ZERO, dec } from '../common/money';
 import { formatLagos } from '../common/dates';
-import { ACTIONS, levelOf } from './levels';
+import { ACTIONS, LEVEL_NAMES, levelOf } from './levels';
 
 export type Db = Pick<Prisma.TransactionClient, 'levelRule' | 'transaction' | 'giftCardTrade' | 'platformLimit'>;
 export interface Fx {
@@ -191,6 +191,52 @@ export class LevelPolicyService {
       until: open.until.toISOString(),
       message: `Withdrawals open at ${when}, ${open.why}.`,
     });
+  }
+
+  /**
+   * GET /v1/me/level: what this person may do and what is left today (spec §6).
+   * "allowed" is the rule itself; the limits are tested with nothing, so a
+   * minimum never makes an allowed action look closed.
+   */
+  async snapshotFor(userId: string, now = new Date()) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { kycTier: true, kycStatus: true, amlStatus: true, createdAt: true, credentialsChangedAt: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+    // As the route guard: a level above None counts only once approved and screened.
+    const verified = user.kycStatus === KycStatus.APPROVED && user.amlStatus === 'CLEAR';
+    const level = verified ? levelOf(user.kycTier) : PolicyLevel.NONE;
+    const fx = await this.fx();
+    const rules = await this.rulesFor(level);
+    const s = (v: Decimal | null) => (v ? v.toFixed(2) : null);
+    const actions = [];
+    for (const action of Object.keys(ACTIONS) as PolicyAction[]) {
+      const v = await this.evaluate(this.prisma, userId, level, action, ZERO, ACTIONS[action].unit, fx, { now });
+      actions.push({
+        action,
+        label: ACTIONS[action].label,
+        allowed: rules.some((r) => r.action === action && r.allowed),
+        currency: v.currency,
+        minPerTx: s(v.minPerTx),
+        maxPerTx: s(v.maxPerTx),
+        maxPerDay: s(v.maxPerDay),
+        usedToday: v.usedToday.toFixed(2),
+        remainingToday: v.remainingToday ? Decimal.max(v.remainingToday, 0).toFixed(2) : null,
+      });
+    }
+    const opens = await Promise.all(
+      (Object.keys(ACTIONS) as PolicyAction[]).filter((a) => ACTIONS[a].coolsOff).map((a) => this.withdrawalsOpenAt(user, a, now)),
+    );
+    const latest = opens.filter((o): o is { until: Date; why: string } => o !== null).sort((a, b) => b.until.getTime() - a.until.getTime())[0];
+    return {
+      level,
+      levelName: verified ? LEVEL_NAMES[user.kycTier] : LEVEL_NAMES[KycTier.TIER_0],
+      tier: user.kycTier,
+      advancedInProgress: verified && user.kycTier === KycTier.TIER_2,
+      actions,
+      cooloffs: { withdrawalsOpenAt: latest ? latest.until.toISOString() : null },
+    };
   }
 
   /** The cool-off still running for this action, or null. */
