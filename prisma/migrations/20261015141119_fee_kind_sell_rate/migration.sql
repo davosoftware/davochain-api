@@ -1,0 +1,2 @@
+-- AlterEnum
+ALTER TYPE "FeeKind" ADD VALUE 'SELL_RATE';

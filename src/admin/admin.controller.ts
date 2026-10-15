@@ -56,6 +56,7 @@ import { SiteSettingsService } from './site-settings.service';
 import { CredentialsService } from '../common/credentials.service';
 import { KycLimitsService } from '../kyc/kyc-limits.service';
 import { FeeBandsService } from '../rates/fee-bands.service';
+import { PriceReferenceService } from '../rates/price-reference.service';
 import { AdminGuard } from './admin.guard';
 import { CurrentAdmin } from './current-admin.decorator';
 import { RequirePermissions } from './require-permissions.decorator';
@@ -161,6 +162,7 @@ export class AdminController {
     private readonly site: SiteSettingsService,
     private readonly credentials: CredentialsService,
     private readonly kycLimits: KycLimitsService,
+    private readonly priceReference: PriceReferenceService,
     private readonly bands: FeeBandsService,
     private readonly prisma: PrismaService,
     private readonly assets: AssetsService,
@@ -952,6 +954,16 @@ export class AdminController {
       created,
     );
     return created;
+  }
+
+  /**
+   * M11: Quidax's buy and sell prices for a coin beside the margins in force
+   * (and where each comes from), and what a customer gets. Read-only.
+   */
+  @Get('price-reference')
+  @RequirePermissions('fees.view')
+  priceReferenceFor(@Query('asset') asset: string, @Query('usd') usd?: string) {
+    return this.priceReference.reference(asset ?? 'btc', usd ?? '100');
   }
 
   /** What a trade of this size pays on BOTH ladders. Used by the editors. */

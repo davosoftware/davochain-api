@@ -145,20 +145,39 @@ export class QuotesService {
     });
   }
 
-  /** SELL — mirror of buy: the gate is subtracted instead of added. */
+  /**
+   * M11: the sell margin. Its own ladder (SELL_RATE) when an admin has set one;
+   * otherwise the buy ladder, then the flat gate, so the margin a coin charges
+   * does not change until somebody chooses a sell margin for it.
+   */
+  private async sellGateFor(
+    assetCode: string,
+    usdValue: Decimal,
+    cfg: { gateNgnPerUsd: unknown },
+  ): Promise<Decimal> {
+    const sell = await this.feeBands.resolve(FeeKind.SELL_RATE, assetCode, usdValue);
+    if (sell) return sell.value;
+    return this.gateFor(assetCode, usdValue, cfg);
+  }
+
+  /**
+   * SELL: Quidax's SELLING price (what it would pay for the coin) minus our
+   * sell margin (M11). It used to start from the buying price, so a spread
+   * wider than the margin lost money on every coin bought from a customer.
+   */
   async quoteSell(userId: string, assetCode: string, coinAmount: Decimal): Promise<QuoteView> {
     const code = assetCode.toLowerCase();
     await this.flags.assertTradingAllowed(code);
 
     const asset = await this.assets.require(code);
-    const [cfg, price] = await Promise.all([this.rates.rateConfig(code), this.rates.price(code)]);
+    const [cfg, price] = await Promise.all([this.rates.rateConfig(code), this.rates.sellPrice(code)]);
 
     // No circularity on a sell: the USD size comes straight from the coin
     // amount, so the band resolves in one pass.
     const amountIn = floorToStep(coinAmount, asset.transferStep);
     const usdValue = amountIn.mul(price.priceUsd);
 
-    const gate = await this.gateFor(code, usdValue, cfg);
+    const gate = await this.sellGateFor(code, usdValue, cfg);
     const rSell = this.rates.displayRate('sell', price.ngnPerUsd, gate);
     const ngnOut = usdValue.mul(rSell);
 

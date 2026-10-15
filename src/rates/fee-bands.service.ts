@@ -30,6 +30,7 @@ export interface ResolvedBand {
  */
 const NAMES: Record<FeeKind, { fee: string; unit: string; bandUnit: 'USD' | 'NGN' }> = {
   [FeeKind.RATE]: { fee: 'rate fee', unit: '₦ per $', bandUnit: 'USD' },
+  [FeeKind.SELL_RATE]: { fee: 'sell margin', unit: '₦ per $', bandUnit: 'USD' },
   [FeeKind.SWAP]: { fee: 'swap fee', unit: '$', bandUnit: 'USD' },
   [FeeKind.WITHDRAWAL]: { fee: 'withdrawal fee', unit: '$', bandUnit: 'USD' },
   // Naira on both sides. A naira band pegged to a dollar amount would move

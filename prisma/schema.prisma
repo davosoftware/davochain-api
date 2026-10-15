@@ -1204,8 +1204,12 @@ model RefreshToken {
 /// independently — a coin can charge a tight rate fee and a generous swap fee,
 /// and their band boundaries need not line up.
 enum FeeKind {
-  /// Naira per dollar, folded into the buy or sell rate.
+  /// Naira per dollar added to the BUY rate. Also the sell margin for a coin
+  /// with no SELL_RATE ladder of its own (and no global one).
   RATE
+  /// M11: naira per dollar subtracted from the SELL rate, whose base is what
+  /// Quidax would pay for the coin. Set apart from the buy margin.
+  SELL_RATE
   /// Flat USD taken from a coin-to-coin swap.
   SWAP
   /// Flat USD the platform adds to an external crypto withdrawal, on top of

@@ -33,6 +33,8 @@ export class RatesService {
    * still sees a live quote with its own fresh countdown.
    */
   private readonly flight: SingleFlight<PricePoint>;
+  /** Same coalescing for the sell reference (M11). */
+  private readonly sellFlight: SingleFlight<PricePoint>;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -41,6 +43,34 @@ export class RatesService {
   ) {
     const ttl = (this.config.get<number>('RATE_CACHE_TTL_SECONDS') ?? 3) * 1000;
     this.flight = new SingleFlight<PricePoint>(ttl);
+    this.sellFlight = new SingleFlight<PricePoint>(ttl);
+  }
+
+  /**
+   * M11: the reference for a SELL. What Quidax would actually pay for the coin
+   * (a coin -> naira quotation), as naira per dollar of the coin's value.
+   *
+   * `price()` comes from buying (naira -> coin): Quidax's ask. Selling at
+   * ask minus our margin meant that whenever Quidax's spread was wider than
+   * the margin, every coin bought from a customer was worth less than we paid.
+   * The probe is sized like the buy probe (about ₦1,000,000 of the coin), so
+   * both sides are quoted at a comparable depth.
+   */
+  async sellPrice(assetCode: string): Promise<PricePoint> {
+    const code = assetCode.toLowerCase();
+    return this.sellFlight.run(code, async () => {
+      const buy = await this.price(code);
+      const ngnPerCoinBuy = buy.priceUsd.mul(buy.ngnPerUsd);
+      const probe = dec('1000000').div(ngnPerCoinBuy).toDecimalPlaces(8, Decimal.ROUND_DOWN);
+      const q = await this.quidaxQuote(code, NGN, probe.toFixed());
+      const ngnPerCoinSell = dec(q.to_amount).div(dec(q.from_amount));
+      return {
+        assetCode: code,
+        ngnPerUsd: ngnPerCoinSell.div(buy.priceUsd),
+        priceUsd: buy.priceUsd,
+        capturedAt: new Date(),
+      };
+    });
   }
 
   /** The gate live right now for a coin. Versioned — always the newest row. */
