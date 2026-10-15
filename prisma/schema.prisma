@@ -133,6 +133,7 @@ enum TxType {
   GIFT_CARD // a gift card traded for naira
   FEE_CLAIM // internal: sweeping accrued fees
   INTERNAL // internal treasury movement
+  ADJUSTMENT // an owner's balance correction from reconciliation
 }
 
 enum TxStatus {
@@ -168,6 +169,9 @@ enum LedgerAccount {
   /// 1.4% Flutterwave takes from a naira deposit. A cost, kept apart from
   /// REVENUE so a busy deposit day never reads as weak margin.
   PROVIDER_FEE
+  /// Corrections an owner made so our records match what is really held
+  /// (reconciliation). Never revenue.
+  ADJUSTMENT
 }
 
 enum SettlementLegKind {
@@ -496,6 +500,9 @@ model Transaction {
   savedBankAccount     SavedBankAccount?   @relation(fields: [savedBankAccountId], references: [id])
   savedCryptoAddressId String?
   savedCryptoAddress   SavedCryptoAddress? @relation(fields: [savedCryptoAddressId], references: [id])
+  /// A balance correction (type ADJUSTMENT): the owner who made it and why. Never shown to the customer.
+  adjustedBy           String?
+  adjustmentReason     String?
 
   reference                 String          @unique // our idempotency key, sent to Quidax
   quidaxRef                 String? // their id
