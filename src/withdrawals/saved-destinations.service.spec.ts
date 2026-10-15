@@ -84,7 +84,7 @@ describe('Adding a bank account', () => {
 
   it('at the cap: refused with the number in plain words', async () => {
     const { svc } = build({ max: 1, rows: [{ kind: 'bank', id: 'b0', userId: 'u1', bankCode: '058', accountNumber: '9999999999', removedAt: null }] });
-    await expect(svc.addBank('u1', BANK)).rejects.toThrow(new BadRequestException('You can save up to 1 bank accounts. Remove one to add another.'));
+    await expect(svc.addBank('u1', BANK)).rejects.toThrow(new BadRequestException('You can save up to 1 bank account. Remove one to add another.'));
   });
 
   it('the same account twice is refused; the database index says the same thing in a race', async () => {
@@ -116,7 +116,7 @@ describe('Adding a crypto address', () => {
     const dup = build({ rows: [{ kind: 'crypto', id: 'c0', userId: 'u1', assetCode: 'btc', networkId: 'btc', address: 'bc1qxyz12345678', destinationTag: null, removedAt: null }] });
     await expect(dup.svc.addCrypto('u1', ADDR)).rejects.toThrow(new BadRequestException('This address is already saved.'));
     const full = build({ max: 1, rows: [{ kind: 'crypto', id: 'c0', userId: 'u1', assetCode: 'eth', networkId: 'eth', address: '0x1', removedAt: null }] });
-    await expect(full.svc.addCrypto('u1', ADDR)).rejects.toThrow(new BadRequestException('You can save up to 1 crypto addresses. Remove one to add another.'));
+    await expect(full.svc.addCrypto('u1', ADDR)).rejects.toThrow(new BadRequestException('You can save up to 1 crypto address. Remove one to add another.'));
   });
 
   it('saves and reports the network label', async () => {

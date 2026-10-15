@@ -139,7 +139,7 @@ export class SavedDestinationsService {
         const limits = await t.platformLimit.findUnique({ where: { id: 'default' } });
         const max = limits?.maxSavedBankAccounts ?? 5;
         const live = await t.savedBankAccount.count({ where: { userId, removedAt: null } });
-        if (live >= max) throw new BadRequestException(`You can save up to ${max} bank accounts. Remove one to add another.`);
+        if (live >= max) throw new BadRequestException(`You can save up to ${max} bank ${max === 1 ? 'account' : 'accounts'}. Remove one to add another.`);
         const dup = await t.savedBankAccount.findFirst({
           where: { userId, bankCode: input.bankCode, accountNumber: input.accountNumber, removedAt: null },
         });
@@ -175,7 +175,7 @@ export class SavedDestinationsService {
         const limits = await t.platformLimit.findUnique({ where: { id: 'default' } });
         const max = limits?.maxSavedCryptoAddresses ?? 10;
         const live = await t.savedCryptoAddress.count({ where: { userId, removedAt: null } });
-        if (live >= max) throw new BadRequestException(`You can save up to ${max} crypto addresses. Remove one to add another.`);
+        if (live >= max) throw new BadRequestException(`You can save up to ${max} crypto ${max === 1 ? 'address' : 'addresses'}. Remove one to add another.`);
         const dup = await t.savedCryptoAddress.findFirst({
           where: { userId, assetCode: code, networkId: input.network, address, destinationTag: tag, removedAt: null },
         });
