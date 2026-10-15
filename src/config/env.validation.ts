@@ -289,6 +289,14 @@ export const envSchema = z
         message: 'KYC_HASH_KEY must be at least 32 characters',
       });
     }
+    // L5: it encrypts partner keys and gift-card codes; a short passphrase is a weak AES key.
+    if ((env.NODE_ENV === 'staging' || env.NODE_ENV === 'production') && (env.CREDENTIALS_KEY ?? '').length < 32) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['CREDENTIALS_KEY'],
+        message: 'CREDENTIALS_KEY must be at least 32 characters in staging and production (e.g. openssl rand -base64 32)',
+      });
+    }
     if ((env.NODE_ENV === 'staging' || env.NODE_ENV === 'production') && !env.KYC_HASH_KEY) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
