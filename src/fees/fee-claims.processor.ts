@@ -2,7 +2,7 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Logger } from '@nestjs/common';
 import { Job } from 'bullmq';
 import { JOBS, QUEUES } from '../common/queues';
-import { FeeClaimsService } from './fee-claims.service';
+import { ClaimStartedError, FeeClaimsService } from './fee-claims.service';
 
 /**
  * Concurrency 1, on the background rate-limit lane.
@@ -27,6 +27,13 @@ export class FeeClaimsProcessor extends WorkerHost {
       await this.claims.finaliseIfDone(job.data.runId);
       return { outcome };
     } catch (err) {
+      // H7: it had started, so something may have gone out. Park it and stop:
+      // returning (not throwing) means BullMQ does not retry it.
+      if (err instanceof ClaimStartedError) {
+        await this.claims.recordFailure(job.data.runId, job.data.receivableId, err.message, true);
+        await this.claims.finaliseIfDone(job.data.runId);
+        return { outcome: 'parked' };
+      }
       // Isolated: one user's failure does not touch the rest of the run.
       if (job.attemptsMade + 1 >= (job.opts.attempts ?? 8)) {
         await this.claims.recordFailure(

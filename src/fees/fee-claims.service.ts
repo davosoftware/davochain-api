@@ -23,6 +23,14 @@ export interface ClaimableRow {
   estimatedCalls: number;
 }
 
+/** A claim failed AFTER its start was recorded: some call may have gone out. Never retry. */
+export class ClaimStartedError extends Error {
+  constructor(readonly cause: unknown) {
+    super((cause as Error)?.message ?? String(cause));
+    this.name = 'ClaimStartedError';
+  }
+}
+
 /**
  * Fee collection, triggered by an admin rather than a cron.
  *
@@ -173,12 +181,14 @@ export class FeeClaimsService {
    * The receivable is cleared only AFTER the transfer confirms, so a crash
    * mid-run leaves it claimable rather than lost or double-swept.
    */
-  async claimOne(runId: string, receivableId: string): Promise<'direct' | 'converted' | 'skipped'> {
+  async claimOne(runId: string, receivableId: string): Promise<'direct' | 'converted' | 'skipped' | 'parked'> {
     const receivable = await this.prisma.feeReceivable.findUnique({
       where: { id: receivableId },
       include: { asset: true },
     });
     if (!receivable || receivable.sweptAt) return 'skipped';
+    // H7: started before and never finished. Parked for a person, never repeated.
+    if (receivable.claimStartedAt) return 'parked';
 
     const destination = this.destination();
     const amount = dec(receivable.amount);
@@ -186,9 +196,39 @@ export class FeeClaimsService {
     const mainId = await this.settlement.mainAccount();
     const transferMin = receivable.asset.transferMin ? dec(receivable.asset.transferMin) : ZERO;
 
+    /*
+     * H7: the claim swaps and moves coins out of the customer's own
+     * sub-account, which also holds THEIR coins. Once any call has gone out,
+     * running it again could be paid with the customer's money. So the start
+     * is recorded, once, before the first call; from then on the claim either
+     * finishes or is parked (ClaimStartedError), never retried.
+     */
+    const started = await this.prisma.feeReceivable.updateMany({
+      where: { id: receivable.id, sweptAt: null, claimStartedAt: null },
+      data: { claimStartedAt: new Date() },
+    });
+    if (started.count === 0) return 'parked';
+
+    try {
+      return await this.collect(runId, receivable, destination, amount, subId, mainId, transferMin);
+    } catch (err) {
+      throw new ClaimStartedError(err);
+    }
+  }
+
+  private async collect(
+    runId: string,
+    receivable: { id: string; userId: string; assetCode: string },
+    destination: string,
+    amount: Decimal,
+    subId: string,
+    mainId: string,
+    transferMin: Decimal,
+  ): Promise<'direct' | 'converted'> {
+
     // Already at the destination and big enough to move: one call, no spread.
     if (receivable.assetCode === destination && amount.gte(transferMin)) {
-      await this.transferToMain(runId, receivable.userId, subId, mainId, destination, amount);
+      await this.transferToMain(runId, receivable.id, receivable.userId, subId, mainId, destination, amount);
       await this.markSwept(receivable.id, amount, destination);
       return 'direct';
     }
@@ -208,20 +248,22 @@ export class FeeClaimsService {
     const swap = await this.quidax.confirmSwap(subId, quotation.id, 'background');
     const received = dec(swap.received_amount);
 
-    await this.transferToMain(runId, receivable.userId, subId, mainId, destination, received);
+    await this.transferToMain(runId, receivable.id, receivable.userId, subId, mainId, destination, received);
     await this.markSwept(receivable.id, received, destination);
     return 'converted';
   }
 
   private async transferToMain(
     runId: string,
+    receivableId: string,
     userId: string,
     subId: string,
     mainId: string,
     currency: string,
     amount: Decimal,
   ): Promise<void> {
-    const reference = this.quidax.newReference('feeclaim');
+    // One fixed reference per fee: a transfer can always be looked up later.
+    const reference = `feeclaim-${receivableId}`;
     await this.quidax.internalTransfer(
       subId,
       { currency, amount: amount.toFixed(), fund_uid: mainId, reference },
@@ -253,12 +295,21 @@ export class FeeClaimsService {
     }
   }
 
-  async recordFailure(runId: string, receivableId: string, error: string): Promise<void> {
+  /**
+   * A claim that failed. If nothing had been sent yet it is released, so the
+   * next run can try again. If it had started (H7), it stays parked on this
+   * run with claimStartedAt set: a person checks Quidax before anything else
+   * happens to it.
+   */
+  async recordFailure(runId: string, receivableId: string, error: string, started = false): Promise<void> {
     await this.prisma.feeClaimRun.update({
       where: { id: runId },
       data: { failedCount: { increment: 1 } },
     });
-    // Release it so the next run can retry — never leave it stranded.
+    if (started) {
+      this.log.error(`Claim for receivable ${receivableId} stopped part-way and is PARKED for manual review: ${error}`);
+      return;
+    }
     await this.prisma.feeReceivable.update({
       where: { id: receivableId },
       data: { claimRunId: null },

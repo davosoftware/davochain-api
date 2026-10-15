@@ -699,14 +699,18 @@ model SwapFee {
 /// Fee earned but still sitting in the user's sub-account. Cleared only after a
 /// claim transfer confirms, so a crashed run leaves it claimable, never lost.
 model FeeReceivable {
-  id           String    @id @default(uuid())
-  userId       String
-  assetCode    String
-  amount       Decimal   @db.Decimal(38, 18)
-  usdAtAccrual Decimal   @db.Decimal(38, 18)
-  claimRunId   String?
-  sweptAt      DateTime?
-  createdAt    DateTime  @default(now())
+  id             String    @id @default(uuid())
+  userId         String
+  assetCode      String
+  amount         Decimal   @db.Decimal(38, 18)
+  usdAtAccrual   Decimal   @db.Decimal(38, 18)
+  claimRunId     String?
+  sweptAt        DateTime?
+  /// Set, once, just before a claim's first call to Quidax. Started but not
+  /// swept means the claim stopped part-way: parked for a person, never
+  /// retried automatically (a repeat would spend the customer's own coins).
+  claimStartedAt DateTime?
+  createdAt      DateTime  @default(now())
 
   user     User         @relation(fields: [userId], references: [id])
   asset    Asset        @relation(fields: [assetCode], references: [code])
