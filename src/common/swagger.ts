@@ -14,9 +14,11 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
  * deliberately want it there, behind your own auth.
  */
 export function setupSwagger(app: INestApplication, config: ConfigService): string | null {
-  const isProduction = config.get<string>('NODE_ENV') === 'production';
+  // M13: staging too; a staging server is reachable from outside.
+  const env = config.get<string>('NODE_ENV');
+  const deployed = env === 'production' || env === 'staging';
   const forced = config.get<string>('ENABLE_DOCS') === 'true';
-  if (isProduction && !forced) return null;
+  if (deployed && !forced) return null;
 
   const doc = new DocumentBuilder()
     .setTitle('Davochain API')

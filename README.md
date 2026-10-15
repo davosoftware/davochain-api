@@ -43,7 +43,7 @@ Try it out button. Log in via `/v1/admin/auth/login`, copy the token, click
 And `GET http://localhost:3000/health` should return:
 
 ```json
-{ "status": "ok", "database": "up", "quidax": "mock", "env": "development" }
+{ "status": "ok", "database": "up", "time": "2026-10-15T12:00:00.000Z" }
 ```
 
 ### Generating the secrets

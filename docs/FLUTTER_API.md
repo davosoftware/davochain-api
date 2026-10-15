@@ -275,15 +275,13 @@ GET /health
 
 **Response** `200`
 ```json
-{ "status": "ok", "database": "up", "quidax": "mock", "env": "development", "time": "2026-10-02T10:25:10.100Z" }
+{ "status": "ok", "database": "up", "time": "2026-10-02T10:25:10.100Z" }
 ```
 
 | Field | Type | Description |
 | --- | --- | --- |
 | `status` | string | `ok` or `degraded` |
 | `database` | string | `up` or `down` |
-| `quidax` | string | `mock` (test) or `live` |
-| `env` | string | Server environment name |
 | `time` | string (date) | Server time |
 
 ---

@@ -1,15 +1,12 @@
 import { Controller, Get } from '@nestjs/common';
 import { Public } from '../auth/public.decorator';
 import { RateLimit } from '../rate-limit/rate-limit.decorator';
-import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Controller('health')
 export class HealthController {
-  constructor(
-    private readonly prisma: PrismaService,
-    private readonly config: ConfigService,
-  ) {}
+  // M13: public, so it says nothing about the setup (environment, provider mode).
+  constructor(private readonly prisma: PrismaService) {}
 
   @Public()
   @RateLimit('public')
@@ -25,8 +22,6 @@ export class HealthController {
     return {
       status: database === 'up' ? 'ok' : 'degraded',
       database,
-      quidax: this.config.get<boolean>('QUIDAX_USE_MOCK') ? 'mock' : 'live',
-      env: this.config.get<string>('NODE_ENV'),
       time: new Date().toISOString(),
     };
   }

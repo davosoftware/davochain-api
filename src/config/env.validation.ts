@@ -340,6 +340,14 @@ export const envSchema = z
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['DOJAH_LOW_BALANCE_WARN'], message: 'DOJAH_LOW_BALANCE_WARN must be greater than DOJAH_MIN_BALANCE' });
     }
     // Production must never quietly run against fixtures.
+    // M13: the mock accepts unsigned webhooks; on staging anyone could credit balances.
+    if (env.QUIDAX_USE_MOCK && !['development', 'test', 'production'].includes(env.NODE_ENV)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['QUIDAX_USE_MOCK'],
+        message: 'QUIDAX_USE_MOCK=true is only allowed in development and test',
+      });
+    }
     if (env.NODE_ENV === 'production' && env.QUIDAX_USE_MOCK) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
