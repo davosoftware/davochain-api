@@ -8,6 +8,7 @@ import { TradesModule } from '../trades/trades.module';
 import { SignatureService } from './signature.service';
 import { WebhooksController } from './webhooks.controller';
 import { WebhooksProcessor } from './webhooks.processor';
+import { WebhookRedriveService } from './webhook-redrive.service';
 
 @Module({
   imports: [
@@ -18,7 +19,7 @@ import { WebhooksProcessor } from './webhooks.processor';
     BullModule.registerQueue({ name: QUEUES.WEBHOOKS }),
   ],
   controllers: [WebhooksController],
-  providers: [SignatureService, WebhooksProcessor],
+  providers: [SignatureService, WebhooksProcessor, WebhookRedriveService],
   exports: [SignatureService],
 })
 export class WebhooksModule {}

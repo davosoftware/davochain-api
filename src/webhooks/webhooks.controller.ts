@@ -1,4 +1,4 @@
-import { Controller, Headers, HttpCode, Logger, Post, Req } from '@nestjs/common';
+import { Controller, Headers, HttpCode, Logger, Post, Req, UnauthorizedException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { createHash } from 'node:crypto';
@@ -70,21 +70,35 @@ export class WebhooksController {
           },
         })
         .catch(() => undefined);
-      return { received: true };
+      // H5: a 200 told the sender "accepted". Refuse it plainly.
+      throw new UnauthorizedException('Invalid signature');
     }
 
-    const stored = await this.prisma.webhookEvent
-      .create({
+    let toQueue: { id: string; jobId: string } | null = null;
+    try {
+      const stored = await this.prisma.webhookEvent.create({
         data: { eventName, dedupHash, payload: payload as never, signatureValid: true },
-      })
-      .catch(() => null); // unique violation = duplicate delivery, already queued
+      });
+      toQueue = { id: stored.id, jobId: jobId('wh', stored.id) };
+    } catch (err) {
+      if ((err as { code?: string }).code !== 'P2002') throw err;
+      // H5: a duplicate delivery. If the first copy was stored but never
+      // processed (Redis was down, or every retry failed), queue it again.
+      const existing = await this.prisma.webhookEvent.findUnique({
+        where: { dedupHash },
+        select: { id: true, processedAt: true },
+      });
+      if (existing && !existing.processedAt) {
+        toQueue = { id: existing.id, jobId: jobId('wh', existing.id, 'resent', Date.now()) };
+      }
+    }
 
-    if (stored) {
-      await this.queue.add(
-        JOBS.PROCESS_WEBHOOK,
-        { webhookEventId: stored.id },
-        { jobId: jobId('wh', stored.id) },
-      );
+    if (toQueue) {
+      // The event is safely stored, so a queue failure must not lose it or make
+      // Quidax think we refused it: the re-drive job picks it up (H5).
+      await this.queue
+        .add(JOBS.PROCESS_WEBHOOK, { webhookEventId: toQueue.id }, { jobId: toQueue.jobId })
+        .catch((err: Error) => this.log.error(`Could not queue webhook event ${toQueue!.id}; the re-drive job will: ${err.message}`));
     }
 
     return { received: true };
