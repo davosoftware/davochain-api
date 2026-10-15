@@ -340,6 +340,13 @@ export class AdminController {
     return this.reconciliation.checkInvariants();
   }
 
+  /** One coin: the customers whose record doesn't match their sub-account, and the likely reason. */
+  @Get('reconciliation/:asset/customers')
+  @RequirePermissions('reconciliation.view')
+  reconcileCustomers(@Param('asset') asset: string) {
+    return this.reconciliation.customersFor(asset);
+  }
+
   /**
    * The flat list the old screen used, kept for anything already calling it.
    *

@@ -24,6 +24,29 @@ export interface DriftRow {
   partial: boolean;
 }
 
+export type MismatchReason = 'BEING_CHECKED' | 'IN_PROGRESS' | 'UNEXPLAINED' | 'UNREADABLE';
+
+export interface CustomerMismatches {
+  asset: string;
+  checkedAt: string;
+  /** True when some sub-account could not be read, or there were more holders than one check reads. */
+  partial: boolean;
+  rows: Array<{
+    userId: string;
+    name: string;
+    email: string;
+    /** available + locked + uncollected fees, in our records. */
+    recorded: string;
+    /** What Quidax holds in their sub-account; null when it could not be read. */
+    held: string | null;
+    /** recorded − held; positive means our records say more than Quidax holds. */
+    difference: string | null;
+    unreadable: boolean;
+    open: Array<{ id: string; type: TxType; status: TxStatus; createdAt: Date }>;
+    reason: MismatchReason;
+  }>;
+}
+
 /**
  * Three jobs, all of them things that go wrong silently.
  *
@@ -171,6 +194,96 @@ export class ReconciliationService {
 
     this.log.debug(`Reconciled ${scanned} sub-account(s) across ${rows.length} asset(s)`);
     return rows;
+  }
+
+  /**
+   * One coin, customer by customer: whose record doesn't match what their
+   * sub-account holds, and the likely reason (the reconciliation screen).
+   * Bounded like the totals check. A sub-account that can't be read is listed
+   * as unreadable: it proves nothing, so it is never reported as missing money.
+   */
+  async customersFor(asset: string): Promise<CustomerMismatches> {
+    const code = asset.toLowerCase();
+    const listed = await this.prisma.asset.findFirst({ where: { code, isListed: true, isFiat: false }, select: { code: true } });
+    if (!listed) throw new BadRequestException('Choose a listed coin');
+
+    const [holders, receivables] = await Promise.all([
+      this.prisma.balance.findMany({
+        where: { assetCode: code, OR: [{ available: { gt: 0 } }, { locked: { gt: 0 } }] },
+        select: { userId: true, available: true, locked: true },
+      }),
+      this.prisma.feeReceivable.findMany({ where: { sweptAt: null, assetCode: code }, select: { userId: true, amount: true } }),
+    ]);
+    const recorded = new Map<string, Decimal>();
+    const add = (id: string, v: Decimal) => recorded.set(id, (recorded.get(id) ?? ZERO).plus(v));
+    for (const h of holders) add(h.userId, dec(h.available).plus(dec(h.locked)));
+    for (const r of receivables) add(r.userId, dec(r.amount));
+
+    const all = [...recorded.keys()];
+    const scanned = all.slice(0, ReconciliationService.MAX_USERS_PER_RUN);
+    let partial = all.length > scanned.length;
+    const found: Array<{ userId: string; recorded: Decimal; held: Decimal | null }> = [];
+    for (const userId of scanned) {
+      let held: Decimal | null = null;
+      try {
+        const subId = await this.settlement.quidaxIdFor(userId);
+        held = ZERO;
+        for (const w of await this.quidax.fetchWallets(subId)) {
+          if (w.currency?.toLowerCase() === code) held = held.plus(dec(w.balance || '0'));
+        }
+      } catch {
+        held = null;
+        partial = true;
+      }
+      const mine = recorded.get(userId) ?? ZERO;
+      if (held !== null && mine.minus(held).abs().lte(dec(ReconciliationService.TOLERANCE))) continue;
+      found.push({ userId, recorded: mine, held });
+    }
+
+    const ids = found.map((f) => f.userId);
+    const [people, open] = ids.length
+      ? await Promise.all([
+          this.prisma.user.findMany({ where: { id: { in: ids } }, select: { id: true, firstName: true, lastName: true, email: true } }),
+          this.prisma.transaction.findMany({
+            where: {
+              userId: { in: ids },
+              status: { in: [TxStatus.PENDING, TxStatus.PROCESSING, TxStatus.RECONCILING] },
+              OR: [{ fromAsset: code }, { toAsset: code }],
+            },
+            select: { id: true, userId: true, type: true, status: true, createdAt: true },
+            orderBy: { createdAt: 'asc' },
+          }),
+        ])
+      : [[], []];
+
+    return {
+      asset: code,
+      checkedAt: new Date().toISOString(),
+      partial,
+      rows: found.map((f) => {
+        const person = people.find((p) => p.id === f.userId);
+        const mine = open.filter((t) => t.userId === f.userId).map(({ id, type, status, createdAt }) => ({ id, type, status, createdAt }));
+        const reason: MismatchReason =
+          f.held === null
+            ? 'UNREADABLE'
+            : mine.some((t) => t.status === TxStatus.RECONCILING)
+              ? 'BEING_CHECKED'
+              : mine.length > 0
+                ? 'IN_PROGRESS'
+                : 'UNEXPLAINED';
+        return {
+          userId: f.userId,
+          name: person ? `${person.firstName} ${person.lastName}` : '',
+          email: person?.email ?? '',
+          recorded: f.recorded.toFixed(),
+          held: f.held?.toFixed() ?? null,
+          difference: f.held === null ? null : f.recorded.minus(f.held).toFixed(),
+          unreadable: f.held === null,
+          open: mine,
+          reason,
+        };
+      }),
+    };
   }
 
   /**
