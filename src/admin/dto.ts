@@ -67,6 +67,11 @@ export class InventoryTargetDto {
   @IsOptional() @IsBoolean() fallbackSwapEnabled?: boolean;
 }
 
+/** An admin removing a customer's saved withdrawal destination (Part 2). The customer is emailed this reason. */
+export class RemoveDestinationDto {
+  @IsString() @MinLength(10, { message: 'Give a reason of at least 10 characters' }) @MaxLength(500) reason!: string;
+}
+
 export class SuspendUserDto {
   @IsString() @MaxLength(500) reason!: string;
 }
@@ -267,6 +272,9 @@ class LevelCooloffDto {
 class PlatformLimitDto {
   @IsOptional() @IsString() @MaxLength(30) tradingMaxPerDay!: string | null;
   @IsEnum(LimitCurrency) currency!: LimitCurrency;
+  /** How many withdrawal destinations a customer may keep (Part 2). The service checks 1 to 50. */
+  @IsOptional() @IsInt() maxSavedBankAccounts?: number;
+  @IsOptional() @IsInt() maxSavedCryptoAddresses?: number;
 }
 
 /** PUT /v1/admin/levels: the whole table at once, so one save is one audit entry. */

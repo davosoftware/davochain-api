@@ -9,7 +9,8 @@ const AMOUNT = /^\d+(\.\d+)?$/;
 export interface SaveLevelsInput {
   rules: Array<{ level: PolicyLevel; action: PolicyAction; allowed: boolean; currency: LimitCurrency; minPerTx: string | null; maxPerTx: string | null; maxPerDay: string | null }>;
   cooloffs: Array<{ level: PolicyLevel; afterSignupHours: number; afterCredentialChangeHours: number; afterNewPayeeHours: number }>;
-  platform: { tradingMaxPerDay: string | null; currency: LimitCurrency };
+  /** The two caps are optional so an older dashboard's save leaves them alone. */
+  platform: { tradingMaxPerDay: string | null; currency: LimitCurrency; maxSavedBankAccounts?: number; maxSavedCryptoAddresses?: number };
 }
 
 @Injectable()
@@ -27,7 +28,12 @@ export class LevelAdminService {
       actions: (Object.keys(ACTIONS) as PolicyAction[]).map((a) => ({ action: a, label: ACTIONS[a].label, unit: ACTIONS[a].unit })),
       rules: rules.map((r) => ({ level: r.level, action: r.action, allowed: r.allowed, currency: r.currency, minPerTx: s(r.minPerTx), maxPerTx: s(r.maxPerTx), maxPerDay: s(r.maxPerDay) })),
       cooloffs: cooloffs.map((c) => ({ level: c.level, afterSignupHours: c.afterSignupHours, afterCredentialChangeHours: c.afterCredentialChangeHours, afterNewPayeeHours: c.afterNewPayeeHours })),
-      platform: { tradingMaxPerDay: s(platform?.tradingMaxPerDay), currency: platform?.currency ?? 'USD' },
+      platform: {
+        tradingMaxPerDay: s(platform?.tradingMaxPerDay),
+        currency: platform?.currency ?? 'USD',
+        maxSavedBankAccounts: platform?.maxSavedBankAccounts ?? 5,
+        maxSavedCryptoAddresses: platform?.maxSavedCryptoAddresses ?? 10,
+      },
     };
   }
 
@@ -48,6 +54,11 @@ export class LevelAdminService {
     }
     const p = input.platform.tradingMaxPerDay;
     if (p != null && p !== '' && !AMOUNT.test(p)) throw new BadRequestException('Platform limit: enter a plain number.');
+    for (const cap of [input.platform.maxSavedBankAccounts, input.platform.maxSavedCryptoAddresses]) {
+      if (cap !== undefined && (!Number.isInteger(cap) || cap < 1 || cap > 50)) {
+        throw new BadRequestException('Saved destinations: the maximum must be a whole number between 1 and 50.');
+      }
+    }
   }
 
   async save(input: SaveLevelsInput, adminId: string) {
@@ -63,7 +74,14 @@ export class LevelAdminService {
         const data = { afterSignupHours: c.afterSignupHours, afterCredentialChangeHours: c.afterCredentialChangeHours, afterNewPayeeHours: c.afterNewPayeeHours, updatedBy: adminId };
         await t.levelCooloff.upsert({ where: { level: c.level }, create: { level: c.level, ...data }, update: data });
       }
-      const pdata = { tradingMaxPerDay: blank(input.platform.tradingMaxPerDay), currency: input.platform.currency, updatedBy: adminId };
+      const { maxSavedBankAccounts, maxSavedCryptoAddresses } = input.platform;
+      const pdata = {
+        tradingMaxPerDay: blank(input.platform.tradingMaxPerDay),
+        currency: input.platform.currency,
+        ...(maxSavedBankAccounts !== undefined ? { maxSavedBankAccounts } : {}),
+        ...(maxSavedCryptoAddresses !== undefined ? { maxSavedCryptoAddresses } : {}),
+        updatedBy: adminId,
+      };
       await t.platformLimit.upsert({ where: { id: 'default' }, create: { id: 'default', ...pdata }, update: pdata });
     });
     const after = await this.view();

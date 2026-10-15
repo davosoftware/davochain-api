@@ -226,6 +226,21 @@ export class SavedDestinationsService {
     return rows.map((r) => cryptoView(r, label(r), now));
   }
 
+  /** An admin removes a customer's destination (e.g. reported fraud); the customer is told why. */
+  async removeByAdmin(kind: DestinationKind, userId: string, id: string, adminId: string, reason: string) {
+    const out = await this.remove(kind, userId, id, adminId);
+    this.notifications
+      .notify({
+        userId,
+        type: 'security.destination_removed',
+        title: 'A saved withdrawal destination was removed',
+        body: `Our team removed ${out.label}. Reason: ${reason}`,
+        email: { key: 'destination.removed', variables: { destination: out.label, reason } },
+      })
+      .catch((err: Error) => this.log.error(`Could not tell ${userId} about a removed destination: ${err.message}`));
+    return out;
+  }
+
   /**
    * Soft delete: past withdrawals still point at the row. `by` is 'user' or an
    * admin's id. Returns the row before and after, for the admin audit.

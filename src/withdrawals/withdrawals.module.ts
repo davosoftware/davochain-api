@@ -14,6 +14,6 @@ import { SavedDestinationsController } from './saved-destinations.controller';
   imports: [QuidaxModule, LedgerModule, AssetsModule, TradesModule, RatesModule],
   controllers: [WithdrawalsController, SavedDestinationsController],
   providers: [WithdrawalsService, SavedDestinationsService, PasswordService],
-  exports: [WithdrawalsService],
+  exports: [WithdrawalsService, SavedDestinationsService],
 })
 export class WithdrawalsModule {}

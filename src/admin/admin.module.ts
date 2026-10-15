@@ -29,6 +29,7 @@ import { NgnDepositsModule } from '../ngn-deposits/ngn-deposits.module';
 import { FlutterwaveModule } from '../flutterwave/flutterwave.module';
 import { QUEUES } from '../common/queues';
 import { LevelAdminService } from '../levels/level-admin.service';
+import { WithdrawalsModule } from '../withdrawals/withdrawals.module';
 
 @Module({
   imports: [
@@ -45,6 +46,8 @@ import { LevelAdminService } from '../levels/level-admin.service';
     NgnDepositsModule,
     FlutterwaveModule,
     KycModule,
+    // Admins view and remove customers' saved withdrawal destinations (Part 2).
+    WithdrawalsModule,
   ],
   controllers: [AdminController, AdminAuthController, AlertRecipientsController, KycBasicReviewController, ComplianceController, DojahAdminController],
   providers: [AdminService, UsersAdminService, AdminsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService, AdminSessionsService, AdminOtpService, NgnWithdrawalsService, AdminGuard, LevelAdminService],

@@ -55,6 +55,7 @@ import {
 import { SiteSettingsService } from './site-settings.service';
 import { CredentialsService } from '../common/credentials.service';
 import { LevelAdminService } from '../levels/level-admin.service';
+import { SavedDestinationsService } from '../withdrawals/saved-destinations.service';
 import { FeeBandsService } from '../rates/fee-bands.service';
 import { PriceReferenceService } from '../rates/price-reference.service';
 import { AdminGuard } from './admin.guard';
@@ -75,6 +76,7 @@ import {
   SetPermissionsDto,
   SetRoleDto,
   SaveLevelsDto,
+  RemoveDestinationDto,
   SetCredentialDto,
   SiteLogoDto,
   SiteSettingsDto,
@@ -162,6 +164,7 @@ export class AdminController {
     private readonly site: SiteSettingsService,
     private readonly credentials: CredentialsService,
     private readonly levelAdmin: LevelAdminService,
+    private readonly savedDestinations: SavedDestinationsService,
     private readonly priceReference: PriceReferenceService,
     private readonly bands: FeeBandsService,
     private readonly prisma: PrismaService,
@@ -1031,6 +1034,40 @@ export class AdminController {
     return result;
   }
 
+  // ── saved withdrawal destinations (Part 2, C6) ────────────
+  //
+  // An admin may remove one (e.g. reported fraud). The customer is emailed the
+  // reason; the removal is audited before → after.
+
+  @Delete('users/:id/bank-accounts/:destId')
+  @RequirePermissions('users.manage')
+  async removeUserBankAccount(
+    @CurrentAdmin('sub') adminId: string,
+    @Param('id') id: string,
+    @Param('destId') destId: string,
+    @Body() dto: RemoveDestinationDto,
+    @Req() req: Request,
+  ) {
+    const reason = dto.reason.trim();
+    const { before, after } = await this.savedDestinations.removeByAdmin('bank', id, destId, adminId, reason);
+    await this.admin.audit(adminId, 'saved_destination.remove', 'SavedBankAccount', destId, before, { ...after, reason }, req.ip);
+    return { removed: true };
+  }
+
+  @Delete('users/:id/crypto-addresses/:destId')
+  @RequirePermissions('users.manage')
+  async removeUserCryptoAddress(
+    @CurrentAdmin('sub') adminId: string,
+    @Param('id') id: string,
+    @Param('destId') destId: string,
+    @Body() dto: RemoveDestinationDto,
+    @Req() req: Request,
+  ) {
+    const reason = dto.reason.trim();
+    const { before, after } = await this.savedDestinations.removeByAdmin('crypto', id, destId, adminId, reason);
+    await this.admin.audit(adminId, 'saved_destination.remove', 'SavedCryptoAddress', destId, before, { ...after, reason }, req.ip);
+    return { removed: true };
+  }
   // ── naira deposit accounts (Flutterwave) ──────────────────
 
   /** System → Flutterwave: is the naira rail safe to open accounts on? Cached a minute unless refresh=true. */

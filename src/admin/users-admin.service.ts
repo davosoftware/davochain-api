@@ -3,6 +3,7 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { BroadcastAudience, NotificationChannel, Prisma, UserStatus, VirtualAccountStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { bankView, cryptoView } from '../withdrawals/saved-destinations.service';
 import { TemplatedMailService } from '../cms/templated-mail.service';
 import { VirtualAccountsService } from '../ngn-deposits/virtual-accounts.service';
 import { dec, str, ZERO } from '../common/money';
@@ -194,6 +195,7 @@ export class UsersAdminService {
       }),
       this.prisma.transaction.count({ where: { userId } }),
     ]);
+    const savedDestinations = await this.savedDestinations(userId);
 
     const byAsset = new Map(balances.map((b) => [b.assetCode, b]));
 
@@ -230,7 +232,25 @@ export class UsersAdminService {
           };
         })
         .filter((b) => !b.isZero),
+      savedDestinations,
     };
+  }
+
+  /** Where this customer's withdrawals may go (Part 2). The bank number is masked. */
+  private async savedDestinations(userId: string) {
+    const [banks, addresses] = await Promise.all([
+      this.prisma.savedBankAccount.findMany({ where: { userId, removedAt: null }, orderBy: { createdAt: 'desc' } }),
+      this.prisma.savedCryptoAddress.findMany({ where: { userId, removedAt: null }, orderBy: { createdAt: 'desc' } }),
+    ]);
+    const networks = addresses.length
+      ? await this.prisma.assetNetwork.findMany({
+          where: { OR: addresses.map((a) => ({ assetCode: a.assetCode, networkId: a.networkId })) },
+          select: { assetCode: true, networkId: true, label: true },
+        })
+      : [];
+    const label = (a: { assetCode: string; networkId: string }) =>
+      networks.find((n) => n.assetCode === a.assetCode && n.networkId === a.networkId)?.label ?? a.networkId;
+    return { bankAccounts: banks.map((b) => bankView(b)), cryptoAddresses: addresses.map((a) => cryptoView(a, label(a))) };
   }
 
   /**
