@@ -94,11 +94,20 @@ export async function login(user: TestUser): Promise<TestUser> {
 
 export const ADDRESS = { street: '1 E2E Street', city: 'Ikeja', state: 'Lagos', lga: 'Ikeja' };
 
+/**
+ * A fresh 11-digit BVN/NIN from a Dojah-mock family: '333' is the clean person,
+ * '222' the PEP sandbox person, '666' sanctioned, '777' a possible match.
+ * One number verifies one account (H8), so every test user needs its own.
+ */
+export function idNumber(family: '333' | '222' | '666' | '777'): string {
+  return family + String(Math.floor(Math.random() * 1e8)).padStart(8, '0');
+}
+
 /** Basic verification with the Dojah mock's clean identity, then a fresh login (approval ends sessions). */
 export async function verifyBasic(user: TestUser): Promise<TestUser> {
   const r = await call('POST', '/kyc/basic', {
     token: user.token,
-    body: { idType: 'BVN', idNumber: '33333333333', firstName: 'Someone', lastName: 'Clean', dateOfBirth: '1995-03-03', address: ADDRESS, stateOfOrigin: 'Lagos', country: 'NG' },
+    body: { idType: 'BVN', idNumber: idNumber('333'), firstName: 'Someone', lastName: 'Clean', dateOfBirth: '1995-03-03', address: ADDRESS, stateOfOrigin: 'Lagos', country: 'NG' },
   });
   if (r.status !== 201 || r.body.state !== 'APPROVED') {
     throw new Error(

@@ -1,4 +1,4 @@
-import { ADDRESS, adminToken, call, hasAdmin, login, newUser, requireServer } from './helpers';
+import { ADDRESS, adminToken, call, hasAdmin, login, newUser, requireServer, idNumber } from './helpers';
 
 /**
  * Admin flows. Needs an OWNER account: set E2E_ADMIN_EMAIL and E2E_ADMIN_PASSWORD
@@ -57,7 +57,7 @@ describeAdmin('identity review: a name mismatch decided by an admin', () => {
     const u = await newUser();
     await call('POST', '/kyc/basic', {
       token: u.token,
-      body: { idType: 'BVN', idNumber: '33333333333', firstName: 'Wrong', lastName: 'Person', dateOfBirth: '1995-03-03', address: ADDRESS, stateOfOrigin: 'Lagos', country: 'NG' },
+      body: { idType: 'BVN', idNumber: idNumber('333'), firstName: 'Wrong', lastName: 'Person', dateOfBirth: '1995-03-03', address: ADDRESS, stateOfOrigin: 'Lagos', country: 'NG' },
     });
     const short = await call('POST', `/admin/kyc/${u.id}/basic-decision`, { token: ADMIN, body: { approve: false, reason: 'no' } });
     expect(short.status).toBe(400);
@@ -81,9 +81,10 @@ describeAdmin('identity review: a name mismatch decided by an admin', () => {
 describeAdmin('compliance review: a PEP hit cleared by an admin', () => {
   it('the case opens, its view is allowed, and EDD approval makes the user Basic', async () => {
     const u = await newUser();
+    const raw = idNumber('222');
     const s = await call('POST', '/kyc/basic', {
       token: u.token,
-      body: { idType: 'BVN', idNumber: '22222222222', firstName: 'John', middleName: 'Doe', lastName: 'Ajayi', dateOfBirth: '2000-05-01', address: ADDRESS, stateOfOrigin: 'Lagos', country: 'NG' },
+      body: { idType: 'BVN', idNumber: raw, firstName: 'John', middleName: 'Doe', lastName: 'Ajayi', dateOfBirth: '2000-05-01', address: ADDRESS, stateOfOrigin: 'Lagos', country: 'NG' },
     });
     expect(s.body.state).toBe('COMPLIANCE_REVIEW');
 
@@ -95,7 +96,7 @@ describeAdmin('compliance review: a PEP hit cleared by an admin', () => {
     const detail = await call('GET', `/admin/compliance/cases/${mine!.id}`, { token: ADMIN });
     expect(detail.status).toBe(200);
     expect(detail.body.screening).toMatchObject({ status: 'UNKNOWN' });
-    expect(JSON.stringify(detail.body)).not.toContain('22222222222'); // never the raw BVN
+    expect(JSON.stringify(detail.body)).not.toContain(raw); // never the raw BVN
 
     const bad = await call('POST', `/admin/compliance/cases/${mine!.id}/decide`, { token: ADMIN, body: { decision: 'SANCTIONS_CONFIRMED', reason: 'Not a sanctions case at all' } });
     expect(bad.status).toBe(400);

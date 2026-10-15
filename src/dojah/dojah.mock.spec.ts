@@ -38,3 +38,26 @@ describe('mock identities whose AML screen reaches the sanctions paths (AML scre
     expect(b).toMatchObject({ found: true, identity: { lastName: 'Maybesanctioned', usable: true } });
   });
 });
+
+/**
+ * H8 made one BVN/NIN verify one account. Tests that create many accounts need
+ * many numbers that still mean "the clean person" or "the sanctioned person",
+ * so the mock reads a number by its first three digits when it is not one of
+ * the exact special numbers.
+ */
+describe('DojahMockClient: number families (H8)', () => {
+  it.each([
+    ['33312345678', 'Someone', 'Clean'],
+    ['22298765432', 'John', 'Ajayi'],
+    ['66600000001', 'Test', 'Sanctioned'],
+    ['77700000001', 'Test', 'Maybesanctioned'],
+  ])('%s reads as its family', async (num, first, last) => {
+    const r = await new DojahMockClient().lookup('BVN', num);
+    expect(r).toMatchObject({ found: true, identity: { firstName: first, lastName: last } });
+  });
+
+  it('the exact special numbers keep their meaning', async () => {
+    await expect(new DojahMockClient().lookup('BVN', '11111111111')).resolves.toMatchObject({ found: false });
+    await expect(new DojahMockClient().lookup('BVN', '40200000001')).rejects.toBeDefined();
+  });
+});

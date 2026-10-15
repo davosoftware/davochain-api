@@ -1,4 +1,4 @@
-import { ADDRESS, call, login, newUser, requireServer, verifyBasic } from './helpers';
+import { ADDRESS, call, idNumber, login, newUser, requireServer, verifyBasic } from './helpers';
 
 beforeAll(requireServer);
 
@@ -7,7 +7,7 @@ const submit = (token: string, over: Record<string, unknown> = {}) =>
     token,
     body: {
       idType: 'BVN',
-      idNumber: '33333333333',
+      idNumber: idNumber('333'),
       firstName: 'Someone',
       lastName: 'Clean',
       dateOfBirth: '1995-03-03',
@@ -45,19 +45,21 @@ describe('the KYC gate on money routes', () => {
 describe('Basic verification (POST /v1/kyc/basic) on the Dojah mock', () => {
   it('the clean test identity is approved at once, and the user becomes Basic after signing in again', async () => {
     const u = await newUser();
-    const r = await submit(u.token);
+    const raw = idNumber('333');
+    const r = await submit(u.token, { idNumber: raw });
     expect(r.status).toBe(201);
     expect(r.body).toEqual({ state: 'APPROVED', level: 'BASIC', message: 'You are verified.' });
     const fresh = await login(u);
     const k = await call('GET', '/kyc', { token: fresh.token });
-    expect(k.body).toMatchObject({ tier: 'TIER_1', status: 'APPROVED', level: 'BASIC', basicState: 'APPROVED', bvnLast4: '3333' });
+    expect(k.body).toMatchObject({ tier: 'TIER_1', status: 'APPROVED', level: 'BASIC', basicState: 'APPROVED', bvnLast4: raw.slice(-4) });
   });
 
   it('the raw BVN never comes back in any response', async () => {
     const u = await newUser();
-    const r = await submit(u.token);
+    const raw = idNumber('333');
+    const r = await submit(u.token, { idNumber: raw });
     const k = await call('GET', '/kyc', { token: (await login(u)).token });
-    expect(JSON.stringify([r.body, k.body])).not.toContain('33333333333');
+    expect(JSON.stringify([r.body, k.body])).not.toContain(raw);
   });
 
   it('approval ends the old session: the pre-approval refresh token stops working', async () => {
@@ -106,7 +108,7 @@ describe('Basic verification (POST /v1/kyc/basic) on the Dojah mock', () => {
 
   it('an AML hit (PEP) goes to compliance review, and money routes answer "under review" without saying why', async () => {
     const u = await newUser();
-    const r = await submit(u.token, { idNumber: '22222222222', firstName: 'John', middleName: 'Doe', lastName: 'Ajayi', dateOfBirth: '2000-05-01' });
+    const r = await submit(u.token, { idNumber: idNumber('222'), firstName: 'John', middleName: 'Doe', lastName: 'Ajayi', dateOfBirth: '2000-05-01' });
     expect(r.status).toBe(201);
     expect(r.body.state).toBe('COMPLIANCE_REVIEW');
     const q = await call('POST', '/quotes', { token: u.token, body: { side: 'buy', fromAsset: 'ngn', toAsset: 'btc', amount: '50000' } });
@@ -116,7 +118,7 @@ describe('Basic verification (POST /v1/kyc/basic) on the Dojah mock', () => {
 
   it('a confirmed sanctions match blocks the account and ends its sessions', async () => {
     const u = await newUser();
-    const r = await submit(u.token, { idNumber: '66666666666', firstName: 'Test', lastName: 'Sanctioned', dateOfBirth: '1985-06-06' });
+    const r = await submit(u.token, { idNumber: idNumber('666'), firstName: 'Test', lastName: 'Sanctioned', dateOfBirth: '1985-06-06' });
     expect(r.status).toBe(201);
     expect(r.body.state).toBe('COMPLIANCE_REVIEW');
     expect((await call('POST', '/auth/refresh', { body: { refreshToken: u.refreshToken } })).status).toBe(401);
@@ -168,6 +170,20 @@ describe('Basic verification: invalid input (all 400, before any Dojah call)', (
     await submit(u.token, { idNumber: '123' });
     await submit(u.token, { stateOfOrigin: 'Atlantis' });
     const k = await call('GET', '/kyc', { token: u.token });
+    expect(k.body).toMatchObject({ attemptsLeftToday: 3, attemptsLeftTotal: 10 });
+  });
+});
+
+describe('one BVN/NIN verifies one account (H8)', () => {
+  it('a second account with the same BVN is refused, before any lookup', async () => {
+    const raw = idNumber('333');
+    const first = await newUser();
+    expect((await submit(first.token, { idNumber: raw })).body.state).toBe('APPROVED');
+    const second = await newUser();
+    const r = await submit(second.token, { idNumber: raw });
+    expect(r.status).toBe(409);
+    expect(r.body.message).toBe('This BVN/NIN is already linked to another DavoChain account. Contact support.');
+    const k = await call('GET', '/kyc', { token: second.token });
     expect(k.body).toMatchObject({ attemptsLeftToday: 3, attemptsLeftTotal: 10 });
   });
 });

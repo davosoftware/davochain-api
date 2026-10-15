@@ -30,6 +30,8 @@ const testSettings = {
   FLW_USE_MOCK: 'true',
   ALERT_DEFAULT_RECIPIENTS: process.env.ALERT_DEFAULT_RECIPIENTS ?? 'ops@davochain.invalid',
   RATE_LIMIT_AUTH_REGISTER_IP: '1000/1h',
+  // Several full runs in a row sign in far more than 20 times per 15 minutes from one address.
+  RATE_LIMIT_AUTH_LOGIN_IP: '2000/15m',
 };
 
 console.log(`\n  Starting the API in e2e test mode on port ${port}:`);

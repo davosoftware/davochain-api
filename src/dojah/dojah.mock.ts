@@ -51,7 +51,10 @@ export class DojahMockClient extends DojahApi {
     const fail = LOOKUP_FAILURES[idNumber];
     if (fail) throw fail();
     if (idNumber === '11111111111') return { found: false, httpStatus: 404 };
-    return { found: true, identity: normaliseIdentity(LOOKUPS[idNumber] ?? LOOKUPS['22222222222']), httpStatus: 200 };
+    // H8: one number verifies one account, so tests need many numbers per person:
+    // a number that is not an exact special one reads as its family (first three digits).
+    const family = LOOKUPS[idNumber.slice(0, 3).repeat(4).slice(0, 11)];
+    return { found: true, identity: normaliseIdentity(LOOKUPS[idNumber] ?? family ?? LOOKUPS['22222222222']), httpStatus: 200 };
   }
 
   async screen(input: AmlInput, _reference: string): Promise<AmlResult> {

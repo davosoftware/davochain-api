@@ -35,6 +35,7 @@ export const MSG_NOT_FOUND = 'We could not find that BVN/NIN. Check the number a
 export const MSG_APPROVED = 'You are verified.';
 export const MSG_DAILY = 'You have reached today’s verification limit. Try again tomorrow.';
 export const MSG_TOTAL = 'You have used all your verification attempts. Contact support.';
+export const MSG_ID_IN_USE = 'This BVN/NIN is already linked to another DavoChain account. Contact support.';
 
 export interface BasicInput {
   idType: 'BVN' | 'NIN';
@@ -234,6 +235,18 @@ export class BasicVerificationService implements OnModuleInit {
         // Final review C1: under review, restricted or blocked people never start a new verification.
         if (user.amlStatus !== 'NOT_SCREENED' && user.amlStatus !== 'CLEAR') throw new ForbiddenException(GATE_REVIEW);
         if (user.kycStatus === 'APPROVED' && user.kycTier !== 'TIER_0') throw new ConflictException('You are already verified.');
+
+        // H8: one BVN/NIN verifies one account. Checked before the paid lookup,
+        // and before anything is written, so a refusal costs nothing and is not
+        // counted as an attempt.
+        const idHash = this.hasher.hash(input.idNumber);
+        const onProfile = input.idType === 'BVN' ? { bvnHash: idHash } : { ninHash: idHash };
+        const [verifiedElsewhere, verifyingElsewhere] = await Promise.all([
+          tx.kycProfile.findFirst({ where: { userId: { not: userId }, ...onProfile }, select: { userId: true } }),
+          tx.kycVerification.findFirst({ where: { userId: { not: userId }, idHash, activeFor: { not: null } }, select: { id: true } }),
+        ]);
+        if (verifiedElsewhere || verifyingElsewhere) throw new ConflictException(MSG_ID_IN_USE);
+
         const counted = { userId, state: { not: 'FAILED_SYSTEM' as const } };
         const [total, daily] = await Promise.all([
           tx.kycVerification.count({ where: counted }),
@@ -264,7 +277,7 @@ export class BasicVerificationService implements OnModuleInit {
             activeFor: userId,
             lagosDay: today,
             idType: input.idType,
-            idHash: this.hasher.hash(input.idNumber),
+            idHash,
             idLast4: input.idNumber.slice(-4),
             typedFirstName: input.firstName.trim(),
             typedMiddleName: input.middleName?.trim() || null,
@@ -299,6 +312,19 @@ export class BasicVerificationService implements OnModuleInit {
         await tx.kycProfile.updateMany({ where: { userId: v.userId }, data: { status: 'PENDING' } });
         await tx.user.updateMany({ where: { id: v.userId }, data: { kycStatus: 'PENDING' } });
       }
+      return [];
+    }
+    // H8: checked again at approval, for two accounts verifying the same
+    // number at the same moment. The lookup is already paid for, so this rare
+    // case waits for a person rather than being thrown away.
+    const onProfile = v.idType === 'BVN' ? { bvnHash: v.idHash } : { ninHash: v.idHash };
+    const elsewhere = await tx.kycProfile.findFirst({ where: { userId: { not: v.userId }, ...onProfile }, select: { userId: true } });
+    if (elsewhere) {
+      await tx.kycVerification.updateMany({
+        where: { id: v.id, state: { in: ['LOOKED_UP', 'COMPLIANCE_REVIEW'] } },
+        data: { state: 'IDENTITY_REVIEW' },
+      });
+      this.log.warn(`Verification ${v.id}: this ID is already verified on another account; sent to identity review`);
       return [];
     }
     const r = await tx.kycVerification.updateMany({
