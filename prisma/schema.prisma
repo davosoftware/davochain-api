@@ -249,6 +249,8 @@ model User {
   lastLoginAt     DateTime?
   failedLogins    Int       @default(0)
   lockedUntil     DateTime? // brute-force backoff
+  /// When the password or email last changed. Withdrawal cool-off (level policy).
+  credentialsChangedAt DateTime?
 
   /// Denormalised from KycProfile so a guard can check without a join.
   kycTier          KycTier           @default(TIER_0)
@@ -1118,6 +1120,70 @@ model KycDocument {
 
 /// What each tier may do. Admin-editable, and every change is audited —
 /// raising a limit is a financial act.
+/// Part 1 level policy (2026-10-15). What each verification level may do.
+enum PolicyLevel {
+  NONE
+  BASIC
+  ADVANCED
+}
+
+enum PolicyAction {
+  BUY
+  SELL
+  SWAP
+  CRYPTO_DEPOSIT
+  CRYPTO_WITHDRAW
+  NGN_DEPOSIT
+  NGN_WITHDRAW
+  GIFTCARD_SELL
+}
+
+enum LimitCurrency {
+  NGN
+  USD
+}
+
+/// One row per (level, action), set by admins. Missing = not allowed.
+model LevelRule {
+  level     PolicyLevel
+  action    PolicyAction
+  allowed   Boolean       @default(false)
+  currency  LimitCurrency @default(NGN)
+  /// Null = no limit.
+  minPerTx  Decimal?      @db.Decimal(38, 18)
+  maxPerTx  Decimal?      @db.Decimal(38, 18)
+  maxPerDay Decimal?      @db.Decimal(38, 18)
+  updatedAt DateTime      @updatedAt
+  updatedBy String?
+
+  @@id([level, action])
+  @@map("level_rules")
+}
+
+/// Waiting times per level, in hours. 0 = none.
+model LevelCooloff {
+  level                      PolicyLevel @id
+  afterSignupHours           Int         @default(0)
+  afterCredentialChangeHours Int         @default(0)
+  /// Stored now; enforced with saved payees (Part 2).
+  afterNewPayeeHours         Int         @default(0)
+  updatedAt                  DateTime    @updatedAt
+  updatedBy                  String?
+
+  @@map("level_cooloffs")
+}
+
+/// The whole platform's buy + sell + swap per Lagos day. Single row, id "default".
+model PlatformLimit {
+  id               String        @id @default("default")
+  tradingMaxPerDay Decimal?      @db.Decimal(38, 18)
+  currency         LimitCurrency @default(USD)
+  updatedAt        DateTime      @updatedAt
+  updatedBy        String?
+
+  @@map("platform_limits")
+}
+
 model KycTierLimit {
   tier                KycTier @id
   canTrade            Boolean @default(false)
