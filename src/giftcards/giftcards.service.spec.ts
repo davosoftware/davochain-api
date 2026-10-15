@@ -27,6 +27,7 @@ function service(over: { config?: Record<string, string>; trades?: unknown[] } =
     {} as never,
     {} as never,
     config as never,
+    {} as never, // policy
   );
 }
 

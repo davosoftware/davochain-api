@@ -6,13 +6,15 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { GiftCardTradeStatus, LedgerAccount, Prisma, TxStatus, TxType } from '@prisma/client';
+import { GiftCardTradeStatus, KycTier, LedgerAccount, PolicyAction, Prisma, TxStatus, TxType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { SecretBox } from '../common/secret-box';
 import { currency as currencyOf, symbolFor } from './currencies';
 import { Decimal, ZERO, dec, str } from '../common/money';
+import { LevelPolicyService } from '../levels/level-policy.service';
+import { levelOf } from '../levels/levels';
 
 /** What a photograph of a card may be. Nothing else is stored. */
 const IMAGE_TYPES: Record<string, string> = {
@@ -72,6 +74,7 @@ export class GiftCardsService {
     private readonly ledger: LedgerService,
     private readonly notifications: NotificationsService,
     private readonly config: ConfigService,
+    private readonly policy: LevelPolicyService,
   ) {
     this.box = new SecretBox(config.get<string>('CREDENTIALS_KEY'));
   }
@@ -218,24 +221,32 @@ export class GiftCardsService {
 
     const decoded = images.map((img) => decodeImage(img));
     const rate = dec(type.rateNgn);
+    const expectedNgn = value.mul(rate);
+    const fx = await this.policy.fx();
 
-    const trade = await this.prisma.giftCardTrade.create({
-      data: {
-        userId,
-        typeId: type.id,
-        faceValue: value.toFixed(),
-        currency: type.currency,
-        rateNgn: rate.toFixed(),
-        expectedNgn: value.mul(rate).toFixed(),
-        codeSealed: code ? this.box.seal(code) : null,
-        images: {
-          create: decoded.map((d, i) => ({
-            image: d.buffer,
-            imageType: d.type,
-            sortOrder: i,
-          })),
+    // The daily limit is checked in the same serializable write as the create,
+    // so two cards submitted at once cannot both slip under it.
+    const trade = await this.prisma.serializable(async (t) => {
+      const u = await t.user.findUnique({ where: { id: userId }, select: { kycTier: true } });
+      await this.policy.assertWithinLimits(t, userId, levelOf(u?.kycTier ?? KycTier.TIER_0), PolicyAction.GIFTCARD_SELL, expectedNgn, 'NGN', fx);
+      return t.giftCardTrade.create({
+        data: {
+          userId,
+          typeId: type.id,
+          faceValue: value.toFixed(),
+          currency: type.currency,
+          rateNgn: rate.toFixed(),
+          expectedNgn: expectedNgn.toFixed(),
+          codeSealed: code ? this.box.seal(code) : null,
+          images: {
+            create: decoded.map((d, i) => ({
+              image: d.buffer,
+              imageType: d.type,
+              sortOrder: i,
+            })),
+          },
         },
-      },
+      });
     });
 
     await this.notifications.notify({
