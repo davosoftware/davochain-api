@@ -14,6 +14,7 @@
 import { PrismaService } from '../src/prisma/prisma.service';
 import { LedgerService } from '../src/ledger/ledger.service';
 import { KycLimitsService } from '../src/kyc/kyc-limits.service';
+import { LevelPolicyService } from '../src/levels/level-policy.service';
 import { FlutterwaveMockClient } from '../src/flutterwave/flutterwave.mock';
 import { VirtualAccountsService } from '../src/ngn-deposits/virtual-accounts.service';
 import { PayInService } from '../src/ngn-deposits/pay-in.service';
@@ -40,7 +41,7 @@ async function main(): Promise<void> {
     const quiet = { raise: async () => true };
     const accounts = new VirtualAccountsService(prisma, client, {} as never, {} as never, quiet as never);
     const payIn = new PayInService(
-      prisma, client, accounts, ledger, new KycLimitsService(prisma),
+      prisma, client, accounts, ledger, new KycLimitsService(prisma, new LevelPolicyService(prisma, { price: async () => ({ ngnPerUsd: '1500' }) } as never)),
       { notify: async () => undefined } as never,
       { price: async () => { throw new Error('no price needed for a proof'); } } as never,
       quiet as never,

@@ -87,6 +87,8 @@ for (const file of controllerFiles(SRC)) {
       const isPublic = Reflect.getMetadata('isPublic', handler) === true || clsPublic;
       const adminGuard = [...clsGuards, ...((Reflect.getMetadata(GUARDS_METADATA, handler) ?? []) as { name?: string }[])].some((g) => g?.name === 'AdminGuard');
       const tier = Reflect.getMetadata('requiredTier', handler) as string | undefined;
+      // Level policy: the admin's rule for this action decides (QUOTE_SIDE = the quote's buy/sell/swap).
+      const action = Reflect.getMetadata('requiredAction', handler) as string | undefined;
       const perms = (Reflect.getMetadata('admin:permissions', handler) ?? Reflect.getMetadata('admin:permissions', cls) ?? []) as string[];
       const limit = (Reflect.getMetadata('rateLimitPolicy', handler) as string | undefined) ?? clsLimit ?? 'default';
       const paused = Reflect.getMetadata('pausedInMaintenance', handler) === true;
@@ -104,7 +106,7 @@ for (const file of controllerFiles(SRC)) {
           method,
           path: UNPREFIXED.has(join2(base, s)) ? join2(base, s) : PREFIX + join2(base, s),
           access: adminGuard ? 'admin token' : isPublic ? 'none (public)' : 'user token',
-          kyc: tier ? `${tier} + AML CLEAR` : '',
+          kyc: action ? `level rule: ${action === 'QUOTE_SIDE' ? 'BUY/SELL/SWAP' : action}` : tier ? `${tier} + AML CLEAR` : '',
           perms: perms.join(' + '),
           limit,
           paused,

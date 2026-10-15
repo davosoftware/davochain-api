@@ -38,7 +38,8 @@ describe('the KYC gate on money routes', () => {
     const u = await newUser();
     const r = await call('POST', '/quotes', { token: u.token, body: { side: 'buy', fromAsset: 'ngn', toAsset: 'btc', amount: '50000' } });
     expect(r.status).toBe(403);
-    expect(r.body).toMatchObject({ message: 'Verification required before you can do this', requiredTier: 'TIER_1', currentTier: 'TIER_0' });
+    // Level policy (15 Oct 2026): the admin's rules answer; requiredTier stays for older app builds.
+    expect(r.body).toMatchObject({ code: 'NOT_ALLOWED_AT_LEVEL', action: 'BUY', currentLevel: 'NONE', requiredLevel: 'BASIC', requiredTier: 'TIER_1', currentTier: 'TIER_0', message: 'Complete Basic verification to buy crypto.' });
   });
 });
 

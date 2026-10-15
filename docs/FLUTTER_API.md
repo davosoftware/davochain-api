@@ -20,6 +20,18 @@
    - **Integration notes:** UX rules and gotchas
 3. Use **Part 2, Appendices** for push notifications, enum values, ready-made Dart code, testing on the local backend, and known limitations.
 
+## What changed for the app (15 October 2026): verification levels
+
+Admins now decide, on one screen, what people at each level may do: **None** (not verified), **Basic** and **Advanced**. Nothing is fixed in the app or the server any more.
+
+| Change | Where | What the app must do |
+| --- | --- | --- |
+| **New: `GET /v1/me/level`** | 3.3 | Use it to show what the person may do, their limits and what is left today. Never hard-code a limit. |
+| **New `403` body: `code: "NOT_ALLOWED_AT_LEVEL"`** | §0.6 | Not allowed at their level. If `requiredLevel` is set, open the verification screen; if it is `null`, show `message` (nobody may do it right now). `requiredTier` is still sent for older app builds. |
+| **New `403` body: `code: "COOLING_OFF"`** | §0.6 | Withdrawals wait after sign-up and after a password change. Show `message`; `until` says when they open. |
+| **Limits may be `null`** ("no limit") | 4.1, 8.4 | Show "No limit" instead of a number. A new `currency` field says whether the limit figures are naira or dollars. |
+| **Gift-card selling has a daily limit** | 9.3 | A refusal is `400` with the reason in `message`. |
+
 ## What changed for the app (14 October 2026): Basic verification
 
 | Change | Where | What the app must do |
@@ -216,6 +228,20 @@ The server checks the user's **current** verification on every one of these requ
 | `code: "ACCOUNT_UNDER_REVIEW"` | The account is under review | Show `message` **exactly as sent**. Don't guess or explain why; the API never says. |
 
 Right after approval the user's sessions are signed out on purpose, so the app's own copy of the tier catches up when they **sign in again** (§0.5).
+
+**Since 15 Oct 2026 the gate is the admin's level rules** (3.3), not a fixed tier. Two more `403` answers:
+
+| Body | Meaning | What the app does |
+| --- | --- | --- |
+| `code: "NOT_ALLOWED_AT_LEVEL"`, `action`, `currentLevel`, `requiredLevel`, `requiredTier` | Their level may not do this | `requiredLevel` set: open the verification screen (4.2). `requiredLevel: null`: nobody may do it right now; show `message`. |
+| `code: "COOLING_OFF"`, `action`, `until` | A new account, or a password just changed: withdrawals wait | Show `message` (it says when, in Lagos time); `until` is the ISO time they open |
+
+```json
+{ "code": "NOT_ALLOWED_AT_LEVEL", "action": "GIFTCARD_SELL", "currentLevel": "NONE", "requiredLevel": "BASIC", "requiredTier": "TIER_1", "message": "Complete Basic verification to sell gift cards." }
+{ "code": "COOLING_OFF", "action": "CRYPTO_WITHDRAW", "until": "2026-10-16T00:00:00.000Z", "message": "Withdrawals open at 01:00 on 16 October, 24 hours after sign-up." }
+```
+
+`requiredTier` is still sent with `NOT_ALLOWED_AT_LEVEL` so older app builds keep opening the verification screen.
 
 ## 0.7 Idempotency-Key
 
@@ -731,6 +757,33 @@ Authorization: Bearer eyJhbGciOi…
 - Refresh after any trade, withdrawal or deposit notification.
 
 ---
+
+### 3.3 My verification level
+
+**Endpoint:** `GET /v1/me/level` · **Auth:** **Bearer** · **KYC:** none · **Success:** `200`
+
+**What it does:** what this person may do at their level, the limits an admin set, and what is left today. Every number comes from the admin screen, so the app never hard-codes one.
+
+**Response**
+
+```json
+{
+  "level": "BASIC",
+  "levelName": "Basic",
+  "tier": "TIER_1",
+  "advancedInProgress": false,
+  "actions": [
+    { "action": "BUY", "label": "buy crypto", "allowed": true, "currency": "USD", "minPerTx": null, "maxPerTx": null, "maxPerDay": "5000.00", "usedToday": "120.00", "remainingToday": "4880.00" },
+    { "action": "GIFTCARD_SELL", "label": "sell gift cards", "allowed": true, "currency": "NGN", "minPerTx": null, "maxPerTx": null, "maxPerDay": null, "usedToday": "0.00", "remainingToday": null }
+  ],
+  "cooloffs": { "withdrawalsOpenAt": null }
+}
+```
+
+- `level`: `NONE`, `BASIC` or `ADVANCED`. `levelName` is how to show it ("Advanced (in progress)" uses Basic's rules).
+- `actions`: one row for each of `BUY`, `SELL`, `SWAP`, `CRYPTO_DEPOSIT`, `CRYPTO_WITHDRAW`, `NGN_DEPOSIT`, `NGN_WITHDRAW`, `GIFTCARD_SELL`. `null` = no limit. Amounts are in `currency`.
+- `cooloffs.withdrawalsOpenAt`: when withdrawals open (ISO), or `null` if they are open now.
+- Answers `503` while prices are unavailable (a dollar limit cannot be worked out without them).
 
 ## 4. KYC (identity verification)
 
@@ -2121,7 +2174,7 @@ Returns the brand's logo image (JPEG/PNG/WebP bytes). Usually you just load `ima
 
 **Endpoint:** `POST /v1/giftcards/trades` · **Auth:** **Bearer** · **KYC:** **TIER_1 (Basic)** · **Success:** `201`
 
-> **Since 15 Oct 2026:** selling a gift card needs Basic verification. An unverified user gets `403` with `requiredTier: "TIER_1"`: open the verification screen (4.2).
+> **Since 15 Oct 2026:** who may sell gift cards, and how much a day, is an admin rule (3.3). Not allowed: `403` `code: "NOT_ALLOWED_AT_LEVEL"` (§0.6). Over the daily limit: `400` with the reason in `message`.
 
 **What it does**
 Submits a card for review, with photos and/or the card code. The rate is locked at this moment. No money moves until an admin approves it (fully or partly) or rejects it. The card code is encrypted and **never shown again**, not even to the user.

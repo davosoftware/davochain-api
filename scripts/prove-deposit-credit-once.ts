@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { LedgerService } from '../src/ledger/ledger.service';
 import { KycLimitsService } from '../src/kyc/kyc-limits.service';
+import { LevelPolicyService } from '../src/levels/level-policy.service';
 import { DepositsService } from '../src/deposits/deposits.service';
 import { refuseUnlessLocalDevelopment } from './local-dev-guard';
 
@@ -33,7 +34,7 @@ async function main(): Promise<void> {
       { findUserByQuidax: async () => user.id } as never,
       { notify: async () => undefined } as never,
       { price: async () => ({ priceUsd: '60000', ngnPerUsd: '1500' }) } as never,
-      new KycLimitsService(prisma),
+      new KycLimitsService(prisma, new LevelPolicyService(prisma, { price: async () => ({ ngnPerUsd: '1500' }) } as never)),
     );
 
     const id = `prove-c2-${randomUUID()}`;
