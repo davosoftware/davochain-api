@@ -19,6 +19,7 @@ import { FeeBandsService } from '../rates/fee-bands.service';
 import { KycLimitsService } from '../kyc/kyc-limits.service';
 import { LevelPolicyService } from '../levels/level-policy.service';
 import { levelOf } from '../levels/levels';
+import { assertCryptoDestination } from './destination-rules';
 import { ZERO, dec, str, type Decimal } from '../common/money';
 
 /** A plain positive decimal, as the app types it: "5000", "0.0125". No signs, exponents or separators. */
@@ -505,29 +506,8 @@ export class WithdrawalsService {
     const user = await this.withdrawer(userId);
     await this.policy.assertCooledOff(user, PolicyAction.CRYPTO_WITHDRAW);
 
-    const code = input.asset.toLowerCase();
+    const { code, network } = await assertCryptoDestination(this.prisma, input);
     const asset = await this.assets.require(code);
-
-    const network = await this.prisma.assetNetwork.findUnique({
-      where: { assetCode_networkId: { assetCode: code, networkId: input.network } },
-    });
-    if (!network || !network.isListed) {
-      throw new BadRequestException(`${code.toUpperCase()} is not available on ${input.network}`);
-    }
-    // Arbitrum is deposit-only for USDT today, and nothing in the docs says so.
-    if (!network.withdrawsEnabled) {
-      throw new BadRequestException(
-        `Withdrawals are disabled for ${code.toUpperCase()} on ${network.label}`,
-      );
-    }
-    if (network.requiresTag && !input.destinationTag) {
-      throw new BadRequestException(
-        `${network.label} requires a destination tag. Without it the funds cannot be credited.`,
-      );
-    }
-    if (network.addressRegex && !new RegExp(network.addressRegex).test(input.address)) {
-      throw new BadRequestException(`That does not look like a valid ${network.label} address`);
-    }
 
     const amount = dec(input.amount);
     const cfg = await this.rates.rateConfig(code);
