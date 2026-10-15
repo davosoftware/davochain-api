@@ -14,7 +14,7 @@ import { SettlementService } from './settlement.service';
  * another and roll back on error. Every call yields, so callers interleave.
  */
 const tick = () => new Promise((r) => setImmediate(r));
-type Tx = { id: string; userId: string; type: TxType; status: TxStatus; reference: string; fromAsset: string; fromAmount: string; toAsset?: string; toAmount?: string | null; feeAmount?: string | null; networkFee?: string | null };
+type Tx = { id: string; userId: string; type: TxType; status: TxStatus; reference: string; fromAsset: string; fromAmount: string; toAsset?: string; toAmount?: string | null; feeAmount?: string | null; feeAsset?: string | null; rateConfigId?: string | null; networkFee?: string | null };
 
 function build(tx: Tx) {
   const rows = new Map<string, Tx>([[tx.id, { ...tx }]]);
@@ -51,6 +51,10 @@ function build(tx: Tx) {
   };
 
   const moves: string[] = [];
+  const fees: string[] = [];
+  const swapFee = { create: jest.fn(async () => (await tick(), fees.push('swapFee'))) };
+  const feeReceivable = { create: jest.fn(async () => (await tick(), fees.push('receivable'))) };
+  const rateSnapshot = { findFirst: jest.fn(async () => (await tick(), { priceUsd: '3000' })) };
   const record = (name: string) => jest.fn(async () => (await tick(), moves.push(name)));
   const ledger = {
     settleLockedWithEntries: record('settle-withdrawal'),
@@ -64,12 +68,14 @@ function build(tx: Tx) {
     const run = chain.then(async () => {
       const snapshot = new Map([...rows].map(([k, v]) => [k, { ...v }]));
       const movesBefore = moves.length;
+      const feesBefore = fees.length;
       try {
-        return await fn({ transaction, settlementLeg });
+        return await fn({ transaction, settlementLeg, swapFee, feeReceivable, rateSnapshot });
       } catch (err) {
         rows.clear();
         snapshot.forEach((v, k) => rows.set(k, v));
         moves.length = movesBefore;
+        fees.length = feesBefore;
         throw err;
       }
     });
@@ -80,7 +86,7 @@ function build(tx: Tx) {
   const notifications = { notify: jest.fn(async () => undefined) };
   const prisma = { transaction, settlementLeg, serializable };
   const svc = new SettlementService(prisma as never, {} as never, ledger as never, notifications as never, {} as never, { evaluate: async () => undefined } as never);
-  return { svc, rows, moves, notifications, status: () => rows.get(tx.id)!.status };
+  return { svc, rows, moves, fees, notifications, status: () => rows.get(tx.id)!.status };
 }
 
 const withdrawal: Tx = {
@@ -89,7 +95,7 @@ const withdrawal: Tx = {
 };
 const swap: Tx = {
   id: 'tx2', userId: 'u1', type: TxType.SWAP, status: TxStatus.PROCESSING, reference: 'dvc_sw_1',
-  fromAsset: 'btc', fromAmount: '0.5', toAsset: 'eth', toAmount: '10',
+  fromAsset: 'btc', fromAmount: '0.5', toAsset: 'eth', toAmount: '10', feeAmount: '0.02', feeAsset: 'eth', rateConfigId: 'cfg1',
 };
 const qxWithdrawal = (status = 'Done') => ({ id: 'qx1', reference: 'dvc_wd_1', status, fee: '0', txid: '0xabc', reason: null }) as never;
 
@@ -190,5 +196,47 @@ describe('H6: a buy or sell is settled only while it is still open', () => {
     expect(moves).toEqual([]);
     expect(notify).not.toHaveBeenCalled();
     expect(result.status).toBe(TxStatus.FAILED);
+  });
+});
+
+describe('H2: a swap fee is booked only when the swap completes', () => {
+  it('a completed swap books its fee once, even when completed twice at once', async () => {
+    const { svc, fees } = build(swap);
+    await Promise.all([svc.finaliseSwap('tx2'), svc.finaliseSwap('tx2')]);
+    expect(fees).toEqual(['swapFee', 'receivable']);
+  });
+
+  it('a failed (refunded) swap books no fee', async () => {
+    const { svc, fees } = build(swap);
+    await svc.reverse('tx2', 'The swap could not be completed');
+    await svc.finaliseSwap('tx2');
+    expect(fees).toEqual([]);
+  });
+
+  it('starting a swap books no fee', async () => {
+    const { TradesService } = await import('./trades.service');
+    const created: string[] = [];
+    const svc = Object.create(TradesService.prototype) as Record<string, unknown>;
+    Object.assign(svc, {
+      flags: { assertTradingAllowed: jest.fn(async () => undefined) },
+      settlement: { quidaxIdFor: jest.fn(async () => 'sub1'), swapInSubAccount: jest.fn(async () => undefined) },
+      ledger: { lock: jest.fn() },
+      quidax: { newReference: () => 'ref' },
+      prisma: {
+        serializable: jest.fn(async () => ({ id: 'tx3' })),
+        transaction: { update: jest.fn(async () => ({})) },
+        rateSnapshot: { findFirst: jest.fn(async () => ({ priceUsd: '3000' })) },
+        swapFee: { create: jest.fn(() => created.push('swapFee')) },
+        feeReceivable: { create: jest.fn(() => created.push('receivable')) },
+        $transaction: jest.fn(async () => created.push('batch')),
+      },
+    });
+    const swapFn = (svc.swap as (...a: unknown[]) => Promise<{ status: TxStatus }>).bind(svc);
+    const result = await swapFn('u1', {
+      id: 'q1', fromAsset: 'btc', toAsset: 'eth', fromAmount: '0.5', toAmount: '10', displayedRate: '20',
+      usdValue: null, feeUsd: null, feeAmount: '0.02', feeAsset: 'eth', rateConfigId: 'cfg1',
+    });
+    expect(result.status).toBe(TxStatus.PROCESSING);
+    expect(created).toEqual([]);
   });
 });

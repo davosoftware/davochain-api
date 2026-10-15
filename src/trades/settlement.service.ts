@@ -417,6 +417,25 @@ export class SettlementService {
         transactionId: tx.id,
         memo: 'swap out',
       });
+
+      // H2: the fee is earned only by a swap that completed, so it is booked
+      // here, in the write that completes it. Booked as a receivable, never
+      // collected now: it may be below the coin's transfer minimum; an admin
+      // claim sweeps it.
+      const fee = dec(tx.feeAmount ?? 0);
+      if (tx.feeAsset && fee.gt(0) && tx.rateConfigId) {
+        const price = await t.rateSnapshot.findFirst({
+          where: { assetCode: tx.feeAsset },
+          orderBy: { capturedAt: 'desc' },
+        });
+        const usdAtAccrual = price ? fee.mul(dec(price.priceUsd)).toFixed() : '0';
+        await t.swapFee.create({
+          data: { transactionId: tx.id, assetCode: tx.feeAsset, amount: fee.toFixed(), usdAtAccrual, rateConfigId: tx.rateConfigId },
+        });
+        await t.feeReceivable.create({
+          data: { userId: tx.userId, assetCode: tx.feeAsset, amount: fee.toFixed(), usdAtAccrual },
+        });
+      }
       return true;
     });
     if (!won) return;

@@ -322,33 +322,8 @@ export class TradesService {
         fromAmount: amountIn,
       });
 
-      // The fee is booked as a receivable, never collected now — it may be
-      // below the destination coin's transfer minimum. An admin claim sweeps it.
-      if (quote.feeAsset && fee.gt(0)) {
-        const price = await this.prisma.rateSnapshot.findFirst({
-          where: { assetCode: quote.feeAsset },
-          orderBy: { capturedAt: 'desc' },
-        });
-        await this.prisma.$transaction([
-          this.prisma.swapFee.create({
-            data: {
-              transactionId: tx.id,
-              assetCode: quote.feeAsset,
-              amount: fee.toFixed(),
-              usdAtAccrual: price ? fee.mul(dec(price.priceUsd)).toFixed() : '0',
-              rateConfigId: quote.rateConfigId,
-            },
-          }),
-          this.prisma.feeReceivable.create({
-            data: {
-              userId,
-              assetCode: quote.feeAsset,
-              amount: fee.toFixed(),
-              usdAtAccrual: price ? fee.mul(dec(price.priceUsd)).toFixed() : '0',
-            },
-          }),
-        ]);
-      }
+      // The fee (recorded on the transaction) is booked by finaliseSwap, in the
+      // same write that completes the swap: a swap that fails earns nothing (H2).
 
       // confirmSwap returns "initiated". Completion arrives by webhook or the
       // poller, so the trade sits PROCESSING rather than claiming to be done.
