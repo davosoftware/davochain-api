@@ -329,7 +329,8 @@ export class AuthService {
     }
     await this.prisma.user.update({
       where: { id: userId },
-      data: { passwordHash: await this.passwords.hash(newPassword) },
+      // Starts the withdrawal cool-off clock (level policy spec D5).
+      data: { passwordHash: await this.passwords.hash(newPassword), credentialsChangedAt: new Date() },
     });
     // A password change invalidates every session, including the one that made it.
     await this.revokeAllSessions(userId);
@@ -374,7 +375,7 @@ export class AuthService {
 
     await this.prisma.user.update({
       where: { id: user.id },
-      data: { passwordHash: await this.passwords.hash(newPassword), failedLogins: 0, lockedUntil: null },
+      data: { passwordHash: await this.passwords.hash(newPassword), failedLogins: 0, lockedUntil: null, credentialsChangedAt: new Date() },
     });
 
     // Whoever was signed in before is signed out now — if the account was taken

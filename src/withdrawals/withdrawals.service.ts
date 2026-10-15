@@ -2,9 +2,10 @@ import {
   BadRequestException,
   Injectable,
   Logger,
+  NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { FeeKind, TxStatus, TxType } from '@prisma/client';
+import { FeeKind, PolicyAction, TxStatus, TxType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuidaxClient } from '../quidax/quidax.client';
 import { QuidaxError } from '../quidax/quidax.errors';
@@ -16,6 +17,8 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { RatesService } from '../rates/rates.service';
 import { FeeBandsService } from '../rates/fee-bands.service';
 import { KycLimitsService } from '../kyc/kyc-limits.service';
+import { LevelPolicyService } from '../levels/level-policy.service';
+import { levelOf } from '../levels/levels';
 import { ZERO, dec, str, type Decimal } from '../common/money';
 
 /** A plain positive decimal, as the app types it: "5000", "0.0125". No signs, exponents or separators. */
@@ -50,6 +53,7 @@ export class WithdrawalsService {
     private readonly kycLimits: KycLimitsService,
     private readonly flags: SystemFlagsService,
     private readonly notifications: NotificationsService,
+    private readonly policy: LevelPolicyService,
   ) {}
 
   /**
@@ -269,12 +273,23 @@ export class WithdrawalsService {
     }
   }
 
+  /** Who is withdrawing, with what the cool-offs need. */
+  private async withdrawer(userId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, kycTier: true, createdAt: true, credentialsChangedAt: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+    return user;
+  }
+
   async withdrawNgn(
     userId: string,
     input: { amount: string; accountNumber: string; bankCode: string },
   ) {
     await this.flags.assertNgnWithdrawalsAllowed();
     await this.flags.assertWithdrawalsAllowed();
+    await this.policy.assertCooledOff(await this.withdrawer(userId), PolicyAction.NGN_WITHDRAW);
 
     const amount = dec(input.amount);
     if (!amount.isFinite() || amount.lte(0)) {
@@ -487,6 +502,8 @@ export class WithdrawalsService {
     },
   ) {
     await this.flags.assertWithdrawalsAllowed();
+    const user = await this.withdrawer(userId);
+    await this.policy.assertCooledOff(user, PolicyAction.CRYPTO_WITHDRAW);
 
     const code = input.asset.toLowerCase();
     const asset = await this.assets.require(code);
@@ -533,8 +550,19 @@ export class WithdrawalsService {
     const reference = this.quidax.newReference('wd');
     const subId = await this.settlement.quidaxIdFor(userId);
 
+    // Level rules: a limit is never skipped because a price is missing.
+    const level = levelOf(user.kycTier);
+    if (!usdValue) {
+      const rule = (await this.policy.rulesFor(level)).find((r) => r.action === PolicyAction.CRYPTO_WITHDRAW);
+      if (rule && (rule.minPerTx != null || rule.maxPerTx != null || rule.maxPerDay != null)) {
+        throw new ServiceUnavailableException('Pricing is unavailable right now. Please try again shortly.');
+      }
+    }
+    const fx = await this.policy.fx();
+
     // Debit under lock BEFORE the call out.
     const tx = await this.prisma.serializable(async (t) => {
+      await this.policy.assertWithinLimits(t, userId, level, PolicyAction.CRYPTO_WITHDRAW, usdValue ?? ZERO, 'USD', fx);
       await this.ledger.lock(t, userId, code, totalDebit);
       const created = await t.transaction.create({
         data: {

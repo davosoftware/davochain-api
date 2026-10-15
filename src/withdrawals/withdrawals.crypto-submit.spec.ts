@@ -24,6 +24,7 @@ function build(opts: { send?: () => Promise<unknown>; dbFailsAfterSend?: boolean
   };
   const dbDown = () => Promise.reject(new Error('connection terminated'));
   const prisma = {
+    user: { findUnique: jest.fn().mockResolvedValue({ id: 'user-1', kycTier: 'TIER_1', createdAt: new Date(0), credentialsChangedAt: null }) },
     assetNetwork: { findUnique: jest.fn().mockResolvedValue({ isListed: true, withdrawsEnabled: true, requiresTag: false, addressRegex: null, label: 'Bitcoin' }) },
     serializable: jest.fn().mockResolvedValue({ id: 'tx-1' }),
     transaction: { update: jest.fn(opts.dbFailsAfterSend ? dbDown : async () => ({})) },
@@ -40,6 +41,7 @@ function build(opts: { send?: () => Promise<unknown>; dbFailsAfterSend?: boolean
     {} as never,
     { assertWithdrawalsAllowed: jest.fn().mockResolvedValue(undefined) } as never,
     { notify: jest.fn() } as never,
+    { fx: async () => ({ ngnPerUsd: '1500' }), assertCooledOff: async () => undefined, assertWithinLimits: async () => undefined, rulesFor: async () => [] } as never, // policy
   );
   jest
     .spyOn(service as unknown as { fees: () => Promise<unknown> }, 'fees')

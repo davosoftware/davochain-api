@@ -73,6 +73,7 @@ function build(opts: { override?: boolean; serverSetting?: boolean } = {}) {
     kycLimits as never,
     flags,
     { notify: jest.fn().mockResolvedValue(undefined) } as never,
+    { fx: async () => ({ ngnPerUsd: '1500' }), assertCooledOff: async () => undefined, assertWithinLimits: async () => undefined, rulesFor: async () => [] } as never, // policy
   );
   return { service, quidax, prisma, ledger, tx, row };
 }

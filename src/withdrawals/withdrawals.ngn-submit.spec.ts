@@ -34,6 +34,7 @@ function build(verify: () => Promise<unknown>) {
     { check: jest.fn().mockResolvedValue(allowed), checkInTransaction: jest.fn().mockResolvedValue(allowed) } as never,
     flags as never,
     { notify: jest.fn() } as never,
+    { fx: async () => ({ ngnPerUsd: '1500' }), assertCooledOff: async () => undefined, assertWithinLimits: async () => undefined, rulesFor: async () => [] } as never, // policy
   );
   return { service, quidax, prisma };
 }

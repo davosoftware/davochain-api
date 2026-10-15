@@ -22,6 +22,7 @@ function build() {
     kycLimits as never,
     {} as never, // flags
     {} as never, // notifications
+    { fx: async () => ({ ngnPerUsd: '1500' }), assertCooledOff: async () => undefined, assertWithinLimits: async () => undefined, rulesFor: async () => [] } as never, // policy
   );
   return { service, assets, rates, prisma, kycLimits };
 }
