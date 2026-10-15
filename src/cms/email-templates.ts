@@ -161,6 +161,41 @@ may have access to your account.
 ${SIGN_OFF}`),
   },
 
+  {
+    key: 'destination.added',
+    label: 'Withdrawal destination added',
+    hint: 'Sent when a bank account or crypto address is saved for withdrawals. A security notice.',
+    group: 'Account',
+    variables: ['destination'],
+    sentBy: 'SavedDestinationsService.addBank and .addCrypto',
+    subject: 'A new withdrawal destination was added to your {{companyName}} account',
+    body: html(`Hi {{firstName}},
+
+A new withdrawal destination was added to your account: **{{destination}}**.
+
+**If this was not you**, contact {{supportEmail}} straight away and change your
+password — somebody else may have access to your account.
+${SIGN_OFF}`),
+  },
+  {
+    key: 'destination.removed',
+    label: 'Withdrawal destination removed by our team',
+    hint: 'Sent when an admin removes one of the saved withdrawal destinations of a customer.',
+    group: 'Account',
+    variables: ['destination', 'reason'],
+    sentBy: 'Admin: remove a saved destination',
+    subject: 'A saved withdrawal destination was removed',
+    body: html(`Hi {{firstName}},
+
+Our team removed a saved withdrawal destination from your account:
+**{{destination}}**.
+
+Reason: {{reason}}
+
+If you have questions, contact {{supportEmail}}.
+${SIGN_OFF}`),
+  },
+
   // ── verification ──────────────────────────────────────────
   {
     key: 'kyc.submitted',
@@ -611,6 +646,7 @@ export const SAMPLE_VALUES: Record<string, string> = {
   inviteUrl: 'https://admin.davochain.com/invite/sample-token',
   role: 'Sub-admin',
   invitedBy: 'Chidi Balogun',
+  destination: 'GTBank ••••4471',
 };
 
 export const EMAIL_TEMPLATE_KEYS: string[] = EMAIL_TEMPLATES.map((t) => t.key);

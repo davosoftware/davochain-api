@@ -259,6 +259,22 @@ export class WithdrawalsService {
   }
 
   /**
+   * The bank's name and the account holder's name, for saving a bank account
+   * (Part 2). Not tied to the payout switch: people may save accounts while
+   * payouts are paused.
+   */
+  async lookupNgnBankAccount(input: { accountNumber: string; bankCode: string }): Promise<{ bankName: string; accountName: string }> {
+    const banks = await this.quidax.fetchBanks().catch(() => {
+      throw new ServiceUnavailableException('The bank list is temporarily unavailable. Try again shortly.');
+    });
+    const bank = banks.find(
+      (b) => b.code === input.bankCode && b.country.toLowerCase() === 'nigeria' && b.currency.toLowerCase() === 'ngn',
+    );
+    if (!bank) throw new BadRequestException('Choose a supported Nigerian bank');
+    return { bankName: bank.name, accountName: await this.resolveNgnAccountName(input) };
+  }
+
+  /**
    * The account holder's name from Quidax. A refusal (4xx) is the customer's
    * details being wrong; anything else is Quidax being unavailable. Shared by
    * 8.6 and 8.7, so the submit can never surface a raw provider error as a 500.

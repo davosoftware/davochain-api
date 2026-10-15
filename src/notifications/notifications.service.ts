@@ -16,7 +16,9 @@ export type NotificationType =
   | 'trade.failed'
   | 'withdrawal.submitted'
   | 'withdrawal.sent'
-  | 'withdrawal.rejected';
+  | 'withdrawal.rejected'
+  | 'security.destination_added'
+  | 'security.destination_removed';
 
 interface NotifyInput {
   userId: string;
