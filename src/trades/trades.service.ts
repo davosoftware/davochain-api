@@ -19,6 +19,8 @@ import { SystemFlagsService } from '../common/system-flags.service';
 import { AssetsService } from '../assets/assets.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { dec, str } from '../common/money';
+import { ConfigService } from '@nestjs/config';
+import { assertDailyCaps, dailyCapsFrom } from './daily-limits';
 
 export interface TradeResult {
   transactionId: string;
@@ -56,7 +58,13 @@ export class TradesService {
     @Inject(forwardRef(() => InventoryService))
     private readonly inventory: InventoryService,
     private readonly referrals: ReferralsService,
+    private readonly config: ConfigService,
   ) {}
+
+  /** H10: today's limits, checked in the same write that locks the trade's funds. */
+  private checkDailyCaps(t: Parameters<typeof assertDailyCaps>[0], userId: string, usdValue: unknown): Promise<void> {
+    return assertDailyCaps(t, userId, dec((usdValue as string | null) ?? 0), dailyCapsFrom(this.config));
+  }
 
   /**
    * Takes an ALREADY-CONSUMED quote. Consuming it is the caller's job, so this
@@ -120,6 +128,7 @@ export class TradesService {
 
     // Lock + debit + pending record, all in one transaction, before any call out.
     const tx = await this.prisma.serializable(async (t) => {
+      await this.checkDailyCaps(t, userId, quote.usdValue);
       await this.ledger.lock(t, userId, 'ngn', ngnIn);
       return t.transaction.create({
         data: {
@@ -222,6 +231,7 @@ export class TradesService {
     ]);
 
     const tx = await this.prisma.serializable(async (t) => {
+      await this.checkDailyCaps(t, userId, quote.usdValue);
       await this.ledger.lock(t, userId, quote.fromAsset, coinIn);
       return t.transaction.create({
         data: {
@@ -291,6 +301,7 @@ export class TradesService {
     const subId = await this.settlement.quidaxIdFor(userId);
 
     const tx = await this.prisma.serializable(async (t) => {
+      await this.checkDailyCaps(t, userId, quote.usdValue);
       await this.ledger.lock(t, userId, quote.fromAsset, amountIn);
       return t.transaction.create({
         data: {

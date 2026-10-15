@@ -10,6 +10,7 @@ import { AssetsService } from '../assets/assets.service';
 import { LedgerService } from '../ledger/ledger.service';
 import { SystemFlagsService } from '../common/system-flags.service';
 import { Decimal, ZERO, dec, floorToStep, str } from '../common/money';
+import { assertDailyCaps, dailyCapsFrom } from '../trades/daily-limits';
 
 export interface QuoteView {
   quoteId: string;
@@ -245,6 +246,12 @@ export class QuotesService {
     const netOut = floorToStep(grossOut.minus(feeInToAsset), toAsset.transferStep);
     if (netOut.lte(0)) throw new BadRequestException('Amount is too small to swap');
 
+    // H10: swaps had no maximum size; the same single-trade cap as buy and sell.
+    const maxUsd = this.maxTradeUsd(cfg.maxTradeUsd);
+    if (usdValue.gt(maxUsd)) {
+      throw new BadRequestException(`Maximum single trade is $${maxUsd.toFixed(2)}.`);
+    }
+
     const balance = await this.ledger.getBalance(userId, from);
     if (balance.available.lt(amountIn)) {
       throw new BadRequestException(
@@ -290,10 +297,20 @@ export class QuotesService {
           `This one is worth $${usdValue.toFixed(2)}.`,
       );
     }
-    const max = dec(cfg.maxTradeUsd as string);
+    const max = this.maxTradeUsd(cfg.maxTradeUsd);
     if (usdValue.gt(max)) {
       throw new BadRequestException(`Maximum single trade is $${max.toFixed(2)}.`);
     }
+  }
+
+  /**
+   * H10: the per-coin cap, never above the platform-wide MAX_TRADE_USD (which
+   * was validated at boot and never read).
+   */
+  private maxTradeUsd(perCoin: unknown): Decimal {
+    const coin = dec(perCoin as string);
+    const env = this.config.get<number>('MAX_TRADE_USD');
+    return env !== undefined && dec(env).lt(coin) ? dec(env) : coin;
   }
 
   private async persist(input: {
@@ -322,6 +339,9 @@ export class QuotesService {
   }): Promise<QuoteView> {
     const ttl = this.config.get<number>('QUOTE_TTL_SECONDS') ?? 12;
     const expiresAt = new Date(Date.now() + ttl * 1000);
+
+    // H10: tell the person now; the binding check runs again when the trade locks its funds.
+    await assertDailyCaps(this.prisma, input.userId, input.usdValue, dailyCapsFrom(this.config));
 
     const quote = await this.prisma.rateQuote.create({
       data: {
