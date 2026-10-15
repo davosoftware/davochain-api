@@ -2,8 +2,8 @@ import { Body, Controller, Get, Post } from '@nestjs/common';
 import { IsString, Matches, MaxLength } from 'class-validator';
 import { AddressesService } from './addresses.service';
 import { CurrentUser } from '../auth/current-user.decorator';
-import { RequiresKyc } from '../auth/jwt-auth.guard';
-import { KycTier } from '@prisma/client';
+import { RequiresAction } from '../levels/requires-action.decorator';
+import { PolicyAction } from '@prisma/client';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { PausedDuringMaintenance } from '../common/maintenance.guard';
 
@@ -28,7 +28,7 @@ export class AddressesController {
    * Get-or-create. Deliberately POST: it may create upstream state, and it must
    * not be retried by a browser or prefetched.
    */
-  @RequiresKyc(KycTier.TIER_1)
+  @RequiresAction(PolicyAction.CRYPTO_DEPOSIT)
   @PausedDuringMaintenance()
   @Post('address')
   create(@CurrentUser('sub') userId: string, @Body() dto: CreateAddressDto) {

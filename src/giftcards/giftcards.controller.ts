@@ -7,8 +7,8 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { Public } from '../auth/public.decorator';
 import { RateLimit } from '../rate-limit/rate-limit.decorator';
 import { PausedDuringMaintenance } from '../common/maintenance.guard';
-import { RequiresKyc } from '../auth/jwt-auth.guard';
-import { KycTier } from '@prisma/client';
+import { RequiresAction } from '../levels/requires-action.decorator';
+import { PolicyAction } from '@prisma/client';
 
 @ApiTags('giftcards')
 @ApiBearerAuth('user')
@@ -43,7 +43,7 @@ export class GiftCardsController {
   }
 
   // M6 (decision 15 Oct): selling a card pays out naira, so it needs Basic like every other money route.
-  @RequiresKyc(KycTier.TIER_1)
+  @RequiresAction(PolicyAction.GIFTCARD_SELL)
   @PausedDuringMaintenance()
   @Post('trades')
   submit(@CurrentUser('sub') userId: string, @Body() dto: SubmitGiftCardDto) {

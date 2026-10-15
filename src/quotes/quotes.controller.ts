@@ -1,10 +1,9 @@
 import { Body, Controller, Post, UseInterceptors } from '@nestjs/common';
-import { KycTier } from '@prisma/client';
 import { QuotesService } from './quotes.service';
 import { TradesService } from '../trades/trades.service';
 import { QuoteDto, ExecuteTradeDto } from './dto';
 import { CurrentUser } from '../auth/current-user.decorator';
-import { RequiresKyc } from '../auth/jwt-auth.guard';
+import { RequiresAction } from '../levels/requires-action.decorator';
 import { IdempotencyInterceptor } from '../common/idempotency.interceptor';
 import { dec } from '../common/money';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
@@ -24,7 +23,7 @@ export class QuotesController {
    * and requotes on an amount change or an explicit tap — it never silently
    * refreshes a price the user is looking at.
    */
-  @RequiresKyc(KycTier.TIER_1)
+  @RequiresAction('QUOTE_SIDE')
   @PausedDuringMaintenance()
   @Post('quotes')
   async quote(@CurrentUser('sub') userId: string, @Body() dto: QuoteDto) {
@@ -41,7 +40,7 @@ export class QuotesController {
   }
 
   /** Execute a quote. Idempotency-Key required — this one moves money. */
-  @RequiresKyc(KycTier.TIER_1)
+  @RequiresAction('QUOTE_SIDE')
   @UseInterceptors(IdempotencyInterceptor)
   @PausedDuringMaintenance()
   @Post('trades')

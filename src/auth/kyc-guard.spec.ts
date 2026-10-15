@@ -10,7 +10,7 @@ function ctx(user: object | undefined, required: string | null = 'TIER_1') {
 }
 function guard(row: object | null) {
   const prisma = { user: { findUnique: jest.fn(async () => row) } };
-  return { g: new KycGuard(new Reflector(), prisma as never), prisma };
+  return { g: new KycGuard(new Reflector(), prisma as never, {} as never), prisma };
 }
 // A token that CLAIMS approval: the guard must not believe it (review focus 5).
 const token = { sub: 'u1', kyc: 'APPROVED', tier: 'TIER_1' };
