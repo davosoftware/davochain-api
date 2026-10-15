@@ -440,9 +440,16 @@ export class GiftCardsAdminService {
     const reason = input.reason?.trim();
     if (!reason) throw new BadRequestException('Say why — the user is shown this');
 
+    // M6: never pay above the rate the customer was quoted. Without this a
+    // reviewer could pay any rate at all (₦1,000,000 per $1 to a friend).
+    const approvedRateNgn = this.rate(input.approvedRateNgn);
+    if (approvedRateNgn.gt(dec(trade.rateNgn))) {
+      throw new BadRequestException(`The rate cannot be above the ₦${str(trade.rateNgn, 2)} quoted to the customer.`);
+    }
+
     return this.settle(adminId, trade, {
       approvedValue: value,
-      approvedRateNgn: this.rate(input.approvedRateNgn),
+      approvedRateNgn,
       actualRateNgn: this.rate(input.actualRateNgn),
       status: GiftCardTradeStatus.PARTIALLY_APPROVED,
       reason,
