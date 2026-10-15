@@ -345,7 +345,7 @@ export class ReferralsService {
         continue;
       }
 
-      await this.pay(reward.id, userId, dec(reward.amountNgn), reward.kind);
+      await this.pay(reward.id, userId, dec(reward.amountNgn), reward.kind, settings);
     }
 
     await this.completeReferrals(userId);
@@ -382,9 +382,10 @@ export class ReferralsService {
     userId: string,
     amount: Decimal,
     settings: { maxPaidReferralsPerUser: number; maxEarningsPerUserNgn: Prisma.Decimal },
+    db: Pick<Prisma.TransactionClient, 'referralReward'> = this.prisma,
   ): Promise<string | null> {
     if (settings.maxPaidReferralsPerUser > 0) {
-      const paid = await this.prisma.referralReward.count({
+      const paid = await db.referralReward.count({
         where: {
           userId,
           kind: ReferralRewardKind.REFERRER,
@@ -398,7 +399,7 @@ export class ReferralsService {
 
     const ceiling = dec(settings.maxEarningsPerUserNgn);
     if (ceiling.gt(0)) {
-      const earned = await this.earnedNgn(userId);
+      const earned = await this.earnedNgn(userId, db);
       if (earned.plus(amount).gt(ceiling)) {
         return `Paused — this would take you past the ₦${str(ceiling, 2)} referral limit (₦${str(earned, 2)} earned so far)`;
       }
@@ -406,8 +407,11 @@ export class ReferralsService {
     return null;
   }
 
-  private async earnedNgn(userId: string): Promise<Decimal> {
-    const r = await this.prisma.referralReward.aggregate({
+  private async earnedNgn(
+    userId: string,
+    db: Pick<Prisma.TransactionClient, 'referralReward'> = this.prisma,
+  ): Promise<Decimal> {
+    const r = await db.referralReward.aggregate({
       where: { userId, status: ReferralRewardStatus.RELEASED },
       _sum: { amountNgn: true },
     });
@@ -438,6 +442,7 @@ export class ReferralsService {
     userId: string,
     amount: Decimal,
     kind: ReferralRewardKind,
+    settings: { maxPaidReferralsPerUser: number; maxEarningsPerUserNgn: Prisma.Decimal },
   ): Promise<void> {
     if (amount.lte(0)) {
       // Nothing to pay, but it is settled: leaving it PENDING forever would
@@ -454,6 +459,14 @@ export class ReferralsService {
     }
 
     const paid = await this.prisma.serializable(async (t) => {
+      // L7: checked again HERE, inside the write that pays. Checked only before
+      // it, two rewards paid at once could both pass a cap; and a suspended
+      // account was paid regardless.
+      const holder = await t.user.findUnique({ where: { id: userId }, select: { status: true } });
+      if (holder?.status !== UserStatus.ACTIVE) return 'Paused — the account is not active';
+      const cap = await this.capCheck(userId, amount, settings, t);
+      if (cap) return cap;
+
       const claimed = await t.referralReward.updateMany({
         where: { id: rewardId, status: ReferralRewardStatus.PENDING },
         data: { status: ReferralRewardStatus.RELEASED, releasedAt: new Date() },
@@ -491,6 +504,10 @@ export class ReferralsService {
       return true;
     });
 
+    if (typeof paid === 'string') {
+      await this.note(rewardId, paid);
+      return;
+    }
     if (!paid) return;
 
     await this.notifications.notify({
