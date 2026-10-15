@@ -20,6 +20,19 @@
    - **Integration notes:** UX rules and gotchas
 3. Use **Part 2, Appendices** for push notifications, enum values, ready-made Dart code, testing on the local backend, and known limitations.
 
+## What changed for the app (15 October 2026, later): saved withdrawal destinations
+
+**Breaking.** Withdrawals now go **only** to a bank account or crypto address the customer has saved, with their password, beforehand. This closes the "stolen login sends everything away" gap (C6).
+
+| Change | Where | What the app must do |
+| --- | --- | --- |
+| **New: saved bank accounts** `GET/POST/DELETE /v1/me/bank-accounts` | 8.8 | A "Bank accounts" screen: pick a bank (8.5), type the number, enter the password, save. Show the returned account name. |
+| **New: saved crypto addresses** `GET/POST/DELETE /v1/me/crypto-addresses` | 8.9 | An "Addresses" screen: coin, network, address (+ tag), password, save. |
+| **`POST /v1/withdrawals/ngn` body changed** | 8.7 | Send `{ amount, savedBankAccountId }`. The old `accountNumber`/`bankCode` body answers `400 "Choose a saved bank account"`. |
+| **`POST /v1/withdrawals/crypto` body changed** | 8.2 | Send `{ amount, savedCryptoAddressId }`. The old body answers `400 "Choose a saved address"`. |
+| **New `403`: `code: "DESTINATION_COOLING_OFF"`** | 8.8 | A newly saved destination may have a wait set by the admin (`usableFrom` on each saved item). Show `message`; disable it until `until`. |
+| **8.6 Verify a bank account is optional now** | 8.6 | Saving (8.8) looks the name up itself and returns it. 8.6 still works while naira payouts are switched on. |
+
 ## What changed for the app (15 October 2026): verification levels
 
 Admins now decide, on one screen, what people at each level may do: **None** (not verified), **Basic** and **Advanced**. Nothing is fixed in the app or the server any more.
@@ -63,7 +76,7 @@ Admins now decide, on one screen, what people at each level may do: **None** (no
 | 5 | [Assets](#5-assets--networks) | 5.1 List coins · 5.2 List a coin's networks |
 | 6 | [Deposits](#6-deposits) | 6.1 Get deposit address · 6.2 List my addresses · 6.3 Deposit history · 6.4 Naira account · 6.5 Open naira account |
 | 7 | [Trading](#7-trading-buy-sell-swap) | 7.1 Get a quote · 7.2 Execute a quote · 7.3 Trade history · 7.4 Get one transaction |
-| 8 | [Withdrawals](#8-withdrawals) | 8.1 Crypto fee quote · 8.2 Withdraw crypto · 8.3 Withdrawal history · 8.4 Naira fee quote · 8.5 Bank list · 8.6 Verify bank account · 8.7 Withdraw naira |
+| 8 | [Withdrawals](#8-withdrawals) | 8.1 Crypto fee quote · 8.2 Withdraw crypto · 8.3 Withdrawal history · 8.4 Naira fee quote · 8.5 Bank list · 8.6 Verify bank account · 8.7 Withdraw naira · 8.8 Saved bank accounts · 8.9 Saved crypto addresses |
 | 9 | [Gift cards](#9-gift-cards) | 9.1 Catalogue · 9.2 Brand logo · 9.3 Sell a card · 9.4 My card trades · 9.5 One card trade · 9.6 Card photo |
 | 10 | [Referrals](#10-referrals) | 10.1 Check a code · 10.2 Referral dashboard · 10.3 Set username |
 | 11 | [Notifications](#11-notifications) | 11.1 Notification feed · 11.2 Mark as read |
@@ -1747,11 +1760,10 @@ Sends crypto from the user's balance to an external wallet address. **This moves
 
 | Field | Type | Required | Rules | Example |
 | --- | --- | --- | --- | --- |
-| `asset` | string | ✅ | Coin code | `"usdt"` |
-| `network` | string | ✅ | Network id with `withdrawsEnabled`, max 40 | `"trc20"` |
 | `amount` | string | ✅ | Positive decimal: **what the recipient receives** | `"100"` |
-| `address` | string | ✅ | Destination address, max 200 | `"TQrY8tryqsYVCYS3MFbtffiPp2ccyn4STm"` |
-| `destinationTag` | string | only if the network `requiresTag` | Max 64 | `"104927"` |
+| `savedCryptoAddressId` | string | ✅ | From 8.9 (since 15 Oct 2026; the coin, network, address and tag come from the saved address) | `"6c0f…"` |
+
+> Sending `asset`, `network`, `address` or `destinationTag` (the old body) answers `400 "Choose a saved address"`. A saved address still in its wait answers `403 DESTINATION_COOLING_OFF` (8.8).
 
 ```http
 POST /v1/withdrawals/crypto
@@ -1759,7 +1771,7 @@ Authorization: Bearer eyJhbGciOi…
 Idempotency-Key: 9d2c4e1a-7b3f-4a8e-b6d1-0f5c2e9a8b47
 Content-Type: application/json
 
-{ "asset": "usdt", "network": "trc20", "amount": "100", "address": "TQrY8tryqsYVCYS3MFbtffiPp2ccyn4STm" }
+{ "amount": "100", "savedCryptoAddressId": "6c0f2b1e-8a4d-4f3c-9e7a-2d5b1c8f0a64" }
 ```
 
 **Response** `201`
@@ -2042,8 +2054,9 @@ Sends naira from the user's balance to a Nigerian bank account. **This moves mon
 | Field | Type | Required | Rules | Example |
 | --- | --- | --- | --- | --- |
 | `amount` | string | ✅ | Positive decimal (naira that reaches the bank) | `"50000"` |
-| `accountNumber` | string | ✅ | Exactly 10 digits | `"0123456789"` |
-| `bankCode` | string | ✅ | From 8.5 | `"044"` |
+| `savedBankAccountId` | string | ✅ | From 8.8 (since 15 Oct 2026) | `"b81d…"` |
+
+> Sending `accountNumber` or `bankCode` (the old body) answers `400 "Choose a saved bank account"`. The account's name is looked up with the bank again at payout time.
 
 ```http
 POST /v1/withdrawals/ngn
@@ -2051,7 +2064,7 @@ Authorization: Bearer eyJhbGciOi…
 Idempotency-Key: 1f7e3a9c-4b2d-4c8e-a6f1-8d0b5c3e2a71
 Content-Type: application/json
 
-{ "amount": "50000", "accountNumber": "0123456789", "bankCode": "044" }
+{ "amount": "50000", "savedBankAccountId": "b81d4f2a-6c3e-4a9b-8d1f-5e0c7a2b9d36" }
 ```
 
 **Response** `201`
@@ -2094,6 +2107,72 @@ Content-Type: application/json
 - Pushes: `withdrawal.submitted`, then `withdrawal.sent` or `withdrawal.rejected`.
 
 ---
+
+### 8.8 Saved bank accounts
+
+Withdrawals go only to a saved account (since 15 Oct 2026). A customer may keep up to the number an admin sets (default 5).
+
+| Endpoint | What it does |
+| --- | --- |
+| `GET /v1/me/bank-accounts` | `{ max, items: [...] }`, newest first. |
+| `POST /v1/me/bank-accounts` | Save one. **Needs the password.** Level rule: NGN_WITHDRAW. Rate limit: 5 an hour. |
+| `DELETE /v1/me/bank-accounts/:id` | Remove one (no password). `{ "removed": true }` |
+
+**Request** (POST)
+
+| Field | Type | Required | Rules | Example |
+| --- | --- | --- | --- | --- |
+| `bankCode` | string | ✅ | From 8.5 | `"058"` |
+| `accountNumber` | string | ✅ | Exactly 10 digits | `"0123451234"` |
+| `nickname` | string | — | Max 40 | `"Salary"` |
+| `password` | string | ✅ | The customer's password. Never stored. | |
+
+**Response** `201` (one item; `GET` returns `{ "max": 5, "items": [ ... ] }`)
+```json
+{
+  "id": "b81d4f2a-6c3e-4a9b-8d1f-5e0c7a2b9d36",
+  "bankCode": "058",
+  "bankName": "GTBank",
+  "accountNumberMasked": "******1234",
+  "accountName": "ADA OKAFOR",
+  "nickname": "Salary",
+  "usableFrom": "2026-10-15T10:00:00.000Z",
+  "usableNow": true
+}
+```
+
+- The account name is the one the **bank** returns. There is no name-match rule.
+- The full number is never sent back after saving; show `accountNumberMasked`.
+- `usableNow: false` = still in the admin's "after new address/bank" wait; show "usable from" `usableFrom`.
+- Every save emails the customer ("A new withdrawal destination was added").
+
+**Errors**
+
+| Case | Status | `message` |
+| --- | --- | --- |
+| Wrong password (counts towards the sign-in lockout) | 401 | Incorrect password |
+| Account locked after too many wrong passwords | 403 | Too many failed attempts. Try again after … |
+| At the limit | 400 | You can save up to 5 bank accounts. Remove one to add another. |
+| Already saved | 400 | This account is already saved. |
+| Bank not in the list | 400 | Choose a supported Nigerian bank |
+| Bank cannot find the account | 400 | Unable to verify those bank details. Check the account and bank. |
+| Not yours / removed (DELETE, or 8.7) | 404 | Saved account not found |
+| Still in its wait (8.7) | 403 | `code: "DESTINATION_COOLING_OFF"`, `until`, "This account can be used from 14:00 on 16 October." |
+
+### 8.9 Saved crypto addresses
+
+The same, for crypto (default limit 10). `GET/POST /v1/me/crypto-addresses`, `DELETE /v1/me/crypto-addresses/:id`. Level rule for saving: CRYPTO_WITHDRAW.
+
+| Field | Type | Required | Rules | Example |
+| --- | --- | --- | --- | --- |
+| `asset` | string | ✅ | Coin code | `"usdt"` |
+| `network` | string | ✅ | Network id with withdrawals on (5.2) | `"trc20"` |
+| `address` | string | ✅ | Checked against the network's address format; max 200 | `"TQrY8tryqsYVCYS3MFbtffiPp2ccyn4STm"` |
+| `destinationTag` | string | only if the network `requiresTag` | Max 64 | `"104927"` |
+| `nickname` | string | — | Max 40 | `"Ledger"` |
+| `password` | string | ✅ | Never stored | |
+
+Response item: `{ id, assetCode, networkId, networkLabel, address, destinationTag, nickname, usableFrom, usableNow }`. Errors as 8.8, with "This address is already saved.", "You can save up to 10 crypto addresses…", "That does not look like a valid <network> address" and "Saved address not found".
 
 ## 9. Gift cards
 
