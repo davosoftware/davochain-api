@@ -1,3 +1,4 @@
+import { Logger } from '@nestjs/common';
 import { z } from 'zod';
 import { keyModeProblem } from '../flutterwave/key-mode';
 import { rateLimitEnvProblems } from '../rate-limit/policies';
@@ -198,6 +199,8 @@ export const envSchema = z
     KYC_BASIC_ENABLED: bool(false),
     KYC_BASIC_DAILY_ATTEMPTS: int(3),
     KYC_BASIC_TOTAL_ATTEMPTS: int(10),
+    // No longer read (level policy, 15 Oct 2026): set on System -> Verification levels.
+    // Still accepted so existing .env files keep starting.
     MAX_TRADE_USD: num(2000),
     MAX_USER_DAILY_USD: num(5000),
     MAX_PLATFORM_DAILY_USD: num(50000),
@@ -405,6 +408,9 @@ export const envSchema = z
 
 export type Env = z.infer<typeof envSchema>;
 
+/** Settings an old .env may still carry; accepted, never read. */
+const RETIRED = ['MAX_TRADE_USD', 'MAX_USER_DAILY_USD', 'MAX_PLATFORM_DAILY_USD'];
+
 export function validateEnv(raw: Record<string, unknown>): Env {
   const parsed = envSchema.safeParse(raw);
   const lines = parsed.success ? [] : parsed.error.issues.map((i) => `  • ${i.path.join('.')}: ${i.message}`);
@@ -416,5 +422,8 @@ export function validateEnv(raw: Record<string, unknown>): Env {
   const refuse = () => new Error(`Invalid environment configuration:\n${lines.join('\n')}\n`);
   if (!parsed.success) throw refuse();
   if (lines.length > 0) throw refuse();
+  for (const key of RETIRED) {
+    if (raw[key] !== undefined) new Logger('Env').warn(`${key} is no longer used: trading limits are set on System -> Verification levels.`);
+  }
   return parsed.data;
 }
