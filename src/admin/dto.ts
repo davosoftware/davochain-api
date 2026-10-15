@@ -48,7 +48,8 @@ export class ClaimFeesDto {
 
 export class ReviewKycDto {
   @IsBoolean() approve!: boolean;
-  @IsOptional() @IsString() tier?: string;
+  // L1: a free string reached the database as a tier and came back a 500.
+  @IsOptional() @IsEnum(KycTier, { message: 'tier must be TIER_0, TIER_1, TIER_2 or TIER_3' }) tier?: KycTier;
   @IsOptional() @IsString() @MaxLength(500) reason?: string;
 }
 

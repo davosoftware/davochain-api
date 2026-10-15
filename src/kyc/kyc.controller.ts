@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Post } from '@nestjs/common';
 import { Type } from 'class-transformer';
-import { IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, ValidateNested } from 'class-validator';
+import { IsEnum, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, ValidateNested } from 'class-validator';
+import { KycDocumentType } from '@prisma/client';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { KycService } from './kyc.service';
 import { BasicVerificationService } from './basic-verification.service';
@@ -33,8 +34,9 @@ export class SubmitBasicDto {
   @IsIn(['NG']) country!: 'NG';
 }
 
-class AttachDocumentDto {
-  @IsString() type!: string;
+export class AttachDocumentDto {
+  // L1: outside the list it reached the database and came back a 500.
+  @IsEnum(KycDocumentType, { message: `type must be one of: ${Object.values(KycDocumentType).join(', ')}` }) type!: KycDocumentType;
   @IsString() @MaxLength(500) storageKey!: string;
   @IsString() @MaxLength(100) mimeType!: string;
   @IsInt() sizeBytes!: number;

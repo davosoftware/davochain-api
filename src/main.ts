@@ -5,6 +5,7 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { setupSwagger } from './common/swagger';
 import { securityHeaders } from './common/security-headers';
+import { PrismaExceptionFilter } from './common/prisma-exception.filter';
 import { assertExactJsonSupported } from './common/exact-json';
 import { trustProxySetting } from './rate-limit/trust-proxy';
 
@@ -39,6 +40,8 @@ async function bootstrap(): Promise<void> {
 
   // M7: CSP everywhere except the Swagger page (see securityHeaders).
   app.use(securityHeaders());
+  // L1: a database duplicate is a 409 and a missing record a 404, not a 500.
+  app.useGlobalFilters(new PrismaExceptionFilter());
 
   /*
    * Who may call this API from inside a browser.
