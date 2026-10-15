@@ -259,7 +259,8 @@ export class QuidaxClient {
     first_name: string;
     last_name: string;
   }): Promise<QuidaxUser> {
-    return this.post<QuidaxUser>('/users', input);
+    // M9: sign-ups never queue in front of live trades.
+    return this.post<QuidaxUser>('/users', input, { lane: 'background' });
   }
 
   async fetchSubAccount(userId: string): Promise<QuidaxUser> {
@@ -466,7 +467,10 @@ export class QuidaxClient {
     start_date?: string;
     end_date?: string;
   }): Promise<QuidaxDeposit[]> {
-    return (await this.get<QuidaxDeposit[]>('/users/deposits/all', { query: filters })).data;
+    // M9: every page. One page let the gap sweep miss deposits beyond it.
+    const all: QuidaxDeposit[] = [];
+    for await (const d of this.paginate<QuidaxDeposit>('/users/deposits/all', { query: filters })) all.push(d);
+    return all;
   }
 
   async fetchDeposit(userId: string, depositId: string): Promise<QuidaxDeposit> {
