@@ -21,7 +21,7 @@ async function setup() {
   jest.spyOn(dojah, 'lookup').mockResolvedValue({ found: true, httpStatus: 200, identity: { usable: true, firstName: 'John', middleName: 'Doe', lastName: 'Clean', dateOfBirth: '2000-05-01', gender: 'MALE', customerRef: 'c' } });
   const alerts = { raise: jest.fn(async (..._a: unknown[]) => true) };
   const aml = new AmlService(db as never, dojah, alerts as never, { setDesiredForUser: jest.fn() } as never);
-  const cfg = { basicEnabled: true, dailyAttempts: 3, totalAttempts: 10 };
+  const cfg = { effective: async () => ({ basicEnabled: true, dailyAttempts: 3, totalAttempts: 10, minBalance: 0, lowBalanceWarn: null, source: {} }) };
   const readiness = { assertReady: jest.fn(async () => undefined), markNotReady: jest.fn() };
   const hasher = new KycHashService({ get: () => KEY } as never);
   const svc = new BasicVerificationService(db as never, dojah, cfg as never, aml, hasher, { send: jest.fn() } as never, { onKycChanged: jest.fn() } as never, alerts as never, readiness as never);

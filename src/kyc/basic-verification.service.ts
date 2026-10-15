@@ -91,7 +91,9 @@ export class BasicVerificationService implements OnModuleInit {
   }
 
   async submit(userId: string, input: BasicInput): Promise<BasicResponse> {
-    if (!this.cfg.basicEnabled) throw new ServiceUnavailableException(MSG_DISABLED);
+    // The Dojah screen first, then api/.env (read fresh: a switch-off applies at once).
+    const settings = await this.cfg.effective();
+    if (!settings.basicEnabled) throw new ServiceUnavailableException(MSG_DISABLED);
     try {
       await this.readiness?.assertReady();
     } catch {
@@ -228,6 +230,8 @@ export class BasicVerificationService implements OnModuleInit {
   /** CREATED, under the per-user lock: attempt limits and the activeFor claim (spec §8.1, §8.2). */
   private async create(userId: string, input: BasicInput): Promise<string> {
     const today = lagosDate(new Date());
+    // Read before the write: no extra round trip inside the locked step.
+    const settings = await this.cfg.effective();
     try {
       return await this.prisma.$transaction(async (tx) => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'kyc.basic:' + userId}))`;
@@ -252,8 +256,8 @@ export class BasicVerificationService implements OnModuleInit {
           tx.kycVerification.count({ where: counted }),
           tx.kycVerification.count({ where: { ...counted, lagosDay: today } }),
         ]);
-        if (total >= this.cfg.totalAttempts) throw new HttpException(MSG_TOTAL, HttpStatus.TOO_MANY_REQUESTS);
-        if (daily >= this.cfg.dailyAttempts) throw new HttpException(MSG_DAILY, HttpStatus.TOO_MANY_REQUESTS);
+        if (total >= settings.totalAttempts) throw new HttpException(MSG_TOTAL, HttpStatus.TOO_MANY_REQUESTS);
+        if (daily >= settings.dailyAttempts) throw new HttpException(MSG_DAILY, HttpStatus.TOO_MANY_REQUESTS);
 
         const address = { ...input.address, stateOfOrigin: input.stateOfOrigin, country: input.country };
         const profile = {
@@ -390,7 +394,8 @@ export class BasicVerificationService implements OnModuleInit {
       this.prisma.kycVerification.count({ where: counted }),
       this.prisma.kycVerification.count({ where: { ...counted, lagosDay: lagosDate(new Date()) } }),
     ]);
-    return { today: Math.max(0, this.cfg.dailyAttempts - daily), total: Math.max(0, this.cfg.totalAttempts - total) };
+    const settings = await this.cfg.effective();
+    return { today: Math.max(0, settings.dailyAttempts - daily), total: Math.max(0, settings.totalAttempts - total) };
   }
 
   private async mailUser(userId: string, key: 'kyc.submitted' | 'kyc.approved' | 'kyc.rejected', reason?: string): Promise<void> {

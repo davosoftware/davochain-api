@@ -70,6 +70,8 @@ export class DojahReadinessService implements Readiness {
     // A refusal seen by a real call holds for one cache window, or until someone asks for a fresh check.
     if (this.override && (refresh || this.now() - this.override.at >= CACHE_MS)) this.override = null;
     const prod = this.cfg.nodeEnv === 'production';
+    // The Dojah screen first, then api/.env.
+    const settings = await this.cfg.effective();
     const checks: Check[] = [];
 
     const modeOk = !prod || (!this.cfg.useMock && new URL(this.cfg.baseUrl).hostname === 'api.dojah.io');
@@ -106,7 +108,7 @@ export class DojahReadinessService implements Readiness {
     }
     checks.push({ key: 'keysAndIp', ok: keysOk, required: true, detail: keysDetail });
 
-    const minimum = this.cfg.minBalance;
+    const minimum = settings.minBalance;
     let walletOk = this.cfg.useMock || (naira !== null && naira >= minimum);
     if (this.override?.reason === 'wallet') walletOk = false;
     checks.push({
@@ -126,7 +128,7 @@ export class DojahReadinessService implements Readiness {
     });
 
     const ready = checks.every((c) => c.ok || !c.required);
-    const warnAt = this.cfg.lowBalanceWarn;
+    const warnAt = settings.lowBalanceWarn;
     if (!ready) {
       await this.alerts.raise(
         AlertType.DOJAH_CONFIG,
@@ -144,7 +146,7 @@ export class DojahReadinessService implements Readiness {
 
     const report: ReadinessReport = {
       ready,
-      enabled: this.cfg.basicEnabled,
+      enabled: settings.basicEnabled,
       checkedAt: new Date(this.now()).toISOString(),
       checks,
       balance: { naira, minimum, warnAt, asOf: this.lastGood ? new Date(this.lastGood.at).toISOString() : null },

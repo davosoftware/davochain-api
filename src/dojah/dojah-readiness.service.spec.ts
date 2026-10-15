@@ -6,9 +6,11 @@ function setup(o: { env?: string; mock?: boolean; min?: number; warn?: number | 
     nodeEnv: o.env ?? 'production',
     useMock: o.mock ?? false,
     baseUrl: 'https://api.dojah.io',
-    minBalance: o.min ?? 8000,
+    minBalance: 1, // the server default; the screen value (effective) must win
     lowBalanceWarn: o.warn ?? null,
     basicEnabled: o.enabled ?? true,
+    // What applies: the screen first (here only the hard stop and warning move).
+    effective: async () => ({ minBalance: o.min ?? 8000, lowBalanceWarn: o.warn ?? null, basicEnabled: o.enabled ?? true, dailyAttempts: 3, totalAttempts: 10, source: {} }),
     credentials: async () => {
       if (o.creds === false) throw new DojahError('CONFIG', 'missing', 0);
       return { appId: 'a', secretKey: 's' };

@@ -4,7 +4,7 @@ import { DojahError } from './dojah.errors';
 function cfg(env: Record<string, unknown>, creds: Record<string, string | undefined> = {}) {
   const config = { get: (k: string) => env[k] };
   const credentials = { get: async (k: string) => creds[k] };
-  return new DojahConfig(config as never, credentials as never);
+  return new DojahConfig(config as never, credentials as never, {} as never);
 }
 
 describe('DojahConfig', () => {

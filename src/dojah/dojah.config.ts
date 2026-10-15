@@ -1,9 +1,32 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CredentialsService } from '../common/credentials.service';
+import { PrismaService } from '../prisma/prisma.service';
 import { DojahError } from './dojah.errors';
 
 export const DOJAH_SANDBOX_URL = 'https://sandbox.dojah.io';
+/** The system_flags row the Dojah screen saves to (same table as the naira payouts switch). */
+export const DOJAH_SETTINGS_FLAG = 'dojah_settings';
+
+export type DojahSettingKey = 'minBalance' | 'lowBalanceWarn' | 'dailyAttempts' | 'totalAttempts' | 'basicEnabled';
+export interface DojahSettings {
+  minBalance: number;
+  lowBalanceWarn: number | null;
+  dailyAttempts: number;
+  totalAttempts: number;
+  basicEnabled: boolean;
+  /** Where each value came from: set on the Dojah screen, or the server default in api/.env. */
+  source: Record<DojahSettingKey, 'screen' | 'server'>;
+}
+
+const wholeAtLeast = (min: number) => (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= min;
+const VALID: Record<DojahSettingKey, (v: unknown) => boolean> = {
+  minBalance: wholeAtLeast(0),
+  lowBalanceWarn: wholeAtLeast(0),
+  dailyAttempts: wholeAtLeast(1),
+  totalAttempts: wholeAtLeast(1),
+  basicEnabled: (v) => typeof v === 'boolean',
+};
 /** A paid call claimed longer ago than this, still IN_FLIGHT, is UNKNOWN (spec §14.5). */
 export const LEASE_MS = 5 * 60_000;
 /** Retries for an AML screen that DEFINITELY failed: free under plan §R1.1. */
@@ -21,7 +44,36 @@ export class DojahConfig {
   constructor(
     private readonly config: ConfigService,
     private readonly creds: CredentialsService,
+    private readonly prisma: PrismaService,
   ) {}
+
+  /**
+   * What actually applies right now: a value saved on the Dojah screen, else the
+   * server default from api/.env. Read fresh on every call (no cache), so a change
+   * on the screen applies to the very next request. A stored value that is not
+   * valid is ignored for that field only.
+   */
+  async effective(): Promise<DojahSettings> {
+    const row = await this.prisma.systemFlag.findUnique({ where: { key: DOJAH_SETTINGS_FLAG } });
+    const stored = (row?.value && typeof row.value === 'object' ? row.value : {}) as Record<string, unknown>;
+    const server = {
+      minBalance: this.minBalance,
+      lowBalanceWarn: this.lowBalanceWarn,
+      dailyAttempts: this.dailyAttempts,
+      totalAttempts: this.totalAttempts,
+      basicEnabled: this.basicEnabled,
+    };
+    const out = { ...server, source: {} as DojahSettings['source'] };
+    for (const key of Object.keys(VALID) as DojahSettingKey[]) {
+      if (VALID[key](stored[key])) {
+        (out as Record<string, unknown>)[key] = stored[key];
+        out.source[key] = 'screen';
+      } else {
+        out.source[key] = 'server';
+      }
+    }
+    return out;
+  }
 
   get nodeEnv(): string {
     return this.config.get<string>('NODE_ENV') ?? 'development';

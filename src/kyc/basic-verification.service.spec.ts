@@ -15,7 +15,8 @@ async function setup(opts: { enabled?: boolean; ready?: boolean; dojah?: DojahMo
   const dojah = opts.dojah ?? new DojahMockClient();
   const alerts = { raise: jest.fn(async (..._a: unknown[]) => true) };
   const aml = new AmlService(db as never, dojah, alerts as never, { setDesiredForUser: jest.fn() } as never);
-  const cfg = { basicEnabled: opts.enabled ?? true, dailyAttempts: 3, totalAttempts: 10 };
+  // The server default says on; what applies comes from effective() (the Dojah screen first).
+  const cfg = { basicEnabled: true, effective: async () => ({ basicEnabled: opts.enabled ?? true, dailyAttempts: 3, totalAttempts: 10, minBalance: 0, lowBalanceWarn: null, source: {} }) };
   const readiness = {
     assertReady: jest.fn(async () => {
       if (opts.ready === false) throw new Error('not ready');
