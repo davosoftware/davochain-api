@@ -38,3 +38,23 @@ describe('JobLeaseService', () => {
     expect(calls).toEqual(['acquire', 'release']);
   });
 });
+
+/**
+ * M10 (PROJECT_REVIEW): a scheduled job fires on every replica, a few seconds
+ * apart. Releasing the lease the moment the job finishes let a slower replica
+ * take it and run the same job again (a second digest, a second alert). With
+ * keep, a successful run holds the lease until it expires.
+ */
+describe('JobLeaseService: keep the lease after a scheduled run (M10)', () => {
+  it('a successful run keeps the lease, so a late replica skips this window', async () => {
+    const { svc, calls } = service(true);
+    await svc.run('job', 50 * 60_000, async () => 'done', { keep: true });
+    expect(calls).toEqual(['acquire']);
+  });
+
+  it('a failed run still releases it, so another replica may try again', async () => {
+    const { svc, calls } = service(true);
+    await expect(svc.run('job', 60_000, async () => { throw new Error('boom'); }, { keep: true })).rejects.toThrow('boom');
+    expect(calls).toEqual(['acquire', 'release']);
+  });
+});

@@ -1,4 +1,5 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { JobLeaseService } from '../common/job-lease.service';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { AdminRole, AlertType, LegState, SettlementLegKind, TxStatus, TxType } from '@prisma/client';
 import { OPEN_STATUSES } from '../trades/close-open';
@@ -47,6 +48,7 @@ export class ReconciliationService {
     private readonly settlement: SettlementService,
     private readonly deposits: DepositsService,
     private readonly inventory: InventoryService,
+    @Optional() private readonly leases?: JobLeaseService,
   ) {}
 
   /**
@@ -386,8 +388,14 @@ export class ReconciliationService {
     }
   }
 
+  /** M10: one server per run, the lease kept until it expires (see JobLeaseService). */
   @Cron(CronExpression.EVERY_30_MINUTES, { name: 'reconcile' })
   async scheduled(): Promise<void> {
+    if (!this.leases) return this.runScheduled();
+    await this.leases.run('reconcile', 25 * 60_000, () => this.runScheduled(), { keep: true });
+  }
+
+  async runScheduled(): Promise<void> {
     const [drift, legs, gaps] = await Promise.all([
       this.checkInvariants(),
       this.resolveStuckLegs(),
