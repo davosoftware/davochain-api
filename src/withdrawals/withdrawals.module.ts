@@ -8,10 +8,11 @@ import { WithdrawalsService } from './withdrawals.service';
 import { SavedDestinationsService } from './saved-destinations.service';
 import { PasswordService } from '../auth/password.service';
 import { WithdrawalsController } from './withdrawals.controller';
+import { SavedDestinationsController } from './saved-destinations.controller';
 
 @Module({
   imports: [QuidaxModule, LedgerModule, AssetsModule, TradesModule, RatesModule],
-  controllers: [WithdrawalsController],
+  controllers: [WithdrawalsController, SavedDestinationsController],
   providers: [WithdrawalsService, SavedDestinationsService, PasswordService],
   exports: [WithdrawalsService],
 })
