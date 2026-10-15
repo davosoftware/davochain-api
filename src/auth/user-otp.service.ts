@@ -148,8 +148,15 @@ export class UserOtpService {
       throw new BadRequestException('That code has expired. Ask for a new one.');
     }
 
-    if (otp.attempts >= MAX_ATTEMPTS) {
-      await this.prisma.userOtp.update({ where: { id: otp.id }, data: { consumedAt: new Date() } });
+    // Take one of the tries BEFORE looking at the code, in a single UPDATE.
+    // Reading the count and adding to it later let a burst of parallel
+    // requests all see "no tries used" and all get a guess in (C5).
+    const slot = await this.prisma.userOtp.updateMany({
+      where: { id: otp.id, consumedAt: null, attempts: { lt: MAX_ATTEMPTS }, expiresAt: { gt: new Date() } },
+      data: { attempts: { increment: 1 } },
+    });
+    if (slot.count === 0) {
+      await this.prisma.userOtp.updateMany({ where: { id: otp.id, consumedAt: null }, data: { consumedAt: new Date() } });
       throw new BadRequestException('Too many wrong codes. Ask for a new one.');
     }
 
@@ -158,11 +165,11 @@ export class UserOtpService {
     const matches = given.length === expected.length && timingSafeEqual(given, expected);
 
     if (!matches) {
-      const updated = await this.prisma.userOtp.update({
-        where: { id: otp.id },
-        data: { attempts: { increment: 1 } },
-      });
-      const left = MAX_ATTEMPTS - updated.attempts;
+      const after = await this.prisma.userOtp.findUnique({ where: { id: otp.id }, select: { attempts: true } });
+      const left = MAX_ATTEMPTS - (after?.attempts ?? MAX_ATTEMPTS);
+      if (left <= 0) {
+        await this.prisma.userOtp.updateMany({ where: { id: otp.id, consumedAt: null }, data: { consumedAt: new Date() } });
+      }
       throw new BadRequestException(
         left > 0
           ? `That code is not right. ${left} ${left === 1 ? 'try' : 'tries'} left.`
@@ -170,6 +177,11 @@ export class UserOtpService {
       );
     }
 
-    await this.prisma.userOtp.update({ where: { id: otp.id }, data: { consumedAt: new Date() } });
+    // Single use, even when two right answers arrive together.
+    const used = await this.prisma.userOtp.updateMany({
+      where: { id: otp.id, consumedAt: null },
+      data: { consumedAt: new Date() },
+    });
+    if (used.count !== 1) throw new BadRequestException('That code is not right.');
   }
 }

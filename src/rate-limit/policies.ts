@@ -45,7 +45,8 @@ export const DEFAULT_POLICIES: Readonly<Record<PolicyName, Policy>> = {
   'auth.login': { name: 'auth.login', limits: { ip: lim(20, 15 * M), acct: lim(10, 15 * M) }, failClosed: true },
   'auth.register': { name: 'auth.register', limits: { ip: lim(5, H) }, failClosed: true },
   'auth.reset': { name: 'auth.reset', limits: { ip: lim(10, H), acct: lim(3, H) }, failClosed: true },
-  'auth.resetConfirm': { name: 'auth.resetConfirm', limits: { ip: lim(20, H) }, failClosed: true },
+  // acct: guesses at one account's code from many IPs (C5). Routes without an email (invites) skip it.
+  'auth.resetConfirm': { name: 'auth.resetConfirm', limits: { ip: lim(20, H), acct: lim(10, H) }, failClosed: true },
   'auth.refresh': { name: 'auth.refresh', limits: { ip: lim(60, M) }, failClosed: true },
   'auth.changePassword': { name: 'auth.changePassword', limits: { user: lim(5, H) }, failClosed: true },
   // Each submit can buy a paid Dojah lookup; fail closed so a Redis outage cannot open the tap (spec §11).

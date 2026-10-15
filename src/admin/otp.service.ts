@@ -177,11 +177,15 @@ export class AdminOtpService {
       throw new BadRequestException('That code has expired. Ask for a new one.');
     }
 
-    if (otp.attempts >= MAX_ATTEMPTS) {
-      await this.prisma.adminOtp.update({
-        where: { id: otp.id },
-        data: { consumedAt: new Date() },
-      });
+    // Take one of the tries BEFORE looking at the code, in a single UPDATE.
+    // Reading the count and adding to it later let a burst of parallel
+    // requests all see "no tries used" and all get a guess in (C5).
+    const slot = await this.prisma.adminOtp.updateMany({
+      where: { id: otp.id, consumedAt: null, attempts: { lt: MAX_ATTEMPTS }, expiresAt: { gt: new Date() } },
+      data: { attempts: { increment: 1 } },
+    });
+    if (slot.count === 0) {
+      await this.prisma.adminOtp.updateMany({ where: { id: otp.id, consumedAt: null }, data: { consumedAt: new Date() } });
       throw new BadRequestException('Too many wrong codes. Ask for a new one.');
     }
 
@@ -190,20 +194,21 @@ export class AdminOtpService {
     const matches = given.length === expected.length && timingSafeEqual(given, expected);
 
     if (!matches) {
-      const updated = await this.prisma.adminOtp.update({
-        where: { id: otp.id },
-        data: { attempts: { increment: 1 } },
-        select: { attempts: true },
-      });
-      const left = MAX_ATTEMPTS - updated.attempts;
+      const after = await this.prisma.adminOtp.findUnique({ where: { id: otp.id }, select: { attempts: true } });
+      const left = MAX_ATTEMPTS - (after?.attempts ?? MAX_ATTEMPTS);
+      if (left <= 0) {
+        await this.prisma.adminOtp.updateMany({ where: { id: otp.id, consumedAt: null }, data: { consumedAt: new Date() } });
+      }
       throw new BadRequestException(
         left > 0 ? `That code is not right. ${left} attempt(s) left.` : 'Too many wrong codes. Ask for a new one.',
       );
     }
 
-    await this.prisma.adminOtp.update({
-      where: { id: otp.id },
+    // Single use, even when two right answers arrive together.
+    const used = await this.prisma.adminOtp.updateMany({
+      where: { id: otp.id, consumedAt: null },
       data: { consumedAt: new Date() },
     });
+    if (used.count !== 1) throw new BadRequestException('That code is not right.');
   }
 }
