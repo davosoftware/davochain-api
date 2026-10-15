@@ -6,7 +6,7 @@ import {
   NotFoundException,
   forwardRef,
 } from '@nestjs/common';
-import { LedgerAccount, LegState, QuoteSide, SettlementLegKind, TxStatus, TxType } from '@prisma/client';
+import { AlertType, LedgerAccount, LegState, QuoteSide, SettlementLegKind, TxStatus, TxType } from '@prisma/client';
 import { RateQuote } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuidaxClient } from '../quidax/quidax.client';
@@ -18,7 +18,9 @@ import { ReferralsService } from '../referrals/referrals.service';
 import { SystemFlagsService } from '../common/system-flags.service';
 import { AssetsService } from '../assets/assets.service';
 import { InventoryService } from '../inventory/inventory.service';
-import { dec, str } from '../common/money';
+import { Decimal, dec, str } from '../common/money';
+import { OpsAlertsService } from '../common/ops-alerts/ops-alerts.service';
+import { SYSTEM_ACTOR_ID } from '../common/system-actor';
 import { ConfigService } from '@nestjs/config';
 import { assertDailyCaps, dailyCapsFrom } from './daily-limits';
 
@@ -59,7 +61,40 @@ export class TradesService {
     private readonly inventory: InventoryService,
     private readonly referrals: ReferralsService,
     private readonly config: ConfigService,
+    private readonly alerts: OpsAlertsService,
   ) {}
+
+  /**
+   * H10: the margin trip (MARGIN_DEVIATION_TRIP_BPS). When what Quidax actually
+   * executed is worse than what we quoted by more than the trip, trading in
+   * those coins pauses and staff are told: a stale or bad price must not keep
+   * trading. Amounts, not Quidax's execution_price (its units are not
+   * documented). "less": we received less than expected; "more": we paid more.
+   * The trade in hand has already happened and completes.
+   */
+  async tripIfWorse(input: {
+    expected: Decimal;
+    actual: Decimal;
+    worseWhen: 'less' | 'more';
+    assets: string[];
+    tx: string;
+  }): Promise<boolean> {
+    if (input.expected.lte(0) || input.actual.lte(0)) return false;
+    const worseBy = input.worseWhen === 'less' ? input.expected.minus(input.actual) : input.actual.minus(input.expected);
+    const bps = worseBy.div(input.expected).mul(10_000);
+    const trip = dec(this.config.get<number>('MARGIN_DEVIATION_TRIP_BPS') ?? 200);
+    if (bps.lte(trip)) return false;
+
+    const reason = 'Quidax executed ' + bps.toFixed(0) + ' bps worse than quoted (transaction ' + input.tx + ')';
+    for (const asset of input.assets) await this.flags.pauseAsset(asset, SYSTEM_ACTOR_ID, reason);
+    await this.alerts
+      .raise(AlertType.PRICE_DIP, 'margin-trip:' + input.assets.join(','), 'Trading paused: the Quidax price moved against our quote', [
+        reason,
+        'Paused: ' + input.assets.map((a) => a.toUpperCase()).join(', ') + '. Check the price feed, then resume trading in the dashboard.',
+      ])
+      .catch(() => false);
+    return true;
+  }
 
   /** H10: today's limits, checked in the same write that locks the trade's funds. */
   private checkDailyCaps(t: Parameters<typeof assertDailyCaps>[0], userId: string, usdValue: unknown): Promise<void> {
@@ -159,6 +194,8 @@ export class TradesService {
           toCurrency: quote.toAsset,
           toAmount: coinOut,
         });
+        // H10: what we paid for the coin against what the customer paid us.
+        await this.tripIfWorse({ expected: ngnIn, actual: dec(swap.from_amount ?? 0), worseWhen: 'more', assets: [quote.toAsset], tx: tx.id }).catch(() => false);
         // H3: the coin is not ours to send until the swap has landed.
         if (swap.status?.toLowerCase() !== 'completed') await this.settlement.awaitSwap(swap.id);
       }
@@ -327,13 +364,21 @@ export class TradesService {
       // Runs inside the user's own sub-account: the coin never crosses
       // accounts, so no transfer minimum applies and a failure leaves
       // everything exactly where it started.
-      await this.settlement.swapInSubAccount({
+      const executed = await this.settlement.swapInSubAccount({
         transactionId: tx.id,
         quidaxUserId: subId,
         fromCurrency: quote.fromAsset,
         toCurrency: quote.toAsset,
         fromAmount: amountIn,
       });
+      // H10: what Quidax gives against what we quoted (before our fee).
+      await this.tripIfWorse({
+        expected: netOut.plus(fee),
+        actual: dec(executed?.received_amount ?? 0),
+        worseWhen: 'less',
+        assets: [quote.fromAsset, quote.toAsset],
+        tx: tx.id,
+      }).catch(() => false);
 
       // The fee (recorded on the transaction) is booked by finaliseSwap, in the
       // same write that completes the swap: a swap that fails earns nothing (H2).
