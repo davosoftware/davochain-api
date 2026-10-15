@@ -502,6 +502,51 @@ export class SettlementService {
   }
 
   /**
+   * H4: finish a buy or sell whose legs were all confirmed upstream after the
+   * request itself gave up (RECONCILING). The same ledger moves as the request
+   * path's settle; closed only from an open state, so it runs once.
+   */
+  async completeTrade(transactionId: string): Promise<boolean> {
+    const tx = await this.prisma.transaction.findUniqueOrThrow({ where: { id: transactionId } });
+    if (tx.type !== TxType.BUY && tx.type !== TxType.SELL) return false;
+
+    const won = await this.prisma.serializable(async (t) => {
+      if (!(await closeOpen(t, tx.id, { status: TxStatus.COMPLETED, completedAt: new Date(), failureReason: null }))) {
+        return false;
+      }
+      await this.ledger.settleLocked(t, {
+        userId: tx.userId,
+        assetCode: tx.fromAsset!,
+        amount: dec(tx.fromAmount!),
+        counterparty: LedgerAccount.INVENTORY,
+        transactionId: tx.id,
+        memo: 'trade in (reconciled)',
+      });
+      await this.ledger.credit(t, {
+        userId: tx.userId,
+        assetCode: tx.toAsset!,
+        amount: dec(tx.toAmount!),
+        counterparty: LedgerAccount.INVENTORY,
+        transactionId: tx.id,
+        memo: 'trade out (reconciled)',
+      });
+      return true;
+    });
+    if (!won) return false;
+
+    await this.notifications.notify({
+      userId: tx.userId,
+      transactionId: tx.id,
+      type: 'trade.completed',
+      title: 'Trade complete',
+      body: `${str(dec(tx.fromAmount!), 8)} ${tx.fromAsset!.toUpperCase()} → ${str(dec(tx.toAmount!), 8)} ${tx.toAsset!.toUpperCase()}`,
+    });
+    await this.referrals.evaluate(tx.userId);
+    this.log.warn(`Reconciled trade ${tx.id} to COMPLETED`);
+    return true;
+  }
+
+  /**
    * Compensate a failed trade: release the lock, mark FAILED, tell the user
    * plainly that nothing was taken.
    *

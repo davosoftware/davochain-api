@@ -240,3 +240,25 @@ describe('H2: a swap fee is booked only when the swap completes', () => {
     expect(created).toEqual([]);
   });
 });
+
+describe('H4: the reconciler finishes a buy exactly once', () => {
+  const buy: Tx = {
+    id: 'tx5', userId: 'u1', type: TxType.BUY, status: TxStatus.RECONCILING, reference: 'dvc_buy_1',
+    fromAsset: 'ngn', fromAmount: '100000', toAsset: 'btc', toAmount: '0.001',
+  };
+
+  it('completeTrade run twice at once settles once', async () => {
+    const { svc, moves, status } = build(buy);
+    const results = await Promise.all([svc.completeTrade('tx5'), svc.completeTrade('tx5')]);
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect(moves).toEqual(['settle-locked', 'credit']);
+    expect(status()).toBe(TxStatus.COMPLETED);
+  });
+
+  it('completeTrade leaves a refunded trade alone', async () => {
+    const { svc, rows, moves } = build(buy);
+    rows.get('tx5')!.status = TxStatus.FAILED;
+    expect(await svc.completeTrade('tx5')).toBe(false);
+    expect(moves).toEqual([]);
+  });
+});

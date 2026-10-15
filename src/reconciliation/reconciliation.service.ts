@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { AlertType, LegState, SettlementLegKind, TxStatus } from '@prisma/client';
+import { AlertType, LegState, SettlementLegKind, TxType } from '@prisma/client';
+import { OPEN_STATUSES } from '../trades/close-open';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuidaxClient } from '../quidax/quidax.client';
 import { LedgerService } from '../ledger/ledger.service';
@@ -169,16 +170,31 @@ export class ReconciliationService {
   async resolveStuckLegs(): Promise<number> {
     const stuck = await this.prisma.settlementLeg.findMany({
       where: {
-        state: { in: [LegState.UNKNOWN, LegState.SENT] },
-        updatedAt: { lt: new Date(Date.now() - 60_000) },
+        OR: [
+          { state: { in: [LegState.UNKNOWN, LegState.SENT] }, updatedAt: { lt: new Date(Date.now() - 60_000) } },
+          // H4: a crash between creating a leg and sending it leaves it PENDING.
+          // Checked by reference too, once it is old enough to be stuck.
+          { state: LegState.PENDING, updatedAt: { lt: new Date(Date.now() - 10 * 60_000) } },
+        ],
       },
       include: { transaction: true },
+      // Oldest first, so a backlog cannot starve the oldest legs.
+      orderBy: { updatedAt: 'asc' },
       take: 50,
     });
 
     let resolved = 0;
+    // Buys and sells whose legs changed: each is then settled or refunded as a whole.
+    const touched = new Set<string>();
     for (const leg of stuck) {
       try {
+        // H4: a swap is not a withdrawal; asking the withdrawals endpoint about
+        // one never finds it.
+        if (leg.kind === SettlementLegKind.SWAP) {
+          if (await this.resolveSwapLeg(leg, touched)) resolved++;
+          continue;
+        }
+
         // A TRANSFER_IN was sent BY the sub-account (sell, fee sweep); everything
         // else was sent by main. Asking the wrong account returns 404 and the leg
         // stays stuck forever.
@@ -201,6 +217,7 @@ export class ReconciliationService {
               where: { id: leg.id },
               data: { state: LegState.CONFIRMED, quidaxRef: upstream.id },
             });
+            touched.add(leg.transactionId);
           }
           resolved++;
           continue;
@@ -214,9 +231,7 @@ export class ReconciliationService {
               where: { id: leg.id },
               data: { state: LegState.FAILED, quidaxRef: upstream.id },
             });
-            if (leg.transaction.status === TxStatus.RECONCILING) {
-              await this.settlement.reverse(leg.transactionId, 'Confirmed failed upstream');
-            }
+            touched.add(leg.transactionId);
           }
           resolved++;
         }
@@ -225,7 +240,73 @@ export class ReconciliationService {
         this.log.warn('Could not resolve leg ' + leg.reference + ': ' + (err as Error).message);
       }
     }
+
+    for (const transactionId of touched) {
+      await this.settleOrRelease(transactionId).catch((err: Error) =>
+        this.log.warn('Could not finish ' + transactionId + ': ' + err.message),
+      );
+    }
     return resolved;
+  }
+
+  /**
+   * H4: a swap leg, looked up in the swap list of the account that ran it: the
+   * user's sub-account for a coin-to-coin swap, the main account for a buy's
+   * fallback swap. Without the swap id (the confirm never answered) it cannot
+   * be found, and is left for an owner to resolve.
+   */
+  private async resolveSwapLeg(
+    leg: { id: string; transactionId: string; quidaxRef: string | null; transaction: { type: string; userId: string } },
+    touched: Set<string>,
+  ): Promise<boolean> {
+    if (!leg.quidaxRef) return false;
+    const isUserSwap = leg.transaction.type === TxType.SWAP;
+    const owner = isUserSwap ? await this.settlement.quidaxIdFor(leg.transaction.userId) : 'me';
+    const swap = (await this.quidax.fetchSwapTransactions(owner)).find((s) => s.id === leg.quidaxRef);
+    const status = swap?.status?.toLowerCase();
+
+    if (status === 'completed') {
+      await this.prisma.settlementLeg.update({ where: { id: leg.id }, data: { state: LegState.CONFIRMED } });
+      if (isUserSwap) await this.settlement.finaliseSwap(leg.transactionId);
+      else touched.add(leg.transactionId);
+      return true;
+    }
+    if (status === 'failed') {
+      await this.prisma.settlementLeg.update({ where: { id: leg.id }, data: { state: LegState.FAILED } });
+      if (isUserSwap) await this.settlement.reverse(leg.transactionId, 'The swap could not be completed');
+      else touched.add(leg.transactionId);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * H4: decide a buy or sell as a whole, from all of its legs.
+   *  - every leg confirmed, and the transfers add up to the trade: settle it;
+   *  - a leg failed and nothing else went out: refund it (nothing happened);
+   *  - anything else (part done, part failed): leave it for an owner.
+   */
+  private async settleOrRelease(transactionId: string): Promise<void> {
+    const tx = await this.prisma.transaction.findUnique({ where: { id: transactionId } });
+    if (!tx || !OPEN_STATUSES.includes(tx.status)) return;
+    if (tx.type !== TxType.BUY && tx.type !== TxType.SELL) return;
+
+    const legs = await this.prisma.settlementLeg.findMany({ where: { transactionId } });
+    const transferKind = tx.type === TxType.BUY ? SettlementLegKind.TRANSFER_OUT : SettlementLegKind.TRANSFER_IN;
+    const expected = dec(tx.type === TxType.BUY ? tx.toAmount! : tx.fromAmount!);
+
+    if (legs.length > 0 && legs.every((l) => l.state === LegState.CONFIRMED)) {
+      const moved = legs.filter((l) => l.kind === transferKind).reduce((sum, l) => sum.plus(dec(l.amount)), ZERO);
+      if (moved.eq(expected)) await this.settlement.completeTrade(transactionId);
+      return;
+    }
+
+    const failed = legs.some((l) => l.state === LegState.FAILED);
+    const wentOut = legs.some((l) => l.state === LegState.SENT || l.state === LegState.CONFIRMED || l.state === LegState.UNKNOWN);
+    const pending = legs.some((l) => l.state === LegState.PENDING);
+    if (failed && !wentOut && !pending) {
+      await this.settlement.reverse(transactionId, 'Confirmed failed upstream');
+    }
   }
 
   async sweepWebhookGaps(): Promise<number> {
