@@ -85,3 +85,64 @@ describe('the system actor (plan ruling 7)', () => {
     await expect(svc.sendInvite(SYSTEM_ACTOR_ID, 'o1')).rejects.toMatchObject({ status: 404 });
   });
 });
+
+/**
+ * C1 (PROJECT_REVIEW): team.manage must not be a path to granting more than
+ * the creator could grant through setPermissions, which is owner-only.
+ */
+describe('creating an admin (C1)', () => {
+  async function service() {
+    const { AdminsService } = await import('./admins.service');
+    const create = jest.fn(async ({ data }: { data: Record<string, unknown> }) => ({ id: 'new', ...data }));
+    const svc = Object.create(AdminsService.prototype) as InstanceType<typeof AdminsService>;
+    Object.assign(svc, {
+      prisma: {
+        adminUser: {
+          findUnique: jest.fn(async ({ where }: { where: { id?: string; email?: string } }) =>
+            where.email ? null : { id: where.id, name: 'Inviter', role: 'OWNER', isActive: true, email: 'o@x.invalid' },
+          ),
+          create,
+        },
+      },
+      passwords: { hash: jest.fn(async () => 'hash') },
+      select: {},
+      shape: (r: unknown) => r,
+      log: { warn: jest.fn() },
+    });
+    const sendInvite = jest.spyOn(svc, 'sendInvite').mockResolvedValue({ sentTo: 'x', delivered: true } as never);
+    return { svc, create, sendInvite };
+  }
+  const subAdmin = { id: 's1', role: 'SUB_ADMIN' as never };
+  const owner = { id: 'o1', role: 'OWNER' as never };
+
+  it('refuses a sub-admin who asks for anything beyond the standard view permissions', async () => {
+    const { svc, create } = await service();
+    await expect(
+      svc.createAdmin(subAdmin, { email: 'me+2@x.invalid', name: 'Second Me', permissions: ['transactions.approve', 'users.view'] }),
+    ).rejects.toMatchObject({ status: 403 });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('lets a sub-admin create an admin with the standard view permissions, or a subset', async () => {
+    const { svc, create } = await service();
+    await svc.createAdmin(subAdmin, { email: 'a@x.invalid', name: 'Helper', permissions: ['users.view', 'kyc.view'] });
+    expect(create.mock.calls[0][0].data.permissions).toEqual(['users.view', 'kyc.view']);
+    await svc.createAdmin(subAdmin, { email: 'b@x.invalid', name: 'Helper Two' });
+    const { DEFAULT_SUB_ADMIN_PERMISSIONS } = await import('./permissions');
+    expect(create.mock.calls[1][0].data.permissions).toEqual(DEFAULT_SUB_ADMIN_PERMISSIONS);
+  });
+
+  it('still lets an owner grant any permission', async () => {
+    const { svc, create } = await service();
+    await svc.createAdmin(owner, { email: 'c@x.invalid', name: 'Approver', permissions: ['transactions.approve'] });
+    expect(create.mock.calls[0][0].data.permissions).toEqual(['transactions.approve']);
+  });
+
+  it('only lets an owner re-send an invitation to an owner', async () => {
+    const { svc, sendInvite } = await service();
+    await expect(svc.resendInvite(subAdmin, 'owner-2')).rejects.toMatchObject({ status: 403 });
+    expect(sendInvite).not.toHaveBeenCalled();
+    await svc.resendInvite(owner, 'owner-2');
+    expect(sendInvite).toHaveBeenCalledWith('owner-2', 'o1');
+  });
+});

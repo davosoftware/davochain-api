@@ -1259,7 +1259,7 @@ export class AdminController {
   @Post('admins/:id/invite')
   @RequirePermissions('team.manage')
   async resendInvite(@CurrentAdmin() actor: AdminJwtPayload, @Param('id') id: string) {
-    const invite = await this.admins.sendInvite(id, actor.sub);
+    const invite = await this.admins.resendInvite({ id: actor.sub, role: actor.role }, id);
     await this.admin.audit(actor.sub, 'admin.invite.resend', 'AdminUser', id, null, {
       sentTo: invite.sentTo,
       delivered: invite.delivered,

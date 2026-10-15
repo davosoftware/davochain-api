@@ -395,6 +395,11 @@ export class AdminsService {
       role === AdminRole.OWNER
         ? []
         : this.cleanPermissions(input.permissions ?? DEFAULT_SUB_ADMIN_PERMISSIONS);
+    // Only an owner can widen what someone can do (setPermissions is owner-only
+    // too). Without this, team.manage could mint an admin with every key (C1).
+    if (creator.role !== AdminRole.OWNER && permissions.some((p) => !DEFAULT_SUB_ADMIN_PERMISSIONS.includes(p))) {
+      throw new ForbiddenException('Only an owner can give a new admin more than the standard view permissions');
+    }
 
     /*
      * The account is created with a password nobody has and nobody can guess.
@@ -426,6 +431,22 @@ export class AdminsService {
 
     this.log.warn(`Admin ${email} created by ${creator.id} as ${role}; invitation sent`);
     return { admin: this.shape(created), invite };
+  }
+
+  /**
+   * The "send the invitation again" route.
+   *
+   * An invitation is a set-your-password link. Only an owner may send one to an
+   * owner, or team.manage could put an owner's account in their own hands.
+   */
+  async resendInvite(actor: { id: string; role: AdminRole }, adminUserId: string): Promise<InviteResult> {
+    if (actor.role !== AdminRole.OWNER) {
+      const target = await this.prisma.adminUser.findUnique({ where: { id: adminUserId }, select: { role: true } });
+      if (target?.role === AdminRole.OWNER) {
+        throw new ForbiddenException('Only an owner can send an invitation to an owner');
+      }
+    }
+    return this.sendInvite(adminUserId, actor.id);
   }
 
   /**
