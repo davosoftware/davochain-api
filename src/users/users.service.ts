@@ -9,7 +9,11 @@ export class UsersService {
   async profile(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      include: { kycProfile: true, quidaxAccount: { select: { quidaxUserId: true } } },
+      // M12: only the two KYC fields shown, never the hashes, date of birth or address.
+      include: {
+        kycProfile: { select: { rejectionReason: true, submittedAt: true } },
+        quidaxAccount: { select: { quidaxUserId: true } },
+      },
     });
     if (!user) throw new NotFoundException('User not found');
 

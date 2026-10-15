@@ -4,6 +4,7 @@ import { createHash, randomInt, timingSafeEqual } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../common/mail.service';
 import { EmailTemplateService } from '../cms/email-template.service';
+import { mayLogSecrets } from '../common/dev-secrets';
 
 /** Long enough to read out of an inbox, short enough to be useless later. */
 const TTL_MS = 10 * 60_000;
@@ -152,7 +153,7 @@ export class AdminOtpService {
       delivered = delivered || sent;
     }
 
-    if (!delivered && process.env.NODE_ENV !== 'production') {
+    if (!delivered && mayLogSecrets()) {
       // Without this, no reset can be tested until SMTP exists. Guarded on the
       // environment because a production log is not a place for a live code.
       this.log.warn(`SMTP not configured — reset code for ${admin.email} is ${code}`);

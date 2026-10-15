@@ -20,6 +20,7 @@ import { MailService } from '../common/mail.service';
 import { EmailTemplateService } from '../cms/email-template.service';
 import { formatLagos } from '../common/dates';
 import { SYSTEM_ACTOR_ID } from '../common/system-actor';
+import { mayLogSecrets } from '../common/dev-secrets';
 
 /** Where an invitation went, and how long it lasts. Never the token. */
 export interface InviteResult {
@@ -521,7 +522,7 @@ export class AdminsService {
       });
     }
 
-    if (!delivered && process.env.NODE_ENV !== 'production') {
+    if (!delivered && mayLogSecrets()) {
       // Without this an invitation cannot be tested until SMTP exists. Guarded
       // on the environment: a production log is not a place for a live link.
       this.log.warn(`SMTP not configured — invite link for ${admin.email} is ${inviteUrl}`);
