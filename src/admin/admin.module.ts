@@ -29,6 +29,8 @@ import { NgnDepositsModule } from '../ngn-deposits/ngn-deposits.module';
 import { FlutterwaveModule } from '../flutterwave/flutterwave.module';
 import { QUEUES } from '../common/queues';
 import { LevelAdminService } from '../levels/level-admin.service';
+import { DojahModule } from '../dojah/dojah.module';
+import { DojahSettingsService } from './dojah-settings.service';
 import { WithdrawalsModule } from '../withdrawals/withdrawals.module';
 
 @Module({
@@ -46,11 +48,13 @@ import { WithdrawalsModule } from '../withdrawals/withdrawals.module';
     NgnDepositsModule,
     FlutterwaveModule,
     KycModule,
+    // The Dojah screen reads and saves its settings (DojahConfig).
+    DojahModule,
     // Admins view and remove customers' saved withdrawal destinations (Part 2).
     WithdrawalsModule,
   ],
   controllers: [AdminController, AdminAuthController, AlertRecipientsController, KycBasicReviewController, ComplianceController, DojahAdminController],
-  providers: [AdminService, UsersAdminService, AdminsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService, AdminSessionsService, AdminOtpService, NgnWithdrawalsService, AdminGuard, LevelAdminService],
+  providers: [AdminService, UsersAdminService, AdminsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService, AdminSessionsService, AdminOtpService, NgnWithdrawalsService, AdminGuard, LevelAdminService, DojahSettingsService],
   exports: [AdminService, UsersAdminService, AdminsService, AdminSessionsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService],
 })
 export class AdminModule {}

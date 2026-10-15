@@ -9,6 +9,7 @@ import {
   IsBoolean,
   IsEmail,
   IsInt,
+  IsNumber,
   IsNumberString,
   IsOptional,
   IsString,
@@ -79,6 +80,28 @@ export class BalanceCorrectionDto {
   @IsIn(['CREDIT', 'DEBIT']) direction!: 'CREDIT' | 'DEBIT';
   @IsString() @MaxLength(40) amount!: string;
   @IsString() @MaxLength(500) reason!: string;
+}
+
+/** PUT /v1/admin/dojah/settings. null = back to the server default; the service checks every rule. */
+export class DojahSettingsDto {
+  @IsOptional() @IsNumber({}, { message: 'Enter a whole naira amount, 0 or more.' }) minBalance?: number | null;
+  @IsOptional() @IsNumber({}, { message: 'Enter a whole naira amount, 0 or more.' }) lowBalanceWarn?: number | null;
+  @IsOptional() @IsNumber({}, { message: "Tries must be whole numbers from 1 to 20, and the daily number can't be more than the total." }) dailyAttempts?: number | null;
+  @IsOptional() @IsNumber({}, { message: "Tries must be whole numbers from 1 to 20, and the daily number can't be more than the total." }) totalAttempts?: number | null;
+}
+
+/** POST /v1/admin/dojah/basic-switch. enabled null = back to the server default. */
+export class DojahBasicSwitchDto {
+  @IsOptional() @IsBoolean() enabled!: boolean | null;
+  /** Checked, never stored or audited. */
+  @IsString() @MinLength(1) @MaxLength(128) password!: string;
+}
+
+/** POST /v1/admin/dojah/thresholds: Dojah's prices in naira. */
+export class DojahThresholdsDto {
+  @IsNumber({}, { message: 'Enter the price per check and per screening in naira.' }) lookupPrice!: number;
+  @IsNumber({}, { message: 'Enter the price per check and per screening in naira.' }) amlPrice!: number;
+  @IsOptional() @IsNumber() leadDays?: number;
 }
 
 export class SuspendUserDto {

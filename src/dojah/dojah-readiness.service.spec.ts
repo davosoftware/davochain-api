@@ -119,3 +119,14 @@ it('a refusal seen by a real call lapses after one cache window', async () => {
   advance(61_000);
   await expect(svc.assertReady()).resolves.toBeUndefined();
 });
+
+describe('DojahReadinessService: plain help for the Dojah screen', () => {
+  it('reports the settings in force and, for each failing check, what to do', async () => {
+    const r = await setup({ balance: async () => 100 }).svc.report();
+    expect(r.settings).toMatchObject({ minBalance: 8000, dailyAttempts: 3 });
+    const wallet = r.checks.find((c) => c.key === 'wallet')!;
+    expect(wallet.ok).toBe(false);
+    expect(wallet.fix).toBe('Top up the Dojah wallet at dojah.io → Billing, or lower the hard stop below.');
+    expect(r.checks.find((c) => c.key === 'credentials')!.fix).toBeUndefined();
+  });
+});

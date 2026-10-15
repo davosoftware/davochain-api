@@ -4,7 +4,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AlertRecipientsService } from '../common/ops-alerts/alert-recipients.service';
 import { OpsAlertsService } from '../common/ops-alerts/ops-alerts.service';
 import { DojahApi } from './dojah.client';
-import { DojahConfig } from './dojah.config';
+import { DojahConfig, DojahSettings } from './dojah.config';
 import { DojahError } from './dojah.errors';
 import type { Readiness } from '../kyc/basic-verification.service';
 
@@ -14,7 +14,18 @@ export interface Check {
   ok: boolean;
   required: boolean;
   detail: string;
+  /** When it fails: what an admin does about it, in plain words. */
+  fix?: string;
 }
+
+/** What to do when a check fails (the Dojah screen shows it under the check). */
+export const CHECK_FIX: Record<CheckKey, string> = {
+  mode: 'The live server must use the live Dojah address with the test mode off. Ask the developer to set DOJAH_BASE_URL and DOJAH_USE_MOCK.',
+  credentials: 'Add the Dojah App ID and secret key under System → API keys.',
+  keysAndIp: "Check the keys under System → API keys, and add this server's IP address in the Dojah dashboard → Settings → IP whitelist.",
+  wallet: 'Top up the Dojah wallet at dojah.io → Billing, or lower the hard stop below.',
+  recipients: 'Add someone to receive AML and Dojah alerts under System → Alert recipients.',
+};
 export interface ReadinessReport {
   ready: boolean;
   enabled: boolean;
@@ -22,6 +33,8 @@ export interface ReadinessReport {
   checks: Check[];
   balance: { naira: number | null; minimum: number; warnAt: number | null; asOf: string | null };
   observed: { peakHour7d: number; peakDay7d: number };
+  /** What applies now, and whether each value was set on the Dojah screen or is the server default. */
+  settings: DojahSettings;
 }
 
 /** A clock, injectable only by tests. */
@@ -57,6 +70,11 @@ export class DojahReadinessService implements Readiness {
   /** A paid call was just refused for the wallet or the keys: stop until the next good check. */
   markNotReady(reason: 'wallet' | 'keys'): void {
     this.override = { reason, at: this.now() };
+    this.cached = null;
+  }
+
+  /** Forget the cached report: settings changed on the Dojah screen. */
+  invalidate(): void {
     this.cached = null;
   }
 
@@ -127,6 +145,7 @@ export class DojahReadinessService implements Readiness {
       detail: missing.length ? `No one receives: ${missing.join(', ')}` : 'Every AML and Dojah alert has a recipient',
     });
 
+    for (const c of checks) if (!c.ok) c.fix = CHECK_FIX[c.key];
     const ready = checks.every((c) => c.ok || !c.required);
     const warnAt = settings.lowBalanceWarn;
     if (!ready) {
@@ -151,6 +170,7 @@ export class DojahReadinessService implements Readiness {
       checks,
       balance: { naira, minimum, warnAt, asOf: this.lastGood ? new Date(this.lastGood.at).toISOString() : null },
       observed: await this.observed(),
+      settings,
     };
     this.cached = { at: this.now(), report };
     return report;
