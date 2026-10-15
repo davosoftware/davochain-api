@@ -33,6 +33,11 @@ export const PERMISSION_GROUPS = [
         label: 'Change the fee ladders',
         hint: 'Reprices every trade from the moment it is saved',
       },
+      {
+        key: 'trading.halt',
+        label: 'Pause and resume trading',
+        hint: 'Stops buying, selling and swapping a coin at once, everywhere. A pause from the automatic price-safety trip is resumed here too.',
+      },
       { key: 'claims.view', label: 'See claimable fees' },
       { key: 'claims.manage', label: 'Claim fees', hint: 'Moves value to the main account' },
       { key: 'transactions.view', label: 'See transactions' },

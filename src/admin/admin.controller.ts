@@ -859,8 +859,9 @@ export class AdminController {
 
   // ── kill switches ─────────────────────────────────────────
 
+  // M8: its own permission. Changing fees and halting the exchange are different jobs.
   @Post('pause')
-  @RequirePermissions('fees.manage')
+  @RequirePermissions('trading.halt')
   @HttpCode(200)
   async pause(@CurrentAdmin('sub') adminId: string, @Body() dto: PauseDto) {
     await this.flags.pauseAsset(dto.asset, adminId, dto.reason ?? 'manual');
@@ -869,7 +870,7 @@ export class AdminController {
   }
 
   @Post('resume')
-  @RequirePermissions('fees.manage')
+  @RequirePermissions('trading.halt')
   @HttpCode(200)
   async resume(@CurrentAdmin('sub') adminId: string, @Body() dto: PauseDto) {
     await this.flags.resumeAsset(dto.asset, adminId);

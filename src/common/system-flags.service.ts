@@ -47,6 +47,16 @@ export class SystemFlagsService {
     return value;
   }
 
+  /**
+   * M8: read straight from the database, skipping the 5-second cache. The
+   * money-path checks use this, so a pause takes effect on every server at
+   * once instead of up to 5 seconds later, one server at a time.
+   */
+  private async fresh<T>(key: string, fallback: T): Promise<T> {
+    const row = await this.prisma.systemFlag.findUnique({ where: { key } });
+    return (row?.value ?? fallback) as T;
+  }
+
   async set(key: string, value: unknown, updatedBy: string): Promise<void> {
     await this.prisma.systemFlag.upsert({
       where: { key },
@@ -59,10 +69,10 @@ export class SystemFlagsService {
 
   /** Throws unless trading is enabled globally AND this asset is not paused. */
   async assertTradingAllowed(assetCode: string): Promise<void> {
-    if (!(await this.get<boolean>('trading_enabled', true))) {
+    if (!(await this.fresh<boolean>('trading_enabled', true))) {
       throw new ForbiddenException('Trading is temporarily paused. Please try again shortly.');
     }
-    const paused = await this.get<string[]>('paused_assets', []);
+    const paused = await this.fresh<string[]>('paused_assets', []);
     if (paused.includes(assetCode)) {
       throw new ForbiddenException(
         `${assetCode.toUpperCase()} is temporarily unavailable for trading.`,
@@ -71,13 +81,13 @@ export class SystemFlagsService {
   }
 
   async assertDepositsAllowed(): Promise<void> {
-    if (!(await this.get<boolean>('deposits_enabled', true))) {
+    if (!(await this.fresh<boolean>('deposits_enabled', true))) {
       throw new ForbiddenException('Deposits are temporarily paused.');
     }
   }
 
   async assertWithdrawalsAllowed(): Promise<void> {
-    if (!(await this.get<boolean>('withdrawals_enabled', true))) {
+    if (!(await this.fresh<boolean>('withdrawals_enabled', true))) {
       throw new ForbiddenException('Withdrawals are temporarily paused.');
     }
   }
@@ -150,7 +160,7 @@ export class SystemFlagsService {
 
   /** Used by the margin-deviation trip and by the NGN-fuel critical alert. */
   async pauseAsset(assetCode: string, by: string, reason: string): Promise<void> {
-    const paused = await this.get<string[]>('paused_assets', []);
+    const paused = await this.fresh<string[]>('paused_assets', []);
     if (!paused.includes(assetCode)) {
       await this.set('paused_assets', [...paused, assetCode], by);
       this.log.error(`AUTO-PAUSED ${assetCode}: ${reason}`);
@@ -158,7 +168,7 @@ export class SystemFlagsService {
   }
 
   async resumeAsset(assetCode: string, by: string): Promise<void> {
-    const paused = await this.get<string[]>('paused_assets', []);
+    const paused = await this.fresh<string[]>('paused_assets', []);
     await this.set(
       'paused_assets',
       paused.filter((a) => a !== assetCode),
