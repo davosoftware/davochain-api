@@ -46,7 +46,6 @@ export class WithdrawalsController {
   }
 
   @RequiresKyc(KycTier.TIER_1)
-  @RequiresKyc(KycTier.TIER_1)
   @PausedDuringMaintenance()
   @Post('ngn/verify-account')
   verifyNgnBankAccount(@Body() dto: VerifyNgnBankAccountDto) {

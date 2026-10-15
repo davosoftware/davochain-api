@@ -10,16 +10,12 @@ export const QUEUES = {
   WEBHOOKS: 'webhooks',
   /** Address generation is async; poll as a backstop for a lost webhook. */
   ADDRESSES: 'addresses',
-  /** Multi-step trade settlement and its compensating reversals. */
-  SETTLEMENT: 'settlement',
   /** Admin-triggered fee claims. Throttled well under the shared rate limit. */
   FEE_CLAIMS: 'fee-claims',
   /** Push / in-app / email fan-out. */
   NOTIFICATIONS: 'notifications',
   /** Admin alert mail. A silent failure here is the same as no alert. */
   EMAIL: 'email',
-  /** Invariant checks, webhook gap sweeps, stuck-leg resolution. */
-  RECONCILIATION: 'reconciliation',
   /** Chain list + transfer limit sync from Quidax. */
   SYNC: 'sync',
   /** Naira deposits through Flutterwave: verify each payment, then credit it exactly once. */
@@ -32,15 +28,10 @@ export const JOBS = {
   PROVISION_SUBACCOUNT: 'provision-subaccount',
   PROCESS_WEBHOOK: 'process-webhook',
   POLL_ADDRESS: 'poll-address',
-  RESOLVE_LEG: 'resolve-leg',
-  REVERSE_TRANSACTION: 'reverse-transaction',
   CLAIM_FEE: 'claim-fee',
   SEND_NOTIFICATION: 'send-notification',
   SEND_EMAIL: 'send-email',
-  CHECK_INVARIANTS: 'check-invariants',
-  SWEEP_WEBHOOK_GAPS: 'sweep-webhook-gaps',
   SYNC_NETWORKS: 'sync-networks',
-  DAILY_DIGEST: 'daily-digest',
   PROCESS_FLW_PAYIN: 'process-flw-payin',
 } as const;
 
