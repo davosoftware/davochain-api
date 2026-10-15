@@ -50,7 +50,7 @@ describe('withdrawals need verification', () => {
   it('a crypto withdrawal by an unverified user is 403', async () => {
     const r = await call('POST', '/withdrawals/crypto', {
       token: user.token,
-      body: { asset: 'btc', network: 'btc', amount: '0.0002', address: 'bc1qexample' },
+      body: { amount: '0.0002', savedCryptoAddressId: 'any' },
       headers: { 'Idempotency-Key': 'e2e-' + Date.now() },
     });
     expect(r.status).toBe(403);

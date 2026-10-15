@@ -23,6 +23,11 @@ export function formatLagos(date: Date): string {
   return `${get('day')} ${get('month')} ${get('year')} at ${get('hour')}:${get('minute')} WAT`;
 }
 
+/** "14:00 on 16 October": a time a person waits for, in Lagos. */
+export function lagosWhen(date: Date): string {
+  return formatLagos(date).replace(/^(\d+) (\w+) \d{4} at (\d{2}:\d{2}) WAT$/, '$3 on $1 $2');
+}
+
 /** The calendar date in Lagos as YYYY-MM-DD — the format Flutterwave's date filters take. */
 export function lagosDate(date: Date): string {
   return new Intl.DateTimeFormat('en-CA', {

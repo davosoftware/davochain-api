@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  ForbiddenException,
   Logger,
   NotFoundException,
   ServiceUnavailableException,
@@ -21,6 +22,7 @@ import { LevelPolicyService } from '../levels/level-policy.service';
 import { levelOf } from '../levels/levels';
 import { assertCryptoDestination } from './destination-rules';
 import { ZERO, dec, str, type Decimal } from '../common/money';
+import { lagosWhen } from '../common/dates';
 
 /** A plain positive decimal, as the app types it: "5000", "0.0125". No signs, exponents or separators. */
 const PLAIN_AMOUNT = /^\d+(\.\d+)?$/;
@@ -300,9 +302,42 @@ export class WithdrawalsService {
     return user;
   }
 
+  /** A saved destination still in its "after new address/bank" wait (Part 2). */
+  private assertUsable(usableFrom: Date, what: 'account' | 'address'): void {
+    if (usableFrom <= new Date()) return;
+    throw new ForbiddenException({
+      code: 'DESTINATION_COOLING_OFF',
+      until: usableFrom.toISOString(),
+      message: `This ${what} can be used from ${lagosWhen(usableFrom)}.`,
+    });
+  }
+
+  /** POST /v1/withdrawals/ngn: only to one of the caller's saved, usable bank accounts (C6). */
+  async withdrawNgnToSaved(userId: string, input: { amount: string; savedBankAccountId: string }) {
+    const row = await this.prisma.savedBankAccount.findFirst({ where: { id: input.savedBankAccountId, userId, removedAt: null } });
+    if (!row) throw new NotFoundException('Saved account not found');
+    this.assertUsable(row.usableFrom, 'account');
+    return this.withdrawNgn(userId, { amount: input.amount, accountNumber: row.accountNumber, bankCode: row.bankCode }, row.id);
+  }
+
+  /** POST /v1/withdrawals/crypto: only to one of the caller's saved, usable addresses (C6). */
+  async withdrawCryptoToSaved(userId: string, input: { amount: string; savedCryptoAddressId: string }) {
+    const row = await this.prisma.savedCryptoAddress.findFirst({ where: { id: input.savedCryptoAddressId, userId, removedAt: null } });
+    if (!row) throw new NotFoundException('Saved address not found');
+    this.assertUsable(row.usableFrom, 'address');
+    // withdrawCrypto checks the network again: one switched off since saving is refused.
+    return this.withdrawCrypto(
+      userId,
+      { asset: row.assetCode, network: row.networkId, amount: input.amount, address: row.address, destinationTag: row.destinationTag ?? undefined },
+      row.id,
+    );
+  }
+
   async withdrawNgn(
     userId: string,
     input: { amount: string; accountNumber: string; bankCode: string },
+    /** The saved bank account it goes to, recorded on the transaction. */
+    savedBankAccountId?: string,
   ) {
     await this.flags.assertNgnWithdrawalsAllowed();
     await this.flags.assertWithdrawalsAllowed();
@@ -371,6 +406,7 @@ export class WithdrawalsService {
           payoutBankCode: input.bankCode,
           payoutBankName: bank.name,
           payoutAccountLast4: input.accountNumber.slice(-4),
+          savedBankAccountId,
           reference,
         },
       });
@@ -517,6 +553,8 @@ export class WithdrawalsService {
       address: string;
       destinationTag?: string;
     },
+    /** The saved address it goes to, recorded on the transaction. */
+    savedCryptoAddressId?: string,
   ) {
     await this.flags.assertWithdrawalsAllowed();
     const user = await this.withdrawer(userId);
@@ -576,6 +614,7 @@ export class WithdrawalsService {
           feeUsd: platformFeeUsd?.toFixed() ?? null,
           networkFee: networkFee.toFixed(),
           usdValue: usdValue?.toFixed() ?? null,
+          savedCryptoAddressId,
           reference,
           rateConfigId: cfg.id,
         },

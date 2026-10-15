@@ -57,7 +57,7 @@ export class WithdrawalsController {
   @PausedDuringMaintenance()
   @Post('ngn')
   withdrawNgn(@CurrentUser('sub') userId: string, @Body() dto: WithdrawNgnDto) {
-    return this.withdrawals.withdrawNgn(userId, dto);
+    return this.withdrawals.withdrawNgnToSaved(userId, dto);
   }
 
   @RequiresAction(PolicyAction.CRYPTO_WITHDRAW)
@@ -65,6 +65,6 @@ export class WithdrawalsController {
   @PausedDuringMaintenance()
   @Post('crypto')
   withdraw(@CurrentUser('sub') userId: string, @Body() dto: WithdrawCryptoDto) {
-    return this.withdrawals.withdrawCrypto(userId, dto);
+    return this.withdrawals.withdrawCryptoToSaved(userId, dto);
   }
 }

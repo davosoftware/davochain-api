@@ -1,4 +1,5 @@
 import {
+  IsEmpty,
   IsNumberString,
   IsOptional,
   IsString,
@@ -6,27 +7,22 @@ import {
   MaxLength,
 } from 'class-validator';
 
+/**
+ * POST /v1/withdrawals/crypto (Part 2, C6): only to a saved address. The old
+ * typed fields are refused by name so an old app build gets a clear message.
+ */
 export class WithdrawCryptoDto {
-  @IsString()
-  @Matches(/^[a-z0-9]{2,20}$/i)
-  asset!: string;
-
-  @IsString()
-  @MaxLength(40)
-  network!: string;
-
   @IsNumberString()
   amount!: string;
 
   @IsString()
-  @MaxLength(200)
-  address!: string;
-
-  /** Required on XRP, XLM and TON — without it the deposit is lost to the omnibus. */
-  @IsOptional()
-  @IsString()
   @MaxLength(64)
-  destinationTag?: string;
+  savedCryptoAddressId!: string;
+
+  @IsEmpty({ message: 'Choose a saved address' }) asset?: never;
+  @IsEmpty({ message: 'Choose a saved address' }) network?: never;
+  @IsEmpty({ message: 'Choose a saved address' }) address?: never;
+  @IsEmpty({ message: 'Choose a saved address' }) destinationTag?: never;
 }
 
 export class VerifyNgnBankAccountDto {
@@ -39,9 +35,17 @@ export class VerifyNgnBankAccountDto {
   bankCode!: string;
 }
 
-export class WithdrawNgnDto extends VerifyNgnBankAccountDto {
+/** POST /v1/withdrawals/ngn (Part 2, C6): only to a saved bank account. */
+export class WithdrawNgnDto {
   @IsNumberString({}, { message: 'Enter a valid naira amount' })
   amount!: string;
+
+  @IsString()
+  @MaxLength(64)
+  savedBankAccountId!: string;
+
+  @IsEmpty({ message: 'Choose a saved bank account' }) accountNumber?: never;
+  @IsEmpty({ message: 'Choose a saved bank account' }) bankCode?: never;
 }
 
 /** POST /v1/me/bank-accounts (Part 2). The account name is looked up, never sent. */

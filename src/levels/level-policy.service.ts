@@ -3,7 +3,7 @@ import { GiftCardTradeStatus, KycStatus, KycTier, LevelRule, PolicyAction, Polic
 import { PrismaService } from '../prisma/prisma.service';
 import { RatesService } from '../rates/rates.service';
 import { Decimal, ZERO, dec } from '../common/money';
-import { formatLagos } from '../common/dates';
+import { lagosWhen } from '../common/dates';
 import { ACTIONS, LEVEL_NAMES, levelOf } from './levels';
 
 export type Db = Pick<Prisma.TransactionClient, 'levelRule' | 'transaction' | 'giftCardTrade' | 'platformLimit'>;
@@ -184,7 +184,7 @@ export class LevelPolicyService {
   ): Promise<void> {
     const open = await this.withdrawalsOpenAt(user, action, now);
     if (!open) return;
-    const when = formatLagos(open.until).replace(/^(\d+) (\w+) \d{4} at (\d{2}:\d{2}) WAT$/, '$3 on $1 $2');
+    const when = lagosWhen(open.until);
     throw new ForbiddenException({
       code: 'COOLING_OFF',
       action,
