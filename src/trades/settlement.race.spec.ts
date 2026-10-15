@@ -262,3 +262,20 @@ describe('H4: the reconciler finishes a buy exactly once', () => {
     expect(moves).toEqual([]);
   });
 });
+
+describe('H4: a crypto withdrawal fee is recorded as owed to us', () => {
+  it('the platform fee left in the sub-account becomes a fee receivable', async () => {
+    const { svc, fees } = build(withdrawal);
+    await svc.applyWithdrawalWebhook('withdraw.successful', qxWithdrawal());
+    expect(fees).toEqual(['receivable']);
+  });
+
+  it('a withdrawal confirmed twice records the fee once', async () => {
+    const { svc, fees } = build(withdrawal);
+    await Promise.all([
+      svc.applyWithdrawalWebhook('withdraw.successful', qxWithdrawal()),
+      svc.applyWithdrawalWebhook('withdraw.successful', qxWithdrawal()),
+    ]);
+    expect(fees).toEqual(['receivable']);
+  });
+});

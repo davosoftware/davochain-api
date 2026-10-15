@@ -133,6 +133,15 @@ export class ReconciliationService {
         `Reconciliation could not read ${unreadable} sub-account(s); treating this run as partial`,
       );
     }
+    // H4: more holders than one run scans means "held" covers only some of
+    // them while "owed" covers everyone. That difference is not drift.
+    const truncated = userIds.size > ReconciliationService.MAX_USERS_PER_RUN;
+    if (truncated) {
+      this.log.warn(
+        `Reconciliation scanned ${ReconciliationService.MAX_USERS_PER_RUN} of ${userIds.size} holders; treating this run as partial`,
+      );
+    }
+    const partial = unreadable > 0 || truncated;
 
     const rows: DriftRow[] = [];
     for (const code of crypto) {
@@ -153,9 +162,8 @@ export class ReconciliationService {
         heldInSubAccounts: held.toFixed(),
         drift: drift.toFixed(),
         // A partial scan cannot prove a shortfall, so never claim one.
-        withinTolerance:
-          unreadable > 0 ? true : drift.abs().lte(dec(ReconciliationService.TOLERANCE)),
-        partial: unreadable > 0,
+        withinTolerance: partial ? true : drift.abs().lte(dec(ReconciliationService.TOLERANCE)),
+        partial,
       });
     }
 

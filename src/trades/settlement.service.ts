@@ -322,6 +322,20 @@ export class SettlementService {
             data: { state: LegState.CONFIRMED, quidaxRef: data.id },
           });
         }
+        // H4: a crypto withdrawal's platform fee never leaves the user's
+        // sub-account. Record it as owed to us, like a swap fee, so the custody
+        // check balances and a fee claim can collect it. (A naira payout's fee
+        // stays in the main account, so it needs nothing.)
+        if (!isNgn && netPlatform.gt(0)) {
+          await t.feeReceivable.create({
+            data: {
+              userId: tx.userId,
+              assetCode: tx.fromAsset!,
+              amount: netPlatform.toFixed(),
+              usdAtAccrual: tx.feeUsd ?? '0',
+            },
+          });
+        }
         return true;
       });
       if (!won) return;
