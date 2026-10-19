@@ -1,3 +1,4 @@
+import { railFromQuidax } from './testing/rail-from-quidax';
 import { BadRequestException, ServiceUnavailableException } from '@nestjs/common';
 import { WithdrawalsService } from './withdrawals.service';
 import { QuidaxError } from '../quidax/quidax.errors';
@@ -35,6 +36,7 @@ function build(verify: () => Promise<unknown>) {
     flags as never,
     { notify: jest.fn() } as never,
     { fx: async () => ({ ngnPerUsd: '1500' }), assertCooledOff: async () => undefined, assertWithinLimits: async () => undefined, rulesFor: async () => [] } as never, // policy
+    railFromQuidax(quidax as never) as never, // naira rail
   );
   return { service, quidax, prisma };
 }

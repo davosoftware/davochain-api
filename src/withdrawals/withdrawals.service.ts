@@ -1,5 +1,8 @@
 import {
   BadRequestException,
+  Inject,
+  OnModuleInit,
+  Optional,
   Injectable,
   ForbiddenException,
   Logger,
@@ -9,7 +12,6 @@ import {
 import { FeeKind, PolicyAction, TxStatus, TxType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuidaxClient } from '../quidax/quidax.client';
-import { QuidaxError } from '../quidax/quidax.errors';
 import { LedgerService } from '../ledger/ledger.service';
 import { AssetsService } from '../assets/assets.service';
 import { SettlementService } from '../trades/settlement.service';
@@ -23,6 +25,12 @@ import { levelOf } from '../levels/levels';
 import { assertCryptoDestination } from './destination-rules';
 import { ZERO, dec, str, type Decimal } from '../common/money';
 import { lagosWhen } from '../common/dates';
+import { NAIRA_RAIL, type NairaRail, type RailTransfer, RailRefusedError, RailUnknownError } from '../naira-rail/naira-rail';
+import { RailTransferHooks } from '../naira-rail/rail-transfer-hooks';
+import { railAsWithdrawal, railEvent } from '../naira-rail/rail-as-withdrawal';
+
+/** Customer naira payout references start with this (quidax.newReference('ngnwd')). */
+export const PAYOUT_REF_PREFIX = 'dvc_ngnwd_';
 
 /** A plain positive decimal, as the app types it: "5000", "0.0125". No signs, exponents or separators. */
 const PLAIN_AMOUNT = /^\d+(\.\d+)?$/;
@@ -42,7 +50,7 @@ export function positiveAmount(raw: unknown): Decimal {
  * the merchant's main Quidax account against the user's Davochain ledger claim.
  */
 @Injectable()
-export class WithdrawalsService {
+export class WithdrawalsService implements OnModuleInit {
   private readonly log = new Logger(WithdrawalsService.name);
 
   constructor(
@@ -57,7 +65,26 @@ export class WithdrawalsService {
     private readonly flags: SystemFlagsService,
     private readonly notifications: NotificationsService,
     private readonly policy: LevelPolicyService,
+    /** H11 (decision 19 Oct): customer naira is paid out by the naira rail, never Quidax. */
+    @Inject(NAIRA_RAIL) private readonly rail: NairaRail,
+    @Optional() private readonly hooks?: RailTransferHooks,
   ) {}
+
+  onModuleInit(): void {
+    // The rail's webhook for one of our payouts: ask the rail what happened.
+    this.hooks?.on(PAYOUT_REF_PREFIX, (reference) => this.recheckPayout(reference));
+  }
+
+  /**
+   * Ask the rail about one customer payout and finish it through the same
+   * once-only paths a Quidax payout used (settle the lock, or refund it).
+   * Pending or unknown: nothing changes; the reconciliation job asks again.
+   */
+  async recheckPayout(reference: string): Promise<void> {
+    const t = await this.rail.transferStatus(reference);
+    if (!t || t.status === 'PENDING') return;
+    await this.settlement.applyWithdrawalWebhook(railEvent(t), railAsWithdrawal(t));
+  }
 
   /**
    * What an external withdrawal costs: our fee, plus the chain's.
@@ -244,10 +271,8 @@ export class WithdrawalsService {
 
   async ngnBanks() {
     await this.flags.assertNgnWithdrawalsAllowed();
-    const banks = await this.quidax.fetchBanks();
-    return banks
-      .filter((bank) => bank.country.toLowerCase() === 'nigeria' && bank.currency.toLowerCase() === 'ngn')
-      .map(({ code, name }) => ({ code, name }));
+    // From the naira rail: the bank codes must be the ones the rail pays to.
+    return this.railBanks('Naira withdrawals are temporarily unavailable. Try again shortly.');
   }
 
   async verifyNgnBankAccount(input: { accountNumber: string; bankCode: string }) {
@@ -266,12 +291,8 @@ export class WithdrawalsService {
    * payouts are paused.
    */
   async lookupNgnBankAccount(input: { accountNumber: string; bankCode: string }): Promise<{ bankName: string; accountName: string }> {
-    const banks = await this.quidax.fetchBanks().catch(() => {
-      throw new ServiceUnavailableException('The bank list is temporarily unavailable. Try again shortly.');
-    });
-    const bank = banks.find(
-      (b) => b.code === input.bankCode && b.country.toLowerCase() === 'nigeria' && b.currency.toLowerCase() === 'ngn',
-    );
+    const banks = await this.railBanks('The bank list is temporarily unavailable. Try again shortly.');
+    const bank = banks.find((b) => b.code === input.bankCode);
     if (!bank) throw new BadRequestException('Choose a supported Nigerian bank');
     return { bankName: bank.name, accountName: await this.resolveNgnAccountName(input) };
   }
@@ -283,12 +304,21 @@ export class WithdrawalsService {
    */
   private async resolveNgnAccountName(input: { accountNumber: string; bankCode: string }): Promise<string> {
     try {
-      return (await this.quidax.verifyBankAccount(input)).account_name;
+      return (await this.rail.resolveAccount(input)).accountName;
     } catch (err) {
-      if (err instanceof QuidaxError && err.httpStatus >= 400 && err.httpStatus < 500) {
+      if (err instanceof RailRefusedError) {
         throw new BadRequestException('Unable to verify those bank details. Check the account and bank.');
       }
       throw new ServiceUnavailableException('Bank account verification is temporarily unavailable.');
+    }
+  }
+
+  /** Nigerian banks the naira rail can pay. */
+  private async railBanks(unavailable: string): Promise<Array<{ code: string; name: string }>> {
+    try {
+      return await this.rail.banks();
+    } catch {
+      throw new ServiceUnavailableException(unavailable);
     }
   }
 
@@ -358,15 +388,8 @@ export class WithdrawalsService {
       accountNumber: input.accountNumber,
       bankCode: input.bankCode,
     });
-    const banks = await this.quidax.fetchBanks().catch(() => {
-      throw new ServiceUnavailableException('Naira withdrawals are temporarily unavailable. Try again shortly.');
-    });
-    const bank = banks.find(
-      (candidate) =>
-        candidate.code === input.bankCode &&
-        candidate.country.toLowerCase() === 'nigeria' &&
-        candidate.currency.toLowerCase() === 'ngn',
-    );
+    const banks = await this.railBanks('Naira withdrawals are temporarily unavailable. Try again shortly.');
+    const bank = banks.find((candidate) => candidate.code === input.bankCode);
     if (!bank) throw new BadRequestException('Choose a supported Nigerian bank');
 
     const platformFee = dec(quote.feeNgn);
@@ -442,27 +465,24 @@ export class WithdrawalsService {
       })
       .catch((err: Error) => this.log.error(`Could not notify NGN withdrawal ${tx.id}: ${err.message}`));
 
-    let result: Awaited<ReturnType<QuidaxClient['createNgnBankWithdrawal']>>;
+    // H11: paid by the naira rail, never Quidax. Sent once; a clear "no" is refunded, anything unclear is checked.
+    let result: RailTransfer;
     try {
-      result = await this.quidax.createNgnBankWithdrawal({
-        amount: amount.toFixed(2),
-        accountNumber: input.accountNumber,
-        bankCode: input.bankCode,
+      result = await this.rail.transfer({
         reference,
-        transactionNote: `DavoChain withdrawal ${tx.id}`,
-        narration: 'DavoChain NGN withdrawal',
+        bankCode: input.bankCode,
+        accountNumber: input.accountNumber,
+        amount,
+        narration: 'DavoChain withdrawal',
       });
     } catch (err) {
-      if (this.settlement.isUnknown(err)) {
+      if (!(err instanceof RailRefusedError)) {
+        const detail = err instanceof RailUnknownError ? err.message : `Unexpected: ${(err as Error).message}`;
         await this.prisma.settlementLeg.update({
           where: { reference },
-          data: {
-            state: 'UNKNOWN',
-            attempts: { increment: 1 },
-            lastError: this.settlement.internalReason(err).slice(0, 1000),
-          },
+          data: { state: 'UNKNOWN', attempts: { increment: 1 }, lastError: detail.slice(0, 1000) },
         });
-        await this.settlement.markReconciling(tx.id, this.settlement.describe(err), this.settlement.internalReason(err));
+        await this.settlement.markReconciling(tx.id, 'Being checked — awaiting confirmation from the bank', `Naira rail send unclear: ${detail}`);
         return {
           transactionId: tx.id,
           status: TxStatus.RECONCILING,
@@ -473,27 +493,23 @@ export class WithdrawalsService {
         };
       }
 
+      const reason = `The bank refused this payout: ${err.message}`;
       await this.prisma.settlementLeg.update({
         where: { reference },
-        data: {
-          state: 'FAILED',
-          attempts: { increment: 1 },
-          lastError: this.settlement.internalReason(err).slice(0, 1000),
-        },
+        data: { state: 'FAILED', attempts: { increment: 1 }, lastError: err.message.slice(0, 1000) },
       });
-      await this.settlement.reverse(tx.id, this.settlement.describe(err));
-      throw new BadRequestException(
-        `${this.settlement.describe(err)}. Nothing was deducted from your balance.`,
-      );
+      await this.settlement.reverse(tx.id, reason);
+      throw new BadRequestException(`${reason}. Nothing was deducted from your balance.`);
     }
 
-    const providerFee = dec(result.fee ?? 0).plus(result.stamp_duty_fee ?? 0);
+    const providerFee = result.fee ?? ZERO;
     try {
       await this.prisma.$transaction([
         this.prisma.transaction.update({
           where: { id: tx.id },
           data: {
             status: TxStatus.PROCESSING,
+            // The rail's transfer id (column named for Quidax, kept for history).
             quidaxRef: result.id,
             quidaxRawStatus: result.status,
             networkFee: providerFee.toFixed(2),
@@ -778,3 +794,4 @@ export class WithdrawalsService {
     }));
   }
 }
+

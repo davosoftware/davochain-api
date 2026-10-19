@@ -63,3 +63,14 @@ describe('FlutterwaveRail: Flutterwave behind the naira rail plug', () => {
     await expect(other.rail.transfer({ reference: 'r', bankCode: '044', accountNumber: '1', amount: dec('1'), narration: 'n' })).rejects.toBeInstanceOf(RailUnknownError);
   });
 });
+
+describe('FlutterwaveRail: looking up names and banks never leaks Flutterwave errors', () => {
+  it('a wrong account is RailRefusedError; Flutterwave not answering is RailUnknownError', async () => {
+    const wrong = build({ resolveAccount: jest.fn(async () => { throw new FlutterwaveError('DEFINITE', 'Could not resolve account', 400); }) });
+    await expect(wrong.rail.resolveAccount({ bankCode: '044', accountNumber: '0000000000' })).rejects.toBeInstanceOf(RailRefusedError);
+    const down = build({ resolveAccount: jest.fn(async () => { throw new FlutterwaveUnknownError('timeout', 'POST', '/accounts/resolve'); }) });
+    await expect(down.rail.resolveAccount({ bankCode: '044', accountNumber: '0123456789' })).rejects.toBeInstanceOf(RailUnknownError);
+    const banksDown = build({ listBanks: jest.fn(async () => { throw new Error('socket hang up'); }) });
+    await expect(banksDown.rail.banks()).rejects.toBeInstanceOf(RailUnknownError);
+  });
+});

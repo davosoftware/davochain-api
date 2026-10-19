@@ -23,6 +23,7 @@ function build() {
     {} as never, // flags
     {} as never, // notifications
     { fx: async () => ({ ngnPerUsd: '1500' }), assertCooledOff: async () => undefined, assertWithinLimits: async () => undefined, rulesFor: async () => [] } as never, // policy
+    {} as never, // naira rail
   );
   return { service, assets, rates, prisma, kycLimits };
 }

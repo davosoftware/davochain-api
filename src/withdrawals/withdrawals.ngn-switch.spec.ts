@@ -1,3 +1,4 @@
+import { railFromQuidax } from './testing/rail-from-quidax';
 import { ForbiddenException } from '@nestjs/common';
 import { WithdrawalsService } from './withdrawals.service';
 import {
@@ -74,6 +75,7 @@ function build(opts: { override?: boolean; serverSetting?: boolean } = {}) {
     flags,
     { notify: jest.fn().mockResolvedValue(undefined) } as never,
     { fx: async () => ({ ngnPerUsd: '1500' }), assertCooledOff: async () => undefined, assertWithinLimits: async () => undefined, rulesFor: async () => [] } as never, // policy
+    railFromQuidax(quidax as never) as never, // naira rail
   );
   return { service, quidax, prisma, ledger, tx, row };
 }

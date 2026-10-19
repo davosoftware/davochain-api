@@ -1,3 +1,4 @@
+import { railFromQuidax } from './testing/rail-from-quidax';
 import { BadRequestException } from '@nestjs/common';
 import { TxStatus } from '@prisma/client';
 import { WithdrawalsService } from './withdrawals.service';
@@ -42,6 +43,7 @@ function build(opts: { send?: () => Promise<unknown>; dbFailsAfterSend?: boolean
     { assertWithdrawalsAllowed: jest.fn().mockResolvedValue(undefined) } as never,
     { notify: jest.fn() } as never,
     { fx: async () => ({ ngnPerUsd: '1500' }), assertCooledOff: async () => undefined, assertWithinLimits: async () => undefined, rulesFor: async () => [] } as never, // policy
+    railFromQuidax(quidax as never) as never, // naira rail
   );
   jest
     .spyOn(service as unknown as { fees: () => Promise<unknown> }, 'fees')

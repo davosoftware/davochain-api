@@ -18,12 +18,26 @@ export class FlutterwaveRail implements NairaRail {
   }
 
   async banks() {
-    return (await this.client.listBanks()).map(({ code, name }) => ({ code, name }));
+    try {
+      return (await this.client.listBanks()).map(({ code, name }) => ({ code, name }));
+    } catch (err) {
+      throw this.lookupError(err);
+    }
   }
 
   async resolveAccount(input: { bankCode: string; accountNumber: string }) {
-    const r = await this.client.resolveAccount({ account_number: input.accountNumber, account_bank: input.bankCode });
-    return { accountName: r.account_name };
+    try {
+      const r = await this.client.resolveAccount({ account_number: input.accountNumber, account_bank: input.bankCode });
+      return { accountName: r.account_name };
+    } catch (err) {
+      throw this.lookupError(err);
+    }
+  }
+
+  /** A look-up (not a send): Flutterwave's clear "no" is RailRefusedError; anything else is RailUnknownError. */
+  private lookupError(err: unknown): Error {
+    if (err instanceof FlutterwaveError && err.kind !== 'RATE_LIMITED' && err.kind !== 'CONFIG') return new RailRefusedError(err.message);
+    return new RailUnknownError((err as Error).message);
   }
 
   async transfer(input: { reference: string; bankCode: string; accountNumber: string; amount: import('../common/money').Decimal; narration: string }): Promise<RailTransfer> {

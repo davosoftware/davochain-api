@@ -133,3 +133,26 @@ describe('H4: the reconciler finishes what it resolves', () => {
     expect(OPEN_STATUSES).toEqual([TxStatus.PENDING, TxStatus.PROCESSING, TxStatus.RECONCILING]);
   });
 });
+
+describe('H11: a stuck naira payout is checked with the naira rail, never Quidax', () => {
+  function withRail(status: string | null) {
+    const b = build([trade({ type: TxType.WITHDRAWAL, status: TxStatus.PROCESSING, fromAmount: '5050', toAmount: '5000' })], [leg({ kind: SettlementLegKind.BANK_PAYOUT, state: LegState.SENT, reference: 'dvc_ngnwd_1' })]);
+    const rail = { transferStatus: jest.fn(async () => (status ? { id: 'flw-1', reference: 'dvc_ngnwd_1', status, fee: null, reason: status === 'FAILED' ? 'Bank declined' : null } : null)) };
+    const svc = new ReconciliationService(b.prisma as never, b.quidax as never, {} as never, (b.svc as unknown as { settlement: unknown }).settlement as never, {} as never, {} as never, undefined, rail as never);
+    return { ...b, svc, rail };
+  }
+
+  it('SUCCESSFUL settles it through the same withdrawal path', async () => {
+    const { svc, rail, quidax, done } = withRail('SUCCESSFUL');
+    await svc.resolveStuckLegs();
+    expect(rail.transferStatus).toHaveBeenCalledWith('dvc_ngnwd_1');
+    expect(quidax.fetchWithdrawalByReference).not.toHaveBeenCalled();
+    expect(done).toEqual(['withdrawal-webhook']);
+  });
+
+  it('still pending: nothing changes', async () => {
+    const { svc, done } = withRail('PENDING');
+    await svc.resolveStuckLegs();
+    expect(done).toEqual([]);
+  });
+});

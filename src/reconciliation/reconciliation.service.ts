@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { JobLeaseService } from '../common/job-lease.service';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { AdminRole, AlertType, LegState, SettlementLegKind, TxStatus, TxType } from '@prisma/client';
@@ -10,6 +10,8 @@ import { SettlementService } from '../trades/settlement.service';
 import { DepositsService } from '../deposits/deposits.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { Decimal, ZERO, dec } from '../common/money';
+import { NAIRA_RAIL, type NairaRail } from '../naira-rail/naira-rail';
+import { railAsWithdrawal, railEvent } from '../naira-rail/rail-as-withdrawal';
 
 export interface DriftRow {
   asset: string;
@@ -72,6 +74,8 @@ export class ReconciliationService {
     private readonly deposits: DepositsService,
     private readonly inventory: InventoryService,
     @Optional() private readonly leases?: JobLeaseService,
+    /** H11: customer naira payouts are checked with the naira rail, never Quidax. */
+    @Optional() @Inject(NAIRA_RAIL) private readonly rail?: NairaRail,
   ) {}
 
   /**
@@ -315,6 +319,15 @@ export class ReconciliationService {
         // one never finds it.
         if (leg.kind === SettlementLegKind.SWAP) {
           if (await this.resolveSwapLeg(leg, touched)) resolved++;
+          continue;
+        }
+
+        // H11: a naira payout went through the naira rail; ask the rail by our reference.
+        if (leg.kind === SettlementLegKind.BANK_PAYOUT && this.rail) {
+          const t = await this.rail.transferStatus(leg.reference);
+          if (!t || t.status === 'PENDING') continue;
+          await this.settlement.applyWithdrawalWebhook(railEvent(t), railAsWithdrawal(t));
+          resolved++;
           continue;
         }
 
