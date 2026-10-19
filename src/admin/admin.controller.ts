@@ -684,8 +684,10 @@ export class AdminController {
   ) {
     // null: an admin may see any trade's photographs, not only their own.
     const { image, type } = await this.userGiftcards.tradeImage(null, id, imageId);
+    // A card photo can show its code: nothing on the way may keep a copy.
     res.setHeader('content-type', type);
-    res.setHeader('cache-control', 'private, max-age=3600');
+    res.setHeader('cache-control', 'private, no-store');
+    res.setHeader('x-content-type-options', 'nosniff');
     res.end(image);
   }
 

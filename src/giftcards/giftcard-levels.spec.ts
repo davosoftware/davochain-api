@@ -21,6 +21,8 @@ describe('Gift-card selling obeys the daily limit (decision 15 Oct)', () => {
     Object.assign(svc, {
       policy,
       box: { isConfigured: true, seal: (s: string) => s },
+      // A code-only card: no photos, so nothing to store or claim.
+      intents: { store: jest.fn(), claim: jest.fn(async () => undefined), abandon: jest.fn(async () => undefined) },
       notifications: { notify: jest.fn(async () => undefined) },
       prisma: {
         giftCardType: { findUnique: jest.fn(async () => ({ id: 't1', isActive: true, minAmount: '1', maxAmount: '10000', rateNgn: '1200', currency: 'USD', name: 'Card', brand: { isActive: true, name: 'Brand', category: { isActive: true } } })) },

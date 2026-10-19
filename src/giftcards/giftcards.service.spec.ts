@@ -28,6 +28,8 @@ function service(over: { config?: Record<string, string>; trades?: unknown[] } =
     {} as never,
     config as never,
     {} as never, // policy
+    {} as never, // upload intents
+    {} as never, // file store
   );
 }
 

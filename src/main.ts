@@ -8,6 +8,8 @@ import { securityHeaders } from './common/security-headers';
 import { PrismaExceptionFilter } from './common/prisma-exception.filter';
 import { assertExactJsonSupported } from './common/exact-json';
 import { trustProxySetting } from './rate-limit/trust-proxy';
+import { JwtService } from '@nestjs/jwt';
+import { registerLargeBodyRoutes } from './common/large-body';
 
 async function bootstrap(): Promise<void> {
   // Money is parsed from exact JSON text; an older runtime must not start.
@@ -31,6 +33,22 @@ async function bootstrap(): Promise<void> {
     TRUST_PROXY_HOPS: config.get<number>('TRUST_PROXY_HOPS'),
   });
   app.set('trust proxy', trustedProxy);
+
+  // The gift-card sale carries up to five 5 MB photos as base64: it gets its
+  // own 36 MB reader, which checks the sign-in token before reading anything.
+  // It must come before the global parser below, which then skips that body.
+  const jwt = new JwtService();
+  const jwtSecret = config.getOrThrow<string>('JWT_SECRET');
+  registerLargeBodyRoutes(app, {
+    prefix: config.get<string>('API_PREFIX') ?? 'v1',
+    verify: async (token) => {
+      try {
+        return (await jwt.verifyAsync<{ typ?: string }>(token, { secret: jwtSecret })).typ === 'access';
+      } catch {
+        return false;
+      }
+    },
+  });
 
   // An admin avatar arrives as a base64 data URL, and base64 costs a third on
   // top. The default 100 KB would reject a perfectly ordinary picture with

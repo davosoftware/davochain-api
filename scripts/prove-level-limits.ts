@@ -59,7 +59,7 @@ async function main(): Promise<void> {
     });
 
     const policy = new LevelPolicyService(prisma, { price: async () => ({ ngnPerUsd: '1500' }) } as never);
-    const cards = new GiftCardsService(prisma, {} as never, { notify: async () => undefined } as never, { get: () => undefined } as never, policy);
+    const cards = new GiftCardsService(prisma, {} as never, { notify: async () => undefined } as never, { get: () => undefined } as never, policy, {} as never, {} as never);
     // mine() reads the trade back for the app; not needed here.
     (cards as unknown as { mine: (u: string, id: string) => Promise<unknown> }).mine = async (_u, id) => id;
 

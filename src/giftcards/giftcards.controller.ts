@@ -43,8 +43,10 @@ export class GiftCardsController {
   }
 
   // M6 (decision 15 Oct): selling a card pays out naira, so it needs Basic like every other money route.
+  // Up to ~36 MB per request (src/common/large-body.ts), so it has its own limit.
   @RequiresAction(PolicyAction.GIFTCARD_SELL)
   @PausedDuringMaintenance()
+  @RateLimit('giftcards.sell')
   @Post('trades')
   submit(@CurrentUser('sub') userId: string, @Body() dto: SubmitGiftCardDto) {
     return this.giftcards.submit(userId, {
@@ -74,8 +76,10 @@ export class GiftCardsController {
     @Res() res: Response,
   ) {
     const { image, type } = await this.giftcards.tradeImage(userId, id, imageId);
+    // A card photo can show its code: nothing on the way may keep a copy.
     res.setHeader('content-type', type);
-    res.setHeader('cache-control', 'private, max-age=3600');
+    res.setHeader('cache-control', 'private, no-store');
+    res.setHeader('x-content-type-options', 'nosniff');
     res.end(image);
   }
 }
