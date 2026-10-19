@@ -7,6 +7,7 @@ import { OpsAlertsModule } from './common/ops-alerts/ops-alerts.module';
 import { KycLimitsModule } from './kyc/kyc-limits.module';
 import { LevelsModule } from './levels/levels.module';
 import { NairaRailModule } from './naira-rail/naira-rail.module';
+import { StorageModule } from './storage/storage.module';
 import { TreasuryModule } from './treasury/treasury.module';
 import { QueueModule } from './common/queue.module';
 import { RateLimitModule } from './rate-limit/rate-limit.module';
@@ -44,6 +45,7 @@ import { HealthController } from './common/health.controller';
     KycLimitsModule,
     LevelsModule,
     NairaRailModule,
+    StorageModule,
     TreasuryModule,
     QueueModule,
     RateLimitModule,

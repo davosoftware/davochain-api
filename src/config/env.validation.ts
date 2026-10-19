@@ -89,6 +89,17 @@ export const envSchema = z
     QUIDAX_BACKGROUND_RATE_LIMIT_PER_MINUTE: int(30),
     QUIDAX_USE_MOCK: bool(true),
 
+    /**
+     * Where uploaded files are kept (H8). "memory" is for development and
+     * tests only: its files vanish on restart. "r2" is Cloudflare R2, a
+     * private bucket; the four R2_* settings are then required.
+     */
+    STORAGE_DRIVER: z.enum(['memory', 'r2']).default('memory'),
+    R2_ACCOUNT_ID: z.string().optional(),
+    R2_ACCESS_KEY_ID: z.string().optional(),
+    R2_SECRET_ACCESS_KEY: z.string().optional(),
+    R2_BUCKET: z.string().optional(),
+
     QUOTE_TTL_SECONDS: int(12),
     RATE_CACHE_TTL_SECONDS: int(3),
     QUOTE_HARD_EXPIRY_SECONDS: int(30),
@@ -269,6 +280,21 @@ export const envSchema = z
         path: ['QUIDAX_WEBHOOK_SECRET'],
         message: 'QUIDAX_WEBHOOK_SECRET is required when QUIDAX_USE_MOCK=false',
       });
+    }
+    // Files kept in memory are gone after a restart; never where real documents arrive.
+    if (env.STORAGE_DRIVER === 'memory' && !['development', 'test'].includes(env.NODE_ENV)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['STORAGE_DRIVER'],
+        message: 'STORAGE_DRIVER=memory is only allowed in development and test; set STORAGE_DRIVER=r2',
+      });
+    }
+    if (env.STORAGE_DRIVER === 'r2') {
+      for (const name of ['R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET'] as const) {
+        if (!env[name]) {
+          ctx.addIssue({ code: z.ZodIssueCode.custom, path: [name], message: `${name} is required when STORAGE_DRIVER=r2` });
+        }
+      }
     }
     // The Flutterwave mock accepts any deposit; it must never run where real people are.
     if (env.FLW_USE_MOCK && !['development', 'test'].includes(env.NODE_ENV)) {

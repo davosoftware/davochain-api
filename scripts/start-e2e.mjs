@@ -28,6 +28,8 @@ const testSettings = {
   KYC_BASIC_ENABLED: 'true',
   QUIDAX_USE_MOCK: 'true',
   FLW_USE_MOCK: 'true',
+  // Files go to the in-memory store, never the real R2 bucket.
+  STORAGE_DRIVER: 'memory',
   ALERT_DEFAULT_RECIPIENTS: process.env.ALERT_DEFAULT_RECIPIENTS ?? 'ops@davochain.invalid',
   RATE_LIMIT_AUTH_REGISTER_IP: '1000/1h',
   // Several full runs in a row sign in far more than 20 times per 15 minutes from one address.
