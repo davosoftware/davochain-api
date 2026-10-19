@@ -20,6 +20,12 @@
    - **Integration notes:** UX rules and gotchas
 3. Use **Part 2, Appendices** for push notifications, enum values, ready-made Dart code, testing on the local backend, and known limitations.
 
+## What changed for the app (16 October 2026): balance corrections
+
+| Change | Where | What the app must do |
+| --- | --- | --- |
+| **Trade history can include a "Balance correction"** | 7.3 | Rows with `type: "ADJUSTMENT"` carry `label: "Balance correction"`. Show the label and the amount (in = `toAmount`, out = `fromAmount`). |
+
 ## What changed for the app (15 October 2026, later): saved withdrawal destinations
 
 **Breaking.** Withdrawals now go **only** to a bank account or crypto address the customer has saved, with their password, beforehand. This closes the "stolen login sends everything away" gap (C6).
@@ -1581,6 +1587,8 @@ Content-Type: application/json
 
 **What it does**
 Lists the user's buys, sells and swaps, newest first.
+
+> **Since 16 Oct 2026** this list can also hold a **balance correction**: `"type": "ADJUSTMENT"` with `"label": "Balance correction"`. It means our team put the customer's balance right so it matches what is really held. Money **in** has `toAsset`/`toAmount`; money **out** has `fromAsset`/`fromAmount`. Show the `label`; there is no rate or reason to show.
 
 **Request**
 
