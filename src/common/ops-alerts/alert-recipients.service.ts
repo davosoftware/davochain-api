@@ -37,6 +37,8 @@ const CATALOGUE: Record<AlertType, { label: string; description: string }> = {
   DOJAH_CONFIG: { label: 'Verification provider problem', description: 'Dojah refused our keys, IP or wallet, or stopped answering; Basic verification is paused.' },
   AML_REVIEW: { label: 'AML review needed', description: 'A verification matched a PEP, adverse-media or unclear AML result and waits for a compliance reviewer.' },
   AML_SANCTIONS: { label: 'Sanctions match', description: 'A possible or confirmed sanctions match. Confirmed matches are blocked automatically and need an owner.' },
+  TREASURY_SHORT: { label: 'Naira short', description: 'The daily Treasury check: customers are owed more naira than we hold at the naira rail and Quidax together.' },
+  TREASURY_RESERVE_LOW: { label: 'Payout reserve low', description: 'The naira at the naira rail has dropped below the payout reserve, so customer withdrawals may run short. Top it up.' },
 };
 
 /** Who made a change, for the audit row written in the same transaction. */

@@ -229,6 +229,10 @@ enum AlertType {
   DOJAH_CONFIG
   AML_REVIEW
   AML_SANCTIONS
+  /// Treasury: customers are owed more naira than we hold.
+  TREASURY_SHORT
+  /// Treasury: the naira at the rail is below the payout reserve.
+  TREASURY_RESERVE_LOW
 }
 
 // ─────────────────────────────────────────────── identity
@@ -2277,4 +2281,54 @@ model SavedCryptoAddress {
 
   @@index([userId, removedAt])
   @@map("saved_crypto_addresses")
+}
+
+// ─────────────────────────────────────────────── treasury (19 Oct 2026)
+
+/// One row (id "default"): what an owner set on the Treasury screen.
+model TreasurySettings {
+  id                         String   @id @default("default")
+  /// Naira that must stay at the naira rail for customer withdrawals.
+  payoutReserveNgn           Decimal  @default(0) @db.Decimal(38, 18)
+  /// The bank account Quidax gives us for funding our main account.
+  quidaxFundingBankCode      String?
+  quidaxFundingBankName      String?
+  quidaxFundingAccountNumber String?
+  quidaxFundingAccountName   String?
+  updatedBy                  String?
+  updatedAt                  DateTime @updatedAt
+
+  @@map("treasury_settings")
+}
+
+enum TreasuryMoveStatus {
+  /// Asked the rail to send it; waiting for the answer.
+  SENDING
+  /// The rail's answer was unclear; asking again by reference.
+  CHECKING
+  ARRIVED
+  FAILED
+}
+
+/// Company naira sent from the naira rail to Quidax by an owner. Not customer money: no ledger lines.
+model TreasuryMove {
+  id              String             @id @default(uuid())
+  reference       String             @unique
+  amount          Decimal            @db.Decimal(38, 18)
+  direction       String             @default("TO_QUIDAX")
+  status          TreasuryMoveStatus @default(SENDING)
+  railRef         String?
+  railFee         Decimal?           @db.Decimal(38, 18)
+  failureReason   String?
+  /// Where it went, copied at send time.
+  toBankCode      String
+  toBankName      String
+  toAccountNumber String
+  toAccountName   String
+  createdBy       String
+  createdAt       DateTime           @default(now())
+  completedAt     DateTime?
+
+  @@index([status])
+  @@map("treasury_moves")
 }

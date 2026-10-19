@@ -22,6 +22,12 @@ export const PERMISSION_GROUPS = [
         hint: 'Changes what the desk considers healthy',
       },
       { key: 'reconciliation.view', label: 'See reconciliation', hint: 'The ledger invariants' },
+      { key: 'treasury.view', label: 'See treasury', hint: 'Our naira at the rail and at Quidax, against what customers are owed' },
+      {
+        key: 'treasury.manage',
+        label: 'Manage treasury',
+        hint: 'Owners only for moves and settings, whatever is ticked here.',
+      },
     ],
   },
   {
