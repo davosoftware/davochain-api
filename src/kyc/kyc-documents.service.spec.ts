@@ -27,8 +27,8 @@ function fakeDb() {
       count: jest.fn(async ({ where }: { where: { kycProfileId: string; status: string } }) =>
         docs.filter((d) => d.kycProfileId === where.kycProfileId && d.status === where.status).length,
       ),
-      findFirst: jest.fn(async ({ where }: { where: { kycProfileId: string; sha256: string; status: string } }) =>
-        docs.find((d) => d.kycProfileId === where.kycProfileId && d.sha256 === where.sha256 && d.status === where.status) ?? null,
+      findFirst: jest.fn(async ({ where }: { where: { kycProfileId: string; sha256: string; status: string; type: string } }) =>
+        docs.find((d) => d.kycProfileId === where.kycProfileId && d.sha256 === where.sha256 && d.status === where.status && d.type === where.type) ?? null,
       ),
       create: jest.fn(async ({ data }: { data: Omit<Doc, 'id' | 'status' | 'uploadedAt'> }) => {
         if (failCreate) {
@@ -134,6 +134,14 @@ describe('KycDocumentsService.upload', () => {
     expect(again).toMatchObject({ id: first.id, duplicate: true });
     expect(db.docs).toHaveLength(1);
     expect(store.keys()).toHaveLength(1);
+  });
+
+  it('the same picture sent as a different document type is a new document, not a retry', async () => {
+    const { db, svc } = setup();
+    await svc.upload('u1', 'PASSPORT', file(PNG));
+    const selfie = await svc.upload('u1', 'SELFIE', file(PNG));
+    expect(selfie).toMatchObject({ type: 'SELFIE', duplicate: false });
+    expect(db.docs).toHaveLength(2);
   });
 
   it('handles the duplicate found only inside the transaction (two retries racing): one record, our extra file removed', async () => {

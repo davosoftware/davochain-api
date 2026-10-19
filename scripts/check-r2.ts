@@ -4,9 +4,13 @@
  * Run: npm run check:r2
  *
  * It writes ONE tiny object under healthcheck/, reads it back, deletes it, and
- * checks it is gone. It also checks the bucket refuses anonymous reads (it
- * must be private). Secrets are never printed: only the bucket name and the
- * result of each step.
+ * checks it is gone. It also checks the storage address refuses a request with
+ * no keys. Secrets are never printed: only the bucket name and the result of
+ * each step.
+ *
+ * It CANNOT see whether public access is switched on: in R2 that is a separate
+ * setting (the r2.dev link or a custom domain). Check it in the Cloudflare
+ * dashboard: R2 → your bucket → Settings → Public access must be off.
  */
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
@@ -47,14 +51,15 @@ async function main(): Promise<number> {
     const same = got?.bytes.toString() === text;
     step(same, 'Read it back unchanged');
 
-    // A private bucket refuses a request with no keys at all.
+    // The S3 address always wants keys; public access is a separate switch (see the note printed below).
     const anon = await fetch(`https://${accountId}.r2.cloudflarestorage.com/${bucket}/${key}`).catch(() => null);
     const isPrivate = !anon || anon.status === 400 || anon.status === 401 || anon.status === 403;
-    step(isPrivate, isPrivate ? 'Anonymous reads are refused (the bucket is private)' : `Anonymous read returned ${anon?.status}: make the bucket private`);
+    step(isPrivate, isPrivate ? 'The storage address refuses a request with no keys' : `A request with no keys returned ${anon?.status}: check the bucket settings`);
 
     await store.delete(key);
     const gone = (await store.get(key)) === null;
     step(gone, 'Deleted the test file');
+    console.log(`\nNot checked here: public access. In Cloudflare: R2 → ${bucket} → Settings → Public access (r2.dev and custom domains) must be OFF.`);
     return same && isPrivate && gone ? 0 : 1;
   } catch (err) {
     step(false, `Failed: ${(err as Error).message}`);

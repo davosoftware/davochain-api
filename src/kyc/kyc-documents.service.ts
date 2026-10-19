@@ -68,7 +68,7 @@ export class KycDocumentsService {
     const sha256 = createHash('sha256').update(bytes).digest('hex');
 
     // A retry of an upload that already landed: nothing new to store.
-    const earlier = await this.findDuplicate(this.prisma, profile.id, sha256);
+    const earlier = await this.findDuplicate(this.prisma, profile.id, type as KycDocumentType, sha256);
     if (earlier) return view(earlier, true);
     await this.assertRoom(this.prisma, profile.id);
 
@@ -83,7 +83,7 @@ export class KycDocumentsService {
       const outcome = await this.prisma.$transaction(async (tx) => {
         // One upload per customer at a time from here, so two cannot both pass the count.
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${'kyc.documents:' + profile.id}))`;
-        const twin = await this.findDuplicate(tx, profile.id, sha256);
+        const twin = await this.findDuplicate(tx, profile.id, type as KycDocumentType, sha256);
         if (twin) return { doc: twin, duplicate: true };
         await this.assertRoom(tx, profile.id);
         await this.intents.claim(tx, [key]);
@@ -130,8 +130,9 @@ export class KycDocumentsService {
     }
   }
 
-  private findDuplicate(db: Db, kycProfileId: string, sha256: string) {
-    return db.kycDocument.findFirst({ where: { kycProfileId, sha256, status: KycStatus.PENDING } });
+  /** The same file sent again as the same kind of document and still waiting: a retry. */
+  private findDuplicate(db: Db, kycProfileId: string, type: KycDocumentType, sha256: string) {
+    return db.kycDocument.findFirst({ where: { kycProfileId, type, sha256, status: KycStatus.PENDING } });
   }
 
   private async assertRoom(db: Db, kycProfileId: string): Promise<void> {
