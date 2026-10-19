@@ -308,7 +308,7 @@ export class GiftCardsService {
       },
       select: { image: true, imageType: true },
     });
-    if (!image) throw new NotFoundException('No image');
+    if (!image?.image) throw new NotFoundException('No image');
     return { image: Buffer.from(image.image), type: image.imageType };
   }
 }
