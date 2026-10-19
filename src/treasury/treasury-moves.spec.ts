@@ -165,7 +165,70 @@ describe('"Check with the bank now" on one move', () => {
   it('asks the rail by the move\'s reference and answers its status; an unknown move is not found', async () => {
     const { svc, moves } = build({ moves: [{ id: 'm1', reference: 'trsy_a', status: 'SENDING' }], status: { id: '9', reference: 'trsy_a', status: 'SUCCESSFUL', fee: null, reason: null } });
     (svc as unknown as { prisma: { treasuryMove: { findUnique: jest.Mock } } }).prisma.treasuryMove.findUnique = jest.fn(async ({ where }: { where: { id: string } }) => moves.find((m) => m.id === where.id) ?? null);
-    await expect(svc.checkMove('m1')).resolves.toEqual({ id: 'm1', status: 'ARRIVED' });
+    await expect(svc.checkMove('m1')).resolves.toEqual({ id: 'm1', status: 'ARRIVED', noRecord: false });
     await expect(svc.checkMove('nope')).rejects.toThrow('Move not found');
+  });
+});
+
+describe('A move the naira rail has no record of (19 Oct: an owner marks it failed)', () => {
+  const OLD = new Date(Date.now() - 31 * 60_000);
+  const withFind = (b: ReturnType<typeof build>) => {
+    (b.prisma.treasuryMove as unknown as { findUnique: jest.Mock }).findUnique = jest.fn(async ({ where }: { where: { id: string } }) => b.moves.find((m) => m.id === where.id) ?? null);
+    return b;
+  };
+  const stuck = (createdAt = OLD) => [{ id: 'm1', reference: 'trsy_a', status: 'SENDING', createdAt }];
+
+  it('"Check with the bank now" says when the rail has no record of the move', async () => {
+    const { svc } = withFind(build({ moves: stuck(), status: null }));
+    await expect(svc.checkMove('m1')).resolves.toEqual({ id: 'm1', status: 'SENDING', noRecord: true });
+  });
+
+  it('an owner, with the password, marks it failed when the rail has no record and it is over 30 minutes old', async () => {
+    const { svc, moves, rail } = withFind(build({ moves: stuck(), status: null }));
+    const out = await svc.markFailed(OWNER, 'm1', 'pw');
+    expect(rail.transferStatus).toHaveBeenCalledWith('trsy_a');
+    expect(moves[0]).toMatchObject({ status: 'FAILED' });
+    expect(String(moves[0].failureReason)).toMatch(/Flutterwave had no record of it/);
+    expect(out).toMatchObject({ before: { status: 'SENDING' }, after: { status: 'FAILED' } });
+  });
+
+  it('refuses a sub-admin and a wrong password', async () => {
+    await expect(withFind(build({ moves: stuck() })).svc.markFailed(SUB, 'm1', 'pw')).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(withFind(build({ moves: stuck(), passwordOk: false })).svc.markFailed(OWNER, 'm1', 'x')).rejects.toThrow('That password is not correct.');
+  });
+
+  it('refuses while the rail HAS a record: then it is not ours to decide', async () => {
+    const { svc, moves } = withFind(build({ moves: stuck(), status: { id: '9', reference: 'trsy_a', status: 'PENDING', fee: null, reason: null } }));
+    await expect(svc.markFailed(OWNER, 'm1', 'pw')).rejects.toBeInstanceOf(ConflictException);
+    expect(moves[0]).toMatchObject({ status: 'SENDING' });
+  });
+
+  it('refuses a move under 30 minutes old (the rail may simply be slow)', async () => {
+    const { svc, rail } = withFind(build({ moves: stuck(new Date(Date.now() - 5 * 60_000)), status: null }));
+    await expect(svc.markFailed(OWNER, 'm1', 'pw')).rejects.toThrow(/30 minutes/);
+    expect(rail.transferStatus).not.toHaveBeenCalled();
+  });
+
+  it('refuses when the rail cannot be reached: "no answer" is not "no record"', async () => {
+    const b = withFind(build({ moves: stuck() }));
+    b.rail.transferStatus.mockRejectedValueOnce(new Error('timeout'));
+    await expect(b.svc.markFailed(OWNER, 'm1', 'pw')).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(b.moves[0]).toMatchObject({ status: 'SENDING' });
+  });
+
+  it('refuses a move that already finished, and an unknown move', async () => {
+    const done = withFind(build({ moves: [{ id: 'm1', reference: 'trsy_a', status: 'ARRIVED', createdAt: OLD }] }));
+    await expect(done.svc.markFailed(OWNER, 'm1', 'pw')).rejects.toBeInstanceOf(ConflictException);
+    await expect(done.svc.markFailed(OWNER, 'nope', 'pw')).rejects.toThrow('Move not found');
+  });
+
+  it('the screen offers the button only on open moves over 30 minutes old', async () => {
+    const { svc } = build({ moves: [
+      { id: 'a', reference: 'r1', status: 'SENDING', amount: '1000', toBankName: 'B', toAccountNumber: '0123456789', createdAt: OLD },
+      { id: 'b', reference: 'r2', status: 'SENDING', amount: '1000', toBankName: 'B', toAccountNumber: '0123456789', createdAt: new Date() },
+      { id: 'c', reference: 'r3', status: 'ARRIVED', amount: '1000', toBankName: 'B', toAccountNumber: '0123456789', createdAt: OLD },
+    ] });
+    const s = await svc.snapshot();
+    expect(s.moves.map((m) => [m.id, m.canMarkFailed])).toEqual([['a', true], ['b', false], ['c', false]]);
   });
 });

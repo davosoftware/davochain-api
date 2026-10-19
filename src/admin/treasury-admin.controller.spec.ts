@@ -38,3 +38,18 @@ describe('Treasury admin routes', () => {
     expect(JSON.stringify(audit.mock.calls)).not.toContain('secret-pw');
   });
 });
+
+describe('Treasury "mark as failed" route', () => {
+  it('needs treasury.manage, is audited with before and after, never with the password', async () => {
+    expect(perms('markFailed')).toEqual(['treasury.manage']);
+    const audit = jest.fn(async () => undefined);
+    const treasury = {
+      markFailed: jest.fn(async () => ({ before: { status: 'SENDING' }, after: { status: 'FAILED' } })),
+      snapshot: jest.fn(async () => ({})),
+    };
+    const c = new TreasuryAdminController(treasury as never, { audit } as never);
+    await c.markFailed({ sub: 'owner-1', role: 'OWNER' } as never, 'm1', { password: 'secret-pw' } as never, { ip: '1.2.3.4' } as never);
+    expect(audit).toHaveBeenCalledWith('owner-1', 'treasury.move.mark_failed', 'TreasuryMove', 'm1', { status: 'SENDING' }, { status: 'FAILED' }, '1.2.3.4');
+    expect(JSON.stringify(audit.mock.calls)).not.toContain('secret-pw');
+  });
+});

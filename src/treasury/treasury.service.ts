@@ -13,6 +13,8 @@ import { PasswordService } from '../auth/password.service';
 import { WRONG_PASSWORD_MESSAGE } from '../admin/ngn-withdrawals.service';
 
 const OPEN: TreasuryMoveStatus[] = [TreasuryMoveStatus.SENDING, TreasuryMoveStatus.CHECKING];
+/** How long the rail gets to show a move before an owner may call a "no record" move failed. */
+const NO_RECORD_AFTER_MS = 30 * 60_000;
 export const TREASURY_REF_PREFIX = 'trsy_';
 type Actor = { id: string; role: AdminRole };
 
@@ -43,6 +45,8 @@ export interface TreasurySnapshot {
     createdBy: string;
     createdAt: Date;
     completedAt: Date | null;
+    /** Open for over 30 minutes: the screen offers "Mark as failed" (the server still asks the rail first). */
+    canMarkFailed: boolean;
   }>;
 }
 
@@ -70,7 +74,7 @@ export class TreasuryService implements OnModuleInit {
 
   onModuleInit(): void {
     // The rail's webhook for one of our moves: ask the rail what happened.
-    this.hooks?.on(TREASURY_REF_PREFIX, (reference) => this.recheck(reference));
+    this.hooks?.on(TREASURY_REF_PREFIX, async (reference) => void (await this.recheck(reference)));
   }
 
   private assertOwner(actor: Actor): void {
@@ -206,12 +210,16 @@ export class TreasuryService implements OnModuleInit {
     }
   }
 
-  /** Ask the rail about one of our moves; finish it once. A reference that isn't an open move of ours does nothing. */
-  async recheck(reference: string): Promise<void> {
+  /**
+   * Ask the rail about one of our moves; finish it once. A reference that isn't
+   * an open move of ours does nothing. Answers whether the rail had no record.
+   */
+  async recheck(reference: string): Promise<{ noRecord: boolean }> {
     const move = await this.prisma.treasuryMove.findFirst({ where: { reference } });
-    if (!move || !OPEN.includes(move.status as TreasuryMoveStatus)) return;
+    if (!move || !OPEN.includes(move.status as TreasuryMoveStatus)) return { noRecord: false };
     const t = await this.rail.transferStatus(reference);
-    if (!t || t.status === 'PENDING') return;
+    if (!t) return { noRecord: true };
+    if (t.status === 'PENDING') return { noRecord: false };
     await this.prisma.treasuryMove.updateMany({
       where: { reference, status: { in: OPEN } },
       data:
@@ -219,15 +227,51 @@ export class TreasuryService implements OnModuleInit {
           ? { status: TreasuryMoveStatus.ARRIVED, railRef: t.id, railFee: t.fee?.toFixed() ?? null, completedAt: new Date() }
           : { status: TreasuryMoveStatus.FAILED, railRef: t.id, failureReason: (t.reason ?? 'The transfer failed').slice(0, 500), completedAt: new Date() },
     });
+    return { noRecord: false };
   }
 
   /** "Check with the bank now" for one move (the screen's button). */
-  async checkMove(id: string): Promise<{ id: string; status: string }> {
+  async checkMove(id: string): Promise<{ id: string; status: string; noRecord: boolean }> {
     const move = await this.prisma.treasuryMove.findUnique({ where: { id } });
     if (!move) throw new NotFoundException('Move not found');
-    await this.recheck(move.reference);
+    const { noRecord } = await this.recheck(move.reference);
     const after = await this.prisma.treasuryMove.findUnique({ where: { id } });
-    return { id, status: after?.status ?? move.status };
+    return { id, status: after?.status ?? move.status, noRecord };
+  }
+
+  /**
+   * A move the rail has NO record of (decision 19 Oct): an owner, with the
+   * password, may mark it failed so a new move can be sent. Only when it is over
+   * 30 minutes old and the rail, asked right now, still has no record. A rail
+   * that cannot be reached is not "no record", and a move the rail knows about
+   * is finished by the rail's own answer, never by hand.
+   */
+  async markFailed(actor: Actor, id: string, password: string) {
+    this.assertOwner(actor);
+    await this.assertPassword(actor.id, password);
+    const move = await this.prisma.treasuryMove.findUnique({ where: { id } });
+    if (!move) throw new NotFoundException('Move not found');
+    if (!OPEN.includes(move.status as TreasuryMoveStatus)) throw new ConflictException('This move has already finished.');
+    if (Date.now() - new Date(move.createdAt).getTime() < NO_RECORD_AFTER_MS) {
+      throw new ConflictException(`Wait until the move is 30 minutes old: ${this.rail.name} may simply be slow.`);
+    }
+    let t;
+    try {
+      t = await this.rail.transferStatus(move.reference);
+    } catch {
+      throw new ServiceUnavailableException(`We couldn't reach ${this.rail.name} to confirm. Try again shortly.`);
+    }
+    if (t) {
+      throw new ConflictException(`${this.rail.name} has a record of this move (${t.status}). Use "Check with the bank now" instead.`);
+    }
+    const before = { status: move.status, reference: move.reference, amount: String(move.amount) };
+    const reason = `Marked failed by an owner: ${this.rail.name} had no record of it after 30 minutes.`;
+    const { count } = await this.prisma.treasuryMove.updateMany({
+      where: { id, status: { in: OPEN } },
+      data: { status: TreasuryMoveStatus.FAILED, failureReason: reason, completedAt: new Date() },
+    });
+    if (count === 0) throw new ConflictException('This move has already finished.');
+    return { before, after: { status: TreasuryMoveStatus.FAILED, failureReason: reason } };
   }
 
   /** Backup for a lost webhook: every 10 minutes, ask about moves open for over 2 minutes. */
@@ -311,6 +355,7 @@ export class TreasuryService implements OnModuleInit {
         createdBy: m.createdBy,
         createdAt: m.createdAt,
         completedAt: m.completedAt,
+        canMarkFailed: OPEN.includes(m.status as TreasuryMoveStatus) && Date.now() - new Date(m.createdAt).getTime() >= NO_RECORD_AFTER_MS,
       })),
     };
   }

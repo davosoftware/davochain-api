@@ -8,7 +8,7 @@ import { RequirePermissions } from './require-permissions.decorator';
 import { CurrentAdmin } from './current-admin.decorator';
 import { AdminService, type AdminJwtPayload } from './admin.service';
 import { TreasuryService } from '../treasury/treasury.service';
-import { TreasuryCheckNameDto, TreasuryMoveDto, TreasurySettingsDto } from './dto';
+import { TreasuryCheckNameDto, TreasuryMoveDto, TreasuryPasswordDto, TreasurySettingsDto } from './dto';
 
 /**
  * Treasury (decision 16–19 Oct): our naira at the naira rail and at Quidax
@@ -64,6 +64,16 @@ export class TreasuryAdminController {
   @RequirePermissions('treasury.manage')
   checkMove(@Param('id') id: string) {
     return this.treasury.checkMove(id);
+  }
+
+  /** Owners only, with the password: a move the rail has no record of after 30 minutes. */
+  @Post('moves/:id/mark-failed')
+  @HttpCode(200)
+  @RequirePermissions('treasury.manage')
+  async markFailed(@CurrentAdmin() actor: AdminJwtPayload, @Param('id') id: string, @Body() dto: TreasuryPasswordDto, @Req() req: Request) {
+    const { before, after } = await this.treasury.markFailed({ id: actor.sub, role: actor.role }, id, dto.password);
+    await this.admin.audit(actor.sub, 'treasury.move.mark_failed', 'TreasuryMove', id, before, after, req.ip);
+    return this.treasury.snapshot();
   }
 
   /** Owners only (the service checks), with the password: send naira from the rail to Quidax. */

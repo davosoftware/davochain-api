@@ -114,6 +114,11 @@ export class TreasurySettingsDto {
 }
 
 /** POST /v1/admin/treasury/moves: send naira from the rail to Quidax. */
+/** Just the password (Treasury "mark as failed"). Checked, never stored or audited. */
+export class TreasuryPasswordDto {
+  @IsString() @MinLength(1) @MaxLength(128) password!: string;
+}
+
 export class TreasuryMoveDto {
   @IsNumber({}, { message: 'Enter a whole naira amount above zero.' }) amount!: number;
   /** Checked, never stored or audited. */
