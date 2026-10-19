@@ -141,7 +141,7 @@ In development you can try every endpoint in the browser at `http://<host>/docs`
 | Network ids | Exactly as returned by 5.1/5.2. **Some contain spaces**, e.g. TON is `"ton network"`. URL-encode them in query strings. | `bep20`, `trc20`, `ton network` |
 | `limit` query param | Integer, max 100 | `?limit=50` |
 | **Unknown body fields** | **Rejected with 400** ("property X should not exist"). Send only the documented fields, and don't send `null` for optional fields you aren't setting: leave them out. | |
-| Body size | Max **1 MB** per request | |
+| Body size | Max **1 MB** per request, except: selling a gift card (9.3) up to **36 MB**, and a KYC document file (4.3) up to **10 MB** | |
 
 ## 0.4 Errors
 
@@ -176,7 +176,8 @@ In development you can try every endpoint in the browser at `http://<host>/docs`
 | 403 | Not allowed: KYC too low, account suspended or closed, feature paused or off | If the body has `requiredTier`, open the verification screen. If `code`, the blocked-account screen. Otherwise show `message`. |
 | 404 | Not found, or not yours (the API doesn't tell you which) | Show `message` |
 | 409 | Conflict (see each endpoint) | See each endpoint |
-| 413 | Request body over 1 MB | Make photos smaller (9.3) |
+| 413 | Request body too large (1 MB normally; 36 MB for 9.3; a 10 MB file for 4.3) | Show `message`; make the photo or file smaller |
+| 503 | `"File storage is unavailable right now. Please try again shortly."` (uploads and photos) | Show `message`; let the user try again |
 | 429 | Too many requests (rate limit, §0.4.1). Body `{ "statusCode": 429, "message": "Too many attempts. Try again in N seconds." }` and a `Retry-After: N` header | Show `message`. Disable the button for `Retry-After` seconds. **Never** retry automatically on the auth routes. |
 | 503 with `code: "MAINTENANCE"` | Maintenance mode is on (quotes, trades, withdrawals, deposit addresses, the naira account, gift-card trades, Basic) | Show the full-screen maintenance page with `message`. Sign-in, balances and history still work. |
 | 500 / 503 | Server or provider problem. On the auth routes a `503` can also mean the sign-in protection is briefly unavailable (`"Temporarily unavailable. Try again shortly."`) or the server is busy (`"The service is busy, try again shortly"`) | "Something went wrong, please try again." **Never** auto-retry money actions without the same Idempotency-Key. |
@@ -962,26 +963,47 @@ Content-Type: application/json
 
 ---
 
-### 4.3 Attach KYC document (⚠️ not ready, don't use)
+### 4.3 Upload a KYC document
 
-**Endpoint:** `POST /v1/kyc/documents` · **Auth:** **Bearer** · **KYC:** none · **Success:** `201`
+**Endpoint:** `POST /v1/kyc/documents` · **Auth:** **Bearer** · **KYC:** none · **Success:** `201` (new) or `200` (the same file again) · **Rate limit:** 20 per hour
 
 **What it does**
-Today it only **saves information about** a document (type, storage key, file type, size). **It doesn't upload any file**, because file storage isn't built yet. A proper upload endpoint will replace it (Appendix F). It's listed here only so you know it exists.
+Uploads one ID document. The server checks what the file really is, stores it privately, and records it for review. **Changed 19 Oct 2026 (H8):** it is now a real file upload; the old JSON body with `storageKey`, `mimeType` and `sizeBytes` is refused with `400`.
 
-**Request** (for reference only)
+**Request:** `multipart/form-data` with exactly two fields
 
 | Field | Type | Rules |
 | --- | --- | --- |
-| `type` | string | One of `BVN, NIN, PASSPORT, DRIVERS_LICENSE, VOTERS_CARD, SELFIE, PROOF_OF_ADDRESS` |
-| `storageKey` | string | Max 500 |
-| `mimeType` | string | Max 100 |
-| `sizeBytes` | integer | |
+| `type` | text | One of `PASSPORT, DRIVERS_LICENSE, VOTERS_CARD, SELFIE, PROOF_OF_ADDRESS` (BVN and NIN are numbers: use 4.2) |
+| `file` | file | JPEG, PNG or WebP photo, or a PDF. **10 MB at most.** The file name and the type your phone says it is are ignored: the server reads the file itself. |
 
-**Response** `201`
-```json
-{ "id": "3c1e…", "type": "PASSPORT", "status": "PENDING", "uploadedAt": "2026-10-02T09:05:00.000Z" }
+```dart
+final form = FormData.fromMap({
+  'type': 'PASSPORT',
+  'file': await MultipartFile.fromFile(path),
+});
+await dio.post('/v1/kyc/documents', data: form);
 ```
+
+**Response** `201` (or `200` with the same body when it was the same file again, e.g. a retry after a timeout: nothing new is created)
+```json
+{ "id": "3c1e…", "type": "PASSPORT", "status": "PENDING", "uploadedAt": "2026-10-19T09:05:00.000Z" }
+```
+
+**Errors**
+
+| Status | When | `message` |
+| --- | --- | --- |
+| 400 | Not a photo or PDF | `"Documents must be a JPEG, PNG or WebP photo, or a PDF"` |
+| 400 | No file | `"Choose a file to upload"` |
+| 400 | Sent as JSON | `"Send the document as multipart/form-data with two fields: …"` |
+| 409 | 10 documents already waiting for review | `"You already have 10 documents waiting for review. …"` |
+| 413 | Over 10 MB | `"Each document must be 10 MB or smaller"` |
+| 503 | File storage down | `"File storage is unavailable right now. Please try again shortly."` |
+
+**Integration notes**
+- **Retrying is safe:** sending the same file again returns the first document.
+- Compress photos on the phone (Appendix D.5) to keep uploads quick; the limit is 10 MB.
 
 ---
 
@@ -2282,7 +2304,9 @@ Submits a card for review, with photos and/or the card code. The rate is locked 
 | `code` | string | one of `code`/`images` | Card code, max 200 | `"AMZN-XXXX-YYYY"` |
 | `images` | string[] | one of `code`/`images` | Up to **5** data URLs `data:image/jpeg;base64,…`. JPEG, PNG or WebP. | see below |
 
-> **Photo size: the real limit is 1 MB for the WHOLE request.** Base64 makes files ~33% bigger. Before sending, resize each photo on the phone to a longest edge of **~1280 px**, JPEG quality **~70**, so each is ~150–250 KB. **Keep the whole body under ~950 KB** (usually 2–3 photos). Too big returns `413`. Code is in Appendix D.
+> **Photo size (changed 19 Oct 2026):** each photo up to **5 MB**, and the whole request up to **36 MB** (5 photos as base64). Still resize on the phone (longest edge **~1280 px**, JPEG quality **~70**, Appendix D) so the upload is quick on mobile data. Too big returns `413`.
+>
+> **Retrying is safe:** the same photos, card and value sent again within 10 minutes return the first trade instead of making a second one.
 
 ```http
 POST /v1/giftcards/trades
@@ -2330,7 +2354,8 @@ Content-Type: application/json
 | 400 | Codes not accepted right now | `"Card codes cannot be accepted right now. Send a photo instead, or try again shortly."` |
 | 400 | Photo problems | `"That image is empty"` / `"Each image must be 5 MB or smaller"` / `"Images must be JPEG, PNG or WebP"` |
 | 400 | More than 5 photos / bad `typeId` | validation array |
-| 413 | Body over 1 MB | `"request entity too large"`: shrink the photos |
+| 413 | Body over 36 MB | `"This request is too large. A card can have up to 5 photos of 5 MB each."` |
+| 503 | File storage down | `"File storage is unavailable right now. Please try again shortly."`: let the user try again |
 
 **Integration notes**
 - Show upload progress; this is a large request.
@@ -3237,7 +3262,7 @@ Future<Map<String, dynamic>> executeTrade(Api api, String quoteId) async {
 }
 ```
 
-### D.5 Gift-card photo resizing (fit under the 1 MB request limit)
+### D.5 Photo resizing (quicker uploads for gift cards and KYC documents)
 
 ```dart
 import 'dart:convert';
@@ -3314,9 +3339,9 @@ Locally the API uses a **fake ("mock") version of Quidax**, the crypto provider.
 | --- | --- | --- |
 | 1 | **No in-app naira top-up** | A funding endpoint is coming. Add a "Fund wallet" placeholder. |
 | 2 | **Naira bank withdrawals** switched off (8.5–8.7) | Gate on `payoutAvailable` from 8.4 |
-| 3 | **KYC document upload** not built (4.3); Advanced verification (Tier 2/3) unavailable | A proper upload flow will replace 4.3 |
+| 3 | Advanced verification (Tier 2/3) unavailable. **KYC document upload (4.3) works since 19 Oct**, but nothing asks for documents yet | Build the upload screen against 4.3 |
 | 3a | **Basic verification (4.2) is switched off** until launch (`503 "Verification is not available yet."`) | Show `message`. Build the form now; it works against a test server with Basic switched on. |
-| 4 | **Gift-card photos** limited by the 1 MB request size | A separate upload endpoint is planned |
+| 4 | ~~Gift-card photos limited by the 1 MB request size~~ **Fixed 19 Oct:** 36 MB for 9.3 | — |
 | 5 | **No email verification** after signup | Will be added. Plan for a "verify your email" step after 2.1. |
 | 6 | **Withdrawals need only a token** | An OTP/2FA confirm step, saved addresses and a new-address waiting period are planned. Leave room in the confirm screen. |
 | 7 | **Rate limiting is live** (§0.4.1) | Handle `429` + `Retry-After` on every call. Quotes (7.1) have no limit of their own yet; they share the 300-per-minute default. |
@@ -3351,7 +3376,7 @@ Locally the API uses a **fake ("mock") version of Quidax**, the crypto provider.
 | 4.1 | GET | `/v1/kyc` | ✅ | — | — | 200 |
 | 4.2 | POST | `/v1/kyc/basic` | ✅ | — | — | 201 |
 | 4.4 | GET | `/v1/kyc/states` | — | — | — | 200 |
-| 4.3 | POST | `/v1/kyc/documents` ⚠️ | ✅ | — | — | 201 |
+| 4.3 | POST | `/v1/kyc/documents` (multipart) | ✅ | — | — | 201 / 200 |
 | 5.1 | GET | `/v1/assets` | — | — | — | 200 |
 | 5.2 | GET | `/v1/assets/{code}/networks?purpose=` | — | — | — | 200 |
 | 6.1 | POST | `/v1/deposits/address` | ✅ | TIER_1 | — | 201 |
