@@ -14,6 +14,7 @@ describe('Treasury admin routes', () => {
     expect(perms('saveSettings')).toEqual(['treasury.manage']);
     expect(perms('checkName')).toEqual(['treasury.manage']);
     expect(perms('sendToQuidax')).toEqual(['treasury.manage']);
+    expect(perms('checkMove')).toEqual(['treasury.manage']);
   });
 
   it('a move needs an amount and the password; settings need the password', async () => {

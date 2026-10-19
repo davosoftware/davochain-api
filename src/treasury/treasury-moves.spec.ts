@@ -160,3 +160,12 @@ describe('Finishing a move: the rail is asked by our reference, once', () => {
     expect(rail.transferStatus).not.toHaveBeenCalled();
   });
 });
+
+describe('"Check with the bank now" on one move', () => {
+  it('asks the rail by the move\'s reference and answers its status; an unknown move is not found', async () => {
+    const { svc, moves } = build({ moves: [{ id: 'm1', reference: 'trsy_a', status: 'SENDING' }], status: { id: '9', reference: 'trsy_a', status: 'SUCCESSFUL', fee: null, reason: null } });
+    (svc as unknown as { prisma: { treasuryMove: { findUnique: jest.Mock } } }).prisma.treasuryMove.findUnique = jest.fn(async ({ where }: { where: { id: string } }) => moves.find((m) => m.id === where.id) ?? null);
+    await expect(svc.checkMove('m1')).resolves.toEqual({ id: 'm1', status: 'ARRIVED' });
+    await expect(svc.checkMove('nope')).rejects.toThrow('Move not found');
+  });
+});

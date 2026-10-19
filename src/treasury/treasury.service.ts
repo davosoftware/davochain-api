@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, OnModuleInit, Optional, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException, OnModuleInit, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { AdminRole, AlertType, Prisma, TreasuryMoveStatus, TxStatus, TxType } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
@@ -219,6 +219,15 @@ export class TreasuryService implements OnModuleInit {
           ? { status: TreasuryMoveStatus.ARRIVED, railRef: t.id, railFee: t.fee?.toFixed() ?? null, completedAt: new Date() }
           : { status: TreasuryMoveStatus.FAILED, railRef: t.id, failureReason: (t.reason ?? 'The transfer failed').slice(0, 500), completedAt: new Date() },
     });
+  }
+
+  /** "Check with the bank now" for one move (the screen's button). */
+  async checkMove(id: string): Promise<{ id: string; status: string }> {
+    const move = await this.prisma.treasuryMove.findUnique({ where: { id } });
+    if (!move) throw new NotFoundException('Move not found');
+    await this.recheck(move.reference);
+    const after = await this.prisma.treasuryMove.findUnique({ where: { id } });
+    return { id, status: after?.status ?? move.status };
   }
 
   /** Backup for a lost webhook: every 10 minutes, ask about moves open for over 2 minutes. */

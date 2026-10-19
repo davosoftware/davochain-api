@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Post, Put, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Post, Put, Req, UseGuards } from '@nestjs/common';
 import type { Request } from 'express';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Public } from '../auth/public.decorator';
@@ -56,6 +56,14 @@ export class TreasuryAdminController {
     const { before, after } = await this.treasury.saveSettings({ id: actor.sub, role: actor.role }, { ...rest, password });
     await this.admin.audit(actor.sub, 'treasury.settings', 'TreasurySettings', 'default', before, after, req.ip);
     return this.treasury.snapshot();
+  }
+
+  /** Ask the rail about one move now, instead of waiting for the 10-minute re-check. */
+  @Post('moves/:id/check')
+  @HttpCode(200)
+  @RequirePermissions('treasury.manage')
+  checkMove(@Param('id') id: string) {
+    return this.treasury.checkMove(id);
   }
 
   /** Owners only (the service checks), with the password: send naira from the rail to Quidax. */
