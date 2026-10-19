@@ -15,6 +15,8 @@ export const POLICY_NAMES = [
   'auth.refresh',
   'auth.changePassword',
   'kyc.basic',
+  'kyc.documents',
+  'giftcards.sell',
   'webhooks',
   'public',
   'default',
@@ -51,6 +53,10 @@ export const DEFAULT_POLICIES: Readonly<Record<PolicyName, Policy>> = {
   'auth.changePassword': { name: 'auth.changePassword', limits: { user: lim(5, H) }, failClosed: true },
   // Each submit can buy a paid Dojah lookup; fail closed so a Redis outage cannot open the tap (spec §11).
   'kyc.basic': { name: 'kyc.basic', limits: { user: lim(5, H) }, failClosed: true },
+  // Each upload is up to 10 MB into storage we pay for; fail closed so an outage cannot open the tap (H8).
+  'kyc.documents': { name: 'kyc.documents', limits: { user: lim(20, H) }, failClosed: true },
+  // Up to ~36 MB per request; open on a Redis outage so selling a card keeps working.
+  'giftcards.sell': { name: 'giftcards.sell', limits: { user: lim(30, H) }, failClosed: false },
   // Generous on purpose: a 429 spends a provider's retries, and Quidax stops retrying after 24 h.
   webhooks: { name: 'webhooks', limits: { ip: lim(3000, M) }, failClosed: false },
   public: { name: 'public', limits: { ip: lim(120, M) }, failClosed: false },

@@ -87,21 +87,4 @@ export class KycService {
       },
     };
   }
-
-  async attachDocument(
-    userId: string,
-    input: { type: string; storageKey: string; mimeType: string; sizeBytes: number },
-  ) {
-    const profile = await this.prisma.kycProfile.findUniqueOrThrow({ where: { userId } });
-    return this.prisma.kycDocument.create({
-      data: {
-        kycProfileId: profile.id,
-        type: input.type as never,
-        storageKey: input.storageKey,
-        mimeType: input.mimeType,
-        sizeBytes: input.sizeBytes,
-      },
-      select: { id: true, type: true, status: true, uploadedAt: true },
-    });
-  }
 }

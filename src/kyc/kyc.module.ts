@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { KycService } from './kyc.service';
 import { KycController } from './kyc.controller';
+import { KycDocumentsService } from './kyc-documents.service';
 import { KycHashService } from './kyc-hash';
 import { BasicVerificationService, READINESS } from './basic-verification.service';
 import { DojahReadinessService } from '../dojah/dojah-readiness.service';
@@ -15,6 +16,7 @@ import { APPROVER, ComplianceReviewService } from '../compliance/compliance-revi
   controllers: [KycController],
   providers: [
     KycService,
+    KycDocumentsService,
     KycHashService,
     BasicVerificationService,
     DojahRecoveryService,
@@ -25,6 +27,6 @@ import { APPROVER, ComplianceReviewService } from '../compliance/compliance-revi
     DojahReadinessService,
     { provide: READINESS, useExisting: DojahReadinessService },
   ],
-  exports: [KycService, KycHashService, BasicVerificationService, DojahRecoveryService, BasicReviewService, ComplianceReviewService, DojahReadinessService],
+  exports: [KycService, KycDocumentsService, KycHashService, BasicVerificationService, DojahRecoveryService, BasicReviewService, ComplianceReviewService, DojahReadinessService],
 })
 export class KycModule {}

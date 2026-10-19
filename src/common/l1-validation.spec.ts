@@ -19,9 +19,10 @@ const errors = async (cls: new () => object, body: Record<string, unknown>) =>
 
 describe('L1: values outside their list are refused, not a 500', () => {
   it('a KYC document type must be one of the document types', async () => {
-    const ok = { type: 'PASSPORT', storageKey: 'k', mimeType: 'image/png', sizeBytes: 10 };
-    expect(await errors(AttachDocumentDto, ok)).toEqual([]);
-    expect(await errors(AttachDocumentDto, { ...ok, type: 'BANANA' })).toEqual(['type']);
+    // H8: the type is the only field; storage location, kind and size are the server's to decide.
+    expect(await errors(AttachDocumentDto, { type: 'PASSPORT' })).toEqual([]);
+    expect(await errors(AttachDocumentDto, { type: 'BANANA' })).toEqual(['type']);
+    expect(await errors(AttachDocumentDto, { type: 'BVN' })).toEqual(['type']);
   });
 
   it('an admin review tier must be a real tier', async () => {

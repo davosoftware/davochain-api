@@ -59,7 +59,7 @@ describe('resolvePolicies', () => {
   it('fails closed on every auth policy and on paid KYC calls, open on the rest', () => {
     const p = resolvePolicies({});
     for (const name of POLICY_NAMES) {
-      expect(p[name].failClosed).toBe(name.startsWith('auth.') || name === 'kyc.basic');
+      expect(p[name].failClosed).toBe(name.startsWith('auth.') || name === 'kyc.basic' || name === 'kyc.documents');
     }
   });
 });
@@ -84,6 +84,11 @@ describe('rateLimitEnvProblems', () => {
     expect(problems.join('\n')).toMatch(/RATE_LIMIT_AUTH_LOGIN_ACCT="10 per minute" must look like 10\/15m/);
     expect(problems.join('\n')).toMatch(/RATE_LIMIT_AUTH_LOGIN_USER is not a rate limit this API has/);
   });
+});
+
+it('kyc.documents is 20 per hour per user and fails closed; giftcards.sell 30 per hour and fails open', () => {
+  expect(DEFAULT_POLICIES['kyc.documents']).toEqual({ name: 'kyc.documents', limits: { user: { count: 20, windowMs: 3_600_000 } }, failClosed: true });
+  expect(DEFAULT_POLICIES['giftcards.sell']).toEqual({ name: 'giftcards.sell', limits: { user: { count: 30, windowMs: 3_600_000 } }, failClosed: false });
 });
 
 it('kyc.basic is 5 per hour per user and fails closed', () => {

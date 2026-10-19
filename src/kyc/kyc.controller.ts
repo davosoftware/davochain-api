@@ -1,10 +1,12 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Get, Post, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import type { Response } from 'express';
 import { Type } from 'class-transformer';
-import { IsEnum, IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, ValidateNested } from 'class-validator';
-import { KycDocumentType } from '@prisma/client';
-import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { IsIn, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, ValidateNested } from 'class-validator';
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { KycService } from './kyc.service';
 import { BasicVerificationService } from './basic-verification.service';
+import { KycDocumentsService, UPLOADABLE_DOCUMENT_TYPES, type UploadableDocumentType } from './kyc-documents.service';
+import { DocumentUploadInterceptor } from './document-upload.interceptor';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { Public } from '../auth/public.decorator';
 import { RateLimit } from '../rate-limit/rate-limit.decorator';
@@ -34,12 +36,14 @@ export class SubmitBasicDto {
   @IsIn(['NG']) country!: 'NG';
 }
 
+/**
+ * The form fields beside the file (H8). Only the type: where the file is
+ * stored, what it is and how big it is are all decided by the server.
+ */
 export class AttachDocumentDto {
   // L1: outside the list it reached the database and came back a 500.
-  @IsEnum(KycDocumentType, { message: `type must be one of: ${Object.values(KycDocumentType).join(', ')}` }) type!: KycDocumentType;
-  @IsString() @MaxLength(500) storageKey!: string;
-  @IsString() @MaxLength(100) mimeType!: string;
-  @IsInt() sizeBytes!: number;
+  @IsIn(UPLOADABLE_DOCUMENT_TYPES, { message: `type must be one of: ${UPLOADABLE_DOCUMENT_TYPES.join(', ')}` })
+  type!: UploadableDocumentType;
 }
 
 @ApiTags('kyc')
@@ -49,6 +53,7 @@ export class KycController {
   constructor(
     private readonly kyc: KycService,
     private readonly basic: BasicVerificationService,
+    private readonly documents: KycDocumentsService,
   ) {}
 
   @Get()
@@ -72,8 +77,31 @@ export class KycController {
     return { states: NG_STATES };
   }
 
+  /**
+   * Upload one ID document (H8): multipart/form-data with "type" and "file".
+   * 201 once the file is stored AND recorded; 200 when it is the same file
+   * again (a retry), which creates nothing new.
+   */
+  @PausedDuringMaintenance()
+  @RateLimit('kyc.documents')
   @Post('documents')
-  attach(@CurrentUser('sub') userId: string, @Body() dto: AttachDocumentDto) {
-    return this.kyc.attachDocument(userId, dto);
+  @UseInterceptors(DocumentUploadInterceptor)
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      required: ['type', 'file'],
+      properties: { type: { type: 'string', enum: [...UPLOADABLE_DOCUMENT_TYPES] }, file: { type: 'string', format: 'binary' } },
+    },
+  })
+  async attach(
+    @CurrentUser('sub') userId: string,
+    @Body() dto: AttachDocumentDto,
+    @UploadedFile() file: { buffer: Buffer; size: number } | undefined,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const { duplicate, ...doc } = await this.documents.upload(userId, dto.type, file);
+    if (duplicate) res.status(200);
+    return doc;
   }
 }
