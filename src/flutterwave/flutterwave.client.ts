@@ -7,7 +7,11 @@ import { classifyResponse } from './flutterwave.classify';
 import { FlutterwaveError, FlutterwaveUnknownError, redactIds } from './flutterwave.errors';
 import type {
   CreateStaticAccountInput,
+  CreateTransferInput,
   FlwBalance,
+  FlwBank,
+  FlwResolvedAccount,
+  FlwTransfer,
   FlwEnvelope,
   FlwStaticAccount,
   FlwTransaction,
@@ -120,6 +124,34 @@ export class FlutterwaveClient {
   async getBalance(currency: string, read: ReadOptions = {}): Promise<FlwBalance> {
     const path = `/balances/${encodeURIComponent(currency.toUpperCase())}`;
     return this.requireData(await this.call<FlwBalance>('GET', path, { write: false, probe: read.probe }), 'GET', path);
+  }
+
+  // ── payouts (the naira rail) ──────────────────────────────
+
+  /** Nigerian banks Flutterwave can pay. */
+  async listBanks(): Promise<FlwBank[]> {
+    const path = '/banks/NG';
+    return this.requireData(await this.call<FlwBank[]>('GET', path, { write: false }), 'GET', path);
+  }
+
+  /** The name on a bank account. A 4xx means the details are wrong. */
+  async resolveAccount(input: { account_number: string; account_bank: string }): Promise<FlwResolvedAccount> {
+    const path = '/accounts/resolve';
+    // A read in effect, but a POST: one attempt, so a refusal is never retried into a lockout.
+    return this.requireData(await this.call<FlwResolvedAccount>('POST', path, { body: input, write: true }), 'POST', path);
+  }
+
+  /** Send naira to a bank account. A write: sent once, never retried here. */
+  async createTransfer(input: CreateTransferInput): Promise<FlwTransfer> {
+    const path = '/transfers';
+    return this.requireData(await this.call<FlwTransfer>('POST', path, { body: input, write: true }), 'POST', path);
+  }
+
+  /** Our transfer, by our own reference. null when Flutterwave has no record of it. */
+  async getTransferByReference(reference: string): Promise<FlwTransfer | null> {
+    const path = '/transfers';
+    const res = await this.call<FlwTransfer[]>('GET', path, { query: { reference }, write: false });
+    return (res.data ?? []).find((t) => t.reference === reference) ?? null;
   }
 
   // ── transport ─────────────────────────────────────────────

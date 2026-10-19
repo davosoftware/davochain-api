@@ -66,6 +66,40 @@ export interface FlwBalance {
   ledger_balance: Money;
 }
 
+/** GET /banks/NG */
+export interface FlwBank {
+  id: number | string;
+  code: string;
+  name: string;
+}
+
+/** POST /accounts/resolve */
+export interface FlwResolvedAccount {
+  account_number: string;
+  account_name: string;
+}
+
+/** POST /transfers body (naira payout to a Nigerian bank account). */
+export interface CreateTransferInput {
+  account_bank: string;
+  account_number: string;
+  amount: number;
+  narration: string;
+  currency: 'NGN';
+  reference: string;
+  debit_currency: 'NGN';
+}
+
+/** A transfer, as POST /transfers and GET /transfers return it. status: NEW | PENDING | SUCCESSFUL | FAILED. */
+export interface FlwTransfer {
+  id: number | string;
+  reference: string;
+  status: string;
+  amount?: number | Money;
+  fee?: number | Money | null;
+  complete_message?: string | null;
+}
+
 export interface CreateStaticAccountInput {
   email: string;
   txRef: string;

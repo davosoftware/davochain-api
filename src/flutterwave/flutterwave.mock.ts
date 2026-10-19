@@ -5,9 +5,13 @@ import { FlutterwaveConfig } from './flutterwave.config';
 import { FlutterwaveError, redactIds } from './flutterwave.errors';
 import type {
   CreateStaticAccountInput,
+  CreateTransferInput,
   FlwBalance,
+  FlwBank,
+  FlwResolvedAccount,
   FlwStaticAccount,
   FlwTransaction,
+  FlwTransfer,
   ListTransactionsQuery,
 } from './flutterwave.types';
 
@@ -17,7 +21,11 @@ export type MockMethod =
   | 'setVirtualAccountStatus'
   | 'verifyTransaction'
   | 'listTransactions'
-  | 'getBalance';
+  | 'getBalance'
+  | 'listBanks'
+  | 'resolveAccount'
+  | 'createTransfer'
+  | 'getTransferByReference';
 
 export interface SimulatePayInInput {
   /** The tx_ref of the virtual account that was paid (dcva_<user>). */
@@ -54,6 +62,9 @@ export class FlutterwaveMockClient extends FlutterwaveClient {
   /** order_ref → the tx_ref it was created with. */
   private readonly accountTxRefs = new Map<string, string>();
   private readonly transactions = new Map<string, FlwTransaction>();
+  /** reference → transfer. Pending until asked about once, then SUCCESSFUL (FAILED when the amount ends in .13). */
+  private readonly transfers = new Map<string, FlwTransfer & { asked: number }>();
+  private transferSeq = 0;
   private readonly failures = new Map<MockMethod, Error>();
   private readonly runId = Date.now().toString(36).toUpperCase();
   private accountSeq = 0;
@@ -140,7 +151,48 @@ export class FlutterwaveMockClient extends FlutterwaveClient {
 
   async getBalance(currency: string, _read: ReadOptions = {}): Promise<FlwBalance> {
     this.maybeFail('getBalance');
-    return { currency: currency.toUpperCase(), available_balance: '0', ledger_balance: '0' };
+    // Enough for Treasury moves and payouts to be tried in development.
+    return { currency: currency.toUpperCase(), available_balance: '50000000', ledger_balance: '50000000' };
+  }
+
+  async listBanks(): Promise<FlwBank[]> {
+    this.maybeFail('listBanks');
+    return [
+      { id: 1, code: '0000', name: 'Test Bank' },
+      { id: 2, code: '044', name: 'Access Bank' },
+      { id: 3, code: '058', name: 'GTBank' },
+      { id: 4, code: '100004', name: 'Paycom (Opay)' },
+    ];
+  }
+
+  async resolveAccount(input: { account_number: string; account_bank: string }): Promise<FlwResolvedAccount> {
+    this.maybeFail('resolveAccount');
+    const known = (await this.listBanks()).some((b) => b.code === input.account_bank);
+    if (!known || !/^\d{10}$/.test(input.account_number)) {
+      throw new FlutterwaveError('DEFINITE', 'Could not resolve account', 400);
+    }
+    return { account_number: input.account_number, account_name: `MOCK ACCOUNT ${input.account_number.slice(-4)}` };
+  }
+
+  async createTransfer(input: CreateTransferInput): Promise<FlwTransfer> {
+    this.maybeFail('createTransfer');
+    if (this.transfers.has(input.reference)) throw new FlutterwaveError('ALREADY_EXISTS', 'Duplicate reference', 400);
+    const t = { id: ++this.transferSeq, reference: input.reference, status: 'NEW', amount: input.amount, fee: 10.75, complete_message: '', asked: 0 };
+    this.transfers.set(input.reference, t);
+    return { id: t.id, reference: t.reference, status: t.status, amount: t.amount, fee: t.fee, complete_message: t.complete_message };
+  }
+
+  async getTransferByReference(reference: string): Promise<FlwTransfer | null> {
+    this.maybeFail('getTransferByReference');
+    const t = this.transfers.get(reference);
+    if (!t) return null;
+    t.asked += 1;
+    if (t.status === 'NEW' || t.status === 'PENDING') {
+      const failed = String(t.amount).endsWith('.13');
+      t.status = failed ? 'FAILED' : 'SUCCESSFUL';
+      t.complete_message = failed ? 'Mock: the bank refused it' : 'Transaction was successful';
+    }
+    return { id: t.id, reference: t.reference, status: t.status, amount: t.amount, fee: t.fee, complete_message: t.complete_message };
   }
 
   /** A customer's transfer into a virtual account. Returns Flutterwave's transaction id. */
