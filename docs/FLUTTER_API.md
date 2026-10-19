@@ -20,6 +20,13 @@
    - **Integration notes:** UX rules and gotchas
 3. Use **Part 2, Appendices** for push notifications, enum values, ready-made Dart code, testing on the local backend, and known limitations.
 
+## What changed for the app (19 October 2026): naira payouts through the naira rail
+
+| Change | Where | What the app must do |
+| --- | --- | --- |
+| **Naira withdrawals are paid by Flutterwave** (our naira rail), not Quidax | 8.7 | Nothing in the request changes. |
+| **The bank list (8.5) and account-name check (8.6, 8.8) come from Flutterwave** | 8.5, 8.6, 8.8 | Always load banks from 8.5. A bank account saved before 19 Oct with a code Flutterwave doesn't know answers `400 "Choose a supported Nigerian bank"` at withdrawal: ask the customer to save it again. |
+
 ## What changed for the app (16 October 2026): balance corrections
 
 | Change | Where | What the app must do |
