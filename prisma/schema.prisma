@@ -1126,6 +1126,11 @@ model KycDocument {
   storageKey      String
   mimeType        String
   sizeBytes       Int
+  /// SHA-256 of the file, hex. Lets a retried upload find the first one (H8).
+  sha256          String?
+  /// True when the server chose storageKey and stored the file (H8). Rows
+  /// from before carry a key the app sent; they are never read from storage.
+  serverStored    Boolean         @default(false)
   status          KycStatus       @default(PENDING)
   rejectionReason String?
   uploadedAt      DateTime        @default(now())
@@ -1134,6 +1139,7 @@ model KycDocument {
   profile KycProfile @relation(fields: [kycProfileId], references: [id], onDelete: Cascade)
 
   @@index([kycProfileId, type])
+  @@index([kycProfileId, sha256])
   @@map("kyc_documents")
 }
 
@@ -1946,12 +1952,17 @@ model GiftCardTrade {
  * close-up of the scratched panel before anybody can tell whether it is real.
  */
 model GiftCardTradeImage {
-  id        String   @id @default(uuid())
-  tradeId   String
-  image     Bytes
-  imageType String
-  sortOrder Int      @default(0)
-  createdAt DateTime @default(now())
+  id         String   @id @default(uuid())
+  tradeId    String
+  /// The photo itself, for photos sent before file storage (H8). Null when storageKey is set.
+  image      Bytes?
+  imageType  String
+  /// Where the photo is in the file store; chosen by the server.
+  storageKey String?  @unique
+  /// SHA-256 of the photo, hex. Lets a retried submission find the first trade.
+  sha256     String?
+  sortOrder  Int      @default(0)
+  createdAt  DateTime @default(now())
 
   trade GiftCardTrade @relation(fields: [tradeId], references: [id], onDelete: Cascade)
 
@@ -2331,4 +2342,16 @@ model TreasuryMove {
 
   @@index([status])
   @@map("treasury_moves")
+}
+
+/// A file being uploaded (H8). Written before the file is put in storage and
+/// removed in the same transaction that saves the record pointing at it. One
+/// still here after 30 minutes belongs to a request that crashed or failed:
+/// the sweeper deletes its file, then the row.
+model PendingUpload {
+  key       String   @id
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@map("pending_uploads")
 }

@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { FILE_STORE, FileStore } from './file-store';
 import { MemoryFileStore } from './memory-file-store';
 import { R2FileStore, makeR2Client } from './r2-file-store';
+import { UploadIntents } from './upload-intents.service';
 
 /** Builds the store STORAGE_DRIVER names. env.validation.ts has already checked the settings. */
 export function fileStoreFrom(config: ConfigService): FileStore {
@@ -40,7 +41,8 @@ export class StorageStartupCheck implements OnApplicationBootstrap {
   providers: [
     { provide: FILE_STORE, inject: [ConfigService], useFactory: fileStoreFrom },
     StorageStartupCheck,
+    UploadIntents,
   ],
-  exports: [FILE_STORE],
+  exports: [FILE_STORE, UploadIntents],
 })
 export class StorageModule {}
