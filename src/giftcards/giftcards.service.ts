@@ -15,30 +15,15 @@ import { currency as currencyOf, symbolFor } from './currencies';
 import { Decimal, ZERO, dec, str } from '../common/money';
 import { LevelPolicyService } from '../levels/level-policy.service';
 import { levelOf } from '../levels/levels';
-
-/** What a photograph of a card may be. Nothing else is stored. */
-const IMAGE_TYPES: Record<string, string> = {
-  '/9j/': 'image/jpeg',
-  iVBORw0KGgo: 'image/png',
-  UklGR: 'image/webp',
-};
+import { IMAGE_TYPES, detectFileType } from '../storage/file-type';
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_IMAGES = 5;
 
-/**
- * The picture's real type, from its first bytes.
- *
- * Never from the data URL's own claim: a file that says image/png and is
- * actually HTML is the oldest way to get a script served back from an
- * endpoint that promises a picture.
- */
+/** The picture's real type, from its first bytes (src/storage/file-type.ts). Pictures only: never a PDF. */
 export function detectImageType(buffer: Buffer): string | null {
-  const head = buffer.subarray(0, 16).toString('base64');
-  for (const [magic, type] of Object.entries(IMAGE_TYPES)) {
-    if (head.startsWith(magic)) return type;
-  }
-  return null;
+  const type = detectFileType(buffer);
+  return type && IMAGE_TYPES.has(type) ? type : null;
 }
 
 /**
