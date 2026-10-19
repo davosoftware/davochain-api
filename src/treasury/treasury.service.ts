@@ -115,6 +115,11 @@ export class TreasuryService implements OnModuleInit {
     return { before, after };
   }
 
+  /** Banks the rail can pay, for the funding-account picker. */
+  banks() {
+    return this.rail.banks();
+  }
+
   /** The bank's name for an account, for the screen's "Check name" (no saving). */
   async checkName(input: { bankCode: string; accountNumber: string }) {
     const bank = (await this.rail.banks()).find((b) => b.code === input.bankCode);

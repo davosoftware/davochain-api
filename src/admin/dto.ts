@@ -104,6 +104,28 @@ export class DojahThresholdsDto {
   @IsOptional() @IsNumber() leadDays?: number;
 }
 
+/** PUT /v1/admin/treasury/settings. The service checks every rule and says why in plain words. */
+export class TreasurySettingsDto {
+  @IsOptional() @IsNumber({}, { message: 'Enter a whole naira amount, 0 or more.' }) payoutReserveNgn?: number;
+  @IsOptional() @IsString() @MaxLength(20) fundingBankCode?: string;
+  @IsOptional() @IsString() @MaxLength(20) fundingAccountNumber?: string;
+  /** Checked, never stored or audited. */
+  @IsString() @MinLength(1) @MaxLength(128) password!: string;
+}
+
+/** POST /v1/admin/treasury/moves: send naira from the rail to Quidax. */
+export class TreasuryMoveDto {
+  @IsNumber({}, { message: 'Enter a whole naira amount above zero.' }) amount!: number;
+  /** Checked, never stored or audited. */
+  @IsString() @MinLength(1) @MaxLength(128) password!: string;
+}
+
+/** POST /v1/admin/treasury/check-name */
+export class TreasuryCheckNameDto {
+  @IsString() @MaxLength(20) bankCode!: string;
+  @IsString() @Matches(/^\d{10}$/, { message: 'Enter a valid 10-digit Nigerian bank account number' }) accountNumber!: string;
+}
+
 export class SuspendUserDto {
   @IsString() @MaxLength(500) reason!: string;
 }

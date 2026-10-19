@@ -30,6 +30,8 @@ import { FlutterwaveModule } from '../flutterwave/flutterwave.module';
 import { QUEUES } from '../common/queues';
 import { LevelAdminService } from '../levels/level-admin.service';
 import { DojahModule } from '../dojah/dojah.module';
+import { TreasuryModule } from '../treasury/treasury.module';
+import { TreasuryAdminController } from './treasury-admin.controller';
 import { DojahSettingsService } from './dojah-settings.service';
 import { WithdrawalsModule } from '../withdrawals/withdrawals.module';
 
@@ -50,10 +52,12 @@ import { WithdrawalsModule } from '../withdrawals/withdrawals.module';
     KycModule,
     // The Dojah screen reads and saves its settings (DojahConfig).
     DojahModule,
+    // Treasury: the naira rail and Quidax against what customers are owed.
+    TreasuryModule,
     // Admins view and remove customers' saved withdrawal destinations (Part 2).
     WithdrawalsModule,
   ],
-  controllers: [AdminController, AdminAuthController, AlertRecipientsController, KycBasicReviewController, ComplianceController, DojahAdminController],
+  controllers: [AdminController, AdminAuthController, AlertRecipientsController, KycBasicReviewController, ComplianceController, DojahAdminController, TreasuryAdminController],
   providers: [AdminService, UsersAdminService, AdminsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService, AdminSessionsService, AdminOtpService, NgnWithdrawalsService, AdminGuard, LevelAdminService, DojahSettingsService],
   exports: [AdminService, UsersAdminService, AdminsService, AdminSessionsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService],
 })
