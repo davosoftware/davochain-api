@@ -7,6 +7,8 @@ export interface ParsedWebhook {
   transactionId: string | null;
   /** The webhook's own fields, unverified, kept for support. */
   hint: Record<string, string | null>;
+  /** For a TRANSFER: our own reference, to ask the rail about. Nothing else in the body is trusted. */
+  transferReference: string | null;
 }
 
 const NUMERIC_ID = /^\d{1,19}$/;
@@ -44,6 +46,7 @@ export function parseFlutterwaveWebhook(body: unknown): ParsedWebhook {
     kind,
     eventName,
     transactionId: kind === 'OTHER' ? null : transactionId,
+    transferReference: kind === 'TRANSFER' ? asText(source.reference, 100) : null,
     hint: {
       event: asText(root.event) ?? asText(root['event.type']),
       id: rawId,

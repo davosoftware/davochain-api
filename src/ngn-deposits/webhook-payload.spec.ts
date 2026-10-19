@@ -12,6 +12,7 @@ describe('parseFlutterwaveWebhook', () => {
       kind: 'CHARGE',
       eventName: 'flutterwave.charge',
       transactionId: '10535993',
+      transferReference: null,
       hint: {
         event: 'BANK_TRANSFER_TRANSACTION', id: '10535993', txRef: 'dcbt_spike_ead46a4d',
         flwRef: '1155648034391791382464103', amount: '1500', currency: 'NGN', status: 'successful',

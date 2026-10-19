@@ -5,11 +5,13 @@ import {
   HttpCode,
   InternalServerErrorException,
   Logger,
+  Optional,
   PayloadTooLargeException,
   Post,
   Req,
   UnauthorizedException,
 } from '@nestjs/common';
+import { RailTransferHooks } from '../naira-rail/rail-transfer-hooks';
 import { ApiTags } from '@nestjs/swagger';
 import { AlertType, CollectionOutcome, Prisma } from '@prisma/client';
 import { createHash, timingSafeEqual } from 'node:crypto';
@@ -58,6 +60,8 @@ export class FlutterwaveWebhookController {
     private readonly cfg: FlutterwaveConfig,
     private readonly payIn: PayInService,
     private readonly alerts: OpsAlertsService,
+    /** Transfer results (Treasury moves, customer payouts) go to whoever owns the reference. */
+    @Optional() private readonly hooks?: RailTransferHooks,
   ) {}
 
   @Public()
@@ -109,6 +113,12 @@ export class FlutterwaveWebhookController {
       // Stored. If queueing fails, the re-check pass picks the payment up from its row.
       await this.payIn.enqueue(charge, 'WEBHOOK').catch((err: Error) => {
         this.log.error(`Could not queue Flutterwave payment ${charge}: ${redactIds(err.message)}`);
+      });
+    }
+    if (parsed.kind === 'TRANSFER' && parsed.transferReference && this.hooks) {
+      // Stored above. The owner asks the rail itself; a failure here is caught by its re-check job.
+      await this.hooks.dispatch(parsed.transferReference).catch((err: Error) => {
+        this.log.error(`Could not hand on a Flutterwave transfer result: ${redactIds(err.message)}`);
       });
     }
     return { received: true };

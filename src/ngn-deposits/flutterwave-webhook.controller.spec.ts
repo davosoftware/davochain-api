@@ -12,10 +12,11 @@ function setup(o: { hash?: string | null } = {}) {
   const cfg = { secretHash: async () => (o.hash === undefined ? HASH : o.hash) };
   const payIn = { enqueue: jest.fn(async () => undefined) };
   const alerts = { raise: jest.fn(async () => true) };
-  const controller = new FlutterwaveWebhookController(db as never, cfg as never, payIn as never, alerts as never);
+  const hooks = { dispatch: jest.fn(async () => undefined) };
+  const controller = new FlutterwaveWebhookController(db as never, cfg as never, payIn as never, alerts as never, hooks as never);
   const send = (body: string | object, hash?: string) =>
     controller.receive({ rawBody: Buffer.from(typeof body === 'string' ? body : JSON.stringify(body)) } as never, hash);
-  return { db, payIn, alerts, send };
+  return { db, payIn, alerts, hooks, send };
 }
 
 async function status(p: Promise<unknown>): Promise<number> {
@@ -26,6 +27,18 @@ async function status(p: Promise<unknown>): Promise<number> {
 }
 
 describe('POST /webhooks/flutterwave', () => {
+  it('a transfer webhook hands only its reference on (the rail is then asked)', async () => {
+    const { hooks, send } = setup();
+    await send({ event: 'transfer.completed', data: { id: 77, reference: 'trsy_abc', status: 'SUCCESSFUL' } }, HASH);
+    expect(hooks.dispatch).toHaveBeenCalledWith('trsy_abc');
+  });
+
+  it('a transfer webhook with a wrong hash reaches nobody', async () => {
+    const { hooks, send } = setup();
+    await send({ event: 'transfer.completed', data: { id: 77, reference: 'trsy_abc' } }, 'wrong').catch(() => undefined);
+    expect(hooks.dispatch).not.toHaveBeenCalled();
+  });
+
   it('stores and queues a legacy-format charge, keeping its fields only as a hint', async () => {
     const { db, payIn, send } = setup();
     await expect(send(fixture('webhook-legacy-charge.json'), HASH)).resolves.toEqual({ received: true });
