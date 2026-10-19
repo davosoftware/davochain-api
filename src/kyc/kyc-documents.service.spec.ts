@@ -176,3 +176,27 @@ describe('KycDocumentsService.upload', () => {
     expect(sqlParts.join('?')).toMatch(/pg_advisory_xact_lock/);
   });
 });
+
+describe('KycDocumentsService.read', () => {
+  const doc = { id: 'd1', serverStored: true, storageKey: 'kyc/u1/k', mimeType: 'image/png', type: 'PASSPORT' as const };
+
+  it('reads a server-stored document from the file store', async () => {
+    const { store, svc } = setup();
+    await store.put('kyc/u1/k', PNG, 'image/png');
+    expect((await svc.read(doc))?.bytes.equals(PNG)).toBe(true);
+  });
+
+  it('never reads a key from before H8, which the app chose', async () => {
+    const { store, svc } = setup();
+    const get = jest.spyOn(store, 'get');
+    await expect(svc.read({ ...doc, serverStored: false, storageKey: 'kyc/someone-else/passport' })).rejects.toBeInstanceOf(ConflictException);
+    expect(get).not.toHaveBeenCalled();
+  });
+
+  it('answers 503 when storage is down, and null when the file is not there', async () => {
+    const { store, svc } = setup();
+    store.failNext(1);
+    await expect(svc.read(doc)).rejects.toBeInstanceOf(ServiceUnavailableException);
+    expect(await svc.read(doc)).toBeNull();
+  });
+});

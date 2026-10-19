@@ -28,6 +28,9 @@ export const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
 export const MAX_PENDING_DOCUMENTS = 10;
 
 const TOO_BIG = 'Each document must be 10 MB or smaller';
+export const LEGACY_DOCUMENT = 'This document was uploaded before secure storage and cannot be opened. Ask the customer to upload it again.';
+
+export type StoredDocument = { id: string; serverStored: boolean; storageKey: string; mimeType: string; type: KycDocumentType };
 
 type Db = Pick<Prisma.TransactionClient, 'kycDocument'>;
 type DocumentView = { id: string; type: KycDocumentType; status: KycStatus; uploadedAt: Date; duplicate: boolean };
@@ -106,17 +109,22 @@ export class KycDocumentsService {
     }
   }
 
-  /** The file behind a document, for an admin. Null when the document has no server-stored file. */
-  async file(documentId: string): Promise<{ doc: { id: string; serverStored: boolean; mimeType: string; type: KycDocumentType }; object: StoredObject | null } | null> {
-    const doc = await this.prisma.kycDocument.findUnique({
+  /** A document's details, for an admin about to open it. Null when there is no such document. */
+  describe(documentId: string): Promise<StoredDocument | null> {
+    return this.prisma.kycDocument.findUnique({
       where: { id: documentId },
       select: { id: true, serverStored: true, storageKey: true, mimeType: true, type: true },
     });
-    if (!doc) return null;
-    // A key from before H8 was chosen by the app: it may name anything, so it is never read.
-    if (!doc.serverStored) return { doc, object: null };
+  }
+
+  /**
+   * The file itself. Null when storage has no such object; 503 when storage is down.
+   * A key from before H8 was chosen by the app and may name anything, so it is never read.
+   */
+  async read(doc: StoredDocument): Promise<StoredObject | null> {
+    if (!doc.serverStored) throw new ConflictException(LEGACY_DOCUMENT);
     try {
-      return { doc, object: await this.files.get(doc.storageKey) };
+      return await this.files.get(doc.storageKey);
     } catch (err) {
       throw storageHttpError(err);
     }
