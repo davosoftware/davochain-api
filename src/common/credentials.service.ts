@@ -98,8 +98,13 @@ export class CredentialsService implements OnModuleInit {
    * Every Quidax call would otherwise be a database read and a decrypt. The
    * cache is invalidated on write, and the process is the only thing that can
    * see it.
+   *
+   * A4: each copy lives at most CACHE_MS. A key changed through ANOTHER server
+   * (which only invalidates its own copy) reaches this one within a minute,
+   * instead of only after a restart.
    */
-  private cache = new Map<string, string>();
+  private cache = new Map<string, { value: string; until: number }>();
+  private static readonly CACHE_MS = 60_000;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -164,7 +169,7 @@ export class CredentialsService implements OnModuleInit {
    */
   async get(name: CredentialName): Promise<string | undefined> {
     const cached = this.cache.get(name);
-    if (cached !== undefined) return cached;
+    if (cached && cached.until > Date.now()) return cached.value;
 
     const definition = BY_NAME.get(name);
     const fromEnv = definition ? this.config.get<string>(definition.env) : undefined;
@@ -175,7 +180,7 @@ export class CredentialsService implements OnModuleInit {
     const stored = row ? this.decrypt(row.ciphertext) : null;
     const value = stored ?? fromEnv;
 
-    if (value !== undefined) this.cache.set(name, value);
+    if (value !== undefined) this.cache.set(name, { value, until: Date.now() + CredentialsService.CACHE_MS });
     return value;
   }
 
