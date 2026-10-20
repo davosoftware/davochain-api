@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { AddressStatus } from '@prisma/client';
@@ -9,6 +9,7 @@ import { ProvisioningService } from '../users/provisioning.service';
 import { SystemFlagsService } from '../common/system-flags.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { JOBS, QUEUES, jobId } from '../common/queues';
+import { JobLeaseService } from '../common/job-lease.service';
 
 export interface AddressView {
   asset: string;
@@ -42,7 +43,11 @@ export class AddressesService {
     private readonly flags: SystemFlagsService,
     @InjectQueue(QUEUES.ADDRESSES) private readonly queue: Queue,
     private readonly notifications: NotificationsService,
+    @Optional() private readonly leases?: JobLeaseService,
   ) {}
+
+  /** How long to wait between looks while another request creates the same address. */
+  private waitMs = 500;
 
   /**
    * Get-or-create. The overwhelming majority of calls hit the existing row and
@@ -71,6 +76,39 @@ export class AddressesService {
     });
     if (existing && existing.status !== AddressStatus.FAILED) {
       return this.toView(existing, network.label, network.requiresTag, network.confirmations);
+    }
+
+    // A6: one creation per customer, coin and network at a time, so two taps
+    // never make Quidax create two addresses. The other request waits for it.
+    if (!this.leases) return this.create(userId, code, networkId, network);
+    const run = await this.leases.run(`address-${userId}-${code}-${networkId}`, 60_000, () =>
+      this.create(userId, code, networkId, network),
+    );
+    if (run.ran) return run.result;
+    for (let i = 0; i < 20; i++) {
+      await new Promise((resolve) => setTimeout(resolve, this.waitMs));
+      const made = await this.prisma.depositAddress.findUnique({
+        where: { userId_assetCode_networkId: { userId, assetCode: code, networkId } },
+      });
+      if (made && made.status !== AddressStatus.FAILED) {
+        return this.toView(made, network.label, network.requiresTag, network.confirmations);
+      }
+    }
+    throw new ServiceUnavailableException('Your address is still being created. Try again in a moment.');
+  }
+
+  private async create(
+    userId: string,
+    code: string,
+    networkId: string,
+    network: { label: string; requiresTag: boolean; confirmations: number },
+  ): Promise<AddressView> {
+    // Re-read inside the lease: another request may have just finished.
+    const already = await this.prisma.depositAddress.findUnique({
+      where: { userId_assetCode_networkId: { userId, assetCode: code, networkId } },
+    });
+    if (already && already.status !== AddressStatus.FAILED) {
+      return this.toView(already, network.label, network.requiresTag, network.confirmations);
     }
 
     const quidaxUserId = await this.provisioning.requireQuidaxId(userId);
