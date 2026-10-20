@@ -96,7 +96,14 @@ import {
   SetNgnWithdrawalsDto,
   SimulatePayInDto,
   VirtualAccountStatusDto,
+  TwoStepCodeDto,
+  TwoStepDisableDto,
+  TwoStepEnableDto,
+  TwoStepPasswordDto,
+  TwoStepRequiredDto,
+  TwoStepTicketDto,
 } from './dto';
+import { TwoStepService } from './two-step.service';
 import { Public } from '../auth/public.decorator';
 import { RateLimit } from '../rate-limit/rate-limit.decorator';
 import { PrismaService } from '../prisma/prisma.service';
@@ -184,6 +191,7 @@ export class AdminController {
     private readonly virtualAccounts: VirtualAccountsService,
     private readonly flutterwave: FlutterwaveClient,
     private readonly flwConfig: FlutterwaveConfig,
+    private readonly twoStep: TwoStepService,
   ) {}
 
   // ── gates ─────────────────────────────────────────────────
@@ -1321,6 +1329,60 @@ export class AdminController {
    * Returns a replacement token. The caller must store it — every other
    * session, including this one's old token, stops working immediately.
    */
+  // ── M7: two-step sign-in, my account ──────────────────────
+
+  @Get('me/two-step')
+  twoStepStatus(@CurrentAdmin('sub') adminId: string) {
+    return this.twoStep.status(adminId);
+  }
+
+  /** Password, then an emailed code to confirm switching on or off. */
+  @RateLimit('auth.changePassword')
+  @Post('me/two-step/code')
+  @HttpCode(200)
+  twoStepSendCode(@CurrentAdmin('sub') adminId: string, @Body() dto: TwoStepPasswordDto) {
+    return this.twoStep.sendChangeCode(adminId, dto.password);
+  }
+
+  /** The emailed code switches it on; the 10 backup codes are shown once. Other sessions end. */
+  @RateLimit('auth.changePassword')
+  @Post('me/two-step/enable')
+  @HttpCode(200)
+  async twoStepEnable(@CurrentAdmin() actor: AdminJwtPayload, @Body() dto: TwoStepEnableDto, @Req() req: Request) {
+    const result = await this.twoStep.enable(actor.sub, dto.code, actor.jti);
+    await this.admin.audit(actor.sub, 'admin.two_step.enable', 'AdminUser', actor.sub, null, { via: 'account settings' }, req.ip);
+    return result;
+  }
+
+  @RateLimit('auth.changePassword')
+  @Post('me/two-step/backup-codes')
+  @HttpCode(200)
+  async twoStepBackupCodes(@CurrentAdmin() actor: AdminJwtPayload, @Body() dto: TwoStepPasswordDto, @Req() req: Request) {
+    const backupCodes = await this.twoStep.regenerate(actor.sub, dto.password);
+    await this.admin.audit(actor.sub, 'admin.two_step.backup_codes', 'AdminUser', actor.sub, null, { count: backupCodes.length }, req.ip);
+    return { backupCodes };
+  }
+
+  /** Password and an emailed code or a backup code. Refused while an owner requires it. */
+  @RateLimit('auth.changePassword')
+  @Post('me/two-step/disable')
+  @HttpCode(200)
+  async twoStepDisable(@CurrentAdmin() actor: AdminJwtPayload, @Body() dto: TwoStepDisableDto, @Req() req: Request) {
+    await this.twoStep.disable(actor.sub, dto.password, dto.code);
+    await this.admin.audit(actor.sub, 'admin.two_step.disable', 'AdminUser', actor.sub, null, null, req.ip);
+    return { ok: true };
+  }
+
+  /** Owners only (the service checks), with the password: require two-step for every admin. */
+  @RateLimit('auth.changePassword')
+  @Put('settings/two-step-required')
+  @RequirePermissions('team.manage')
+  async setTwoStepRequired(@CurrentAdmin() actor: AdminJwtPayload, @Body() dto: TwoStepRequiredDto, @Req() req: Request) {
+    const { before, after } = await this.twoStep.setRequired({ id: actor.sub, role: actor.role }, dto.required, dto.password);
+    await this.admin.audit(actor.sub, 'admin.two_step.required', 'SystemFlag', 'admin_two_step_required', { required: before }, { required: after }, req.ip);
+    return { required: after };
+  }
+
   @RateLimit('auth.changePassword')
   @Post('me/password')
   @HttpCode(200)
@@ -1879,8 +1941,14 @@ export class AdminAuthController {
     private readonly admin: AdminService,
     private readonly admins: AdminsService,
     private readonly prisma: PrismaService,
+    private readonly twoStep: TwoStepService,
   ) {}
 
+  /**
+   * Email and password. Either a token, or (M7) a ticket for the second step:
+   * `twoStep: 'CODE'` (enter the emailed code or a backup code) or `'SETUP'`
+   * (an owner requires two-step and this admin must switch it on now).
+   */
   @RateLimit('auth.login')
   @Post('login')
   @HttpCode(200)
@@ -1889,6 +1957,38 @@ export class AdminAuthController {
       ip: req.ip,
       userAgent: req.headers['user-agent'],
     });
+  }
+
+  /** M7: finish a sign-in with the emailed code or a backup code. */
+  @RateLimit('auth.resetConfirm')
+  @Post('login/verify')
+  @HttpCode(200)
+  async verifyLogin(@Body() dto: TwoStepCodeDto, @Req() req: Request) {
+    const r = await this.twoStep.verifyLogin(dto.ticket, dto.code);
+    const accessToken = await this.admin.signToken(r.admin, { ip: req.ip, userAgent: req.headers['user-agent'] });
+    if (r.usedBackup) {
+      await this.admin.audit(r.admin.id, 'admin.two_step.backup_used', 'AdminUser', r.admin.id, null, { backupLeft: r.backupLeft }, req.ip);
+    }
+    return { accessToken };
+  }
+
+  /** M7: a new code for a sign-in waiting for its second step (once a minute). */
+  @RateLimit('auth.resetConfirm')
+  @Post('login/resend')
+  @HttpCode(200)
+  resendLoginCode(@Body() dto: TwoStepTicketDto) {
+    return this.twoStep.sendCode(dto.ticket);
+  }
+
+  /** M7: an owner requires two-step; the emailed code switches it on and finishes the sign-in. */
+  @RateLimit('auth.resetConfirm')
+  @Post('login/setup')
+  @HttpCode(200)
+  async completeTwoStepSetup(@Body() dto: TwoStepCodeDto, @Req() req: Request) {
+    const r = await this.twoStep.completeSetup(dto.ticket, dto.code);
+    const accessToken = await this.admin.signToken(r.admin, { ip: req.ip, userAgent: req.headers['user-agent'] });
+    await this.admin.audit(r.admin.id, 'admin.two_step.enable', 'AdminUser', r.admin.id, null, { via: 'sign-in (required by an owner)' }, req.ip);
+    return { accessToken, backupCodes: r.backupCodes };
   }
 
   /**

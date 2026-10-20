@@ -238,7 +238,7 @@ export class AdminsService {
     adminId: string,
     code: string,
     newPassword: string,
-  ): Promise<{ accessToken: string }> {
+  ): Promise<{ accessToken: string } | { signInRequired: true }> {
     const admin = await this.prisma.adminUser.findUnique({ where: { id: adminId } });
     if (!admin) throw new NotFoundException('Account not found');
 
@@ -248,6 +248,12 @@ export class AdminsService {
       throw new BadRequestException('The new password is the same as the current one');
     }
 
+    // M7: a reset never stands in for the second step. With two-step on, the
+    // admin signs in afresh (password and code) once the password is changed.
+    if (admin.twoStepEnabled) {
+      await this.applyNewPassword(admin, newPassword, 'password reset by code', false);
+      return { signInRequired: true };
+    }
     return this.applyNewPassword(admin, newPassword, 'password reset by code');
   }
 
@@ -261,6 +267,7 @@ export class AdminsService {
     admin: { id: string; email: string; role: AdminRole },
     newPassword: string,
     why: string,
+    issueToken = true,
   ): Promise<{ accessToken: string }> {
     const updated = await this.prisma.adminUser.update({
       where: { id: admin.id },
@@ -298,7 +305,7 @@ export class AdminsService {
     }
 
     this.log.warn(`Admin ${admin.email}: ${why} — every session revoked`);
-    return { accessToken: await this.admin.signToken(updated) };
+    return { accessToken: issueToken ? await this.admin.signToken(updated) : '' };
   }
 
   /** Start a reset. Returns where the code went, never the code. */

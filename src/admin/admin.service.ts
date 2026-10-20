@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, UnauthorizedException, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { AdminRole, AlertType, KycStatus, KycTier } from '@prisma/client';
@@ -11,7 +11,13 @@ import { recordFailedLogin } from '../auth/failed-logins';
 import { OpsAlertsService } from '../common/ops-alerts/ops-alerts.service';
 import { RatesService } from '../rates/rates.service';
 import { AdminSessionsService } from './sessions.service';
+import { TwoStepService } from './two-step.service';
 import { dec, str } from '../common/money';
+
+/** M7: a sign-in either finishes, or waits for its second step. */
+export type AdminLoginResult =
+  | { accessToken: string }
+  | { twoStep: 'CODE' | 'SETUP'; ticket: string; sentTo: string; delivered: boolean };
 
 export interface AdminJwtPayload {
   sub: string;
@@ -37,13 +43,14 @@ export class AdminService {
     private readonly mail: TemplatedMailService,
     private readonly referrals: ReferralsService,
     private readonly alerts: OpsAlertsService,
+    @Optional() private readonly twoStep?: TwoStepService,
   ) {}
 
   async login(
     email: string,
     password: string,
     context?: { ip?: string; userAgent?: string },
-  ): Promise<{ accessToken: string }> {
+  ): Promise<AdminLoginResult> {
     const admin = await this.prisma.adminUser.findUnique({
       where: { email: email.trim().toLowerCase() },
     });
@@ -73,6 +80,21 @@ export class AdminService {
       // this answer (revealing a real admin) and hang it if mail is down.
       if (failed.justLocked) void this.onLocked(admin, failed.lockedUntil, context).catch(() => undefined);
       throw new UnauthorizedException('Incorrect email or password');
+    }
+
+    /*
+     * M7: with two-step on (or required by an owner), the right password only
+     * opens the second step. The failed-attempt count is NOT reset here: only a
+     * full sign-in resets it, or "right password, four wrong codes, right
+     * password again" would allow endless code guessing.
+     */
+    if (this.twoStep) {
+      const kind = admin.twoStepEnabled ? 'CODE' : (await this.twoStep.isRequired()) ? 'SETUP' : null;
+      if (kind) {
+        const { ticket } = await this.twoStep.startChallenge(admin, kind, context?.ip);
+        const { delivered, sentTo } = await this.twoStep.sendCode(ticket);
+        return { twoStep: kind, ticket, sentTo, delivered };
+      }
     }
 
     await this.prisma.adminUser.update({

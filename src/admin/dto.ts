@@ -393,3 +393,32 @@ export class SetAlertRecipientEnabledDto {
   @IsBoolean()
   enabled!: boolean;
 }
+
+// ── M7: two-step sign-in ─────────────────────────────────────
+
+/** The ticket from a sign-in that passed its password. */
+export class TwoStepTicketDto {
+  @IsString() @MinLength(20) @MaxLength(100) ticket!: string;
+}
+
+/** The ticket and the 6-digit code (emailed, or a backup code). */
+export class TwoStepCodeDto extends TwoStepTicketDto {
+  @IsString() @Matches(/^\d{6}$/, { message: 'Enter the 6-digit code' }) code!: string;
+}
+
+/** Checked, never stored or audited. */
+export class TwoStepPasswordDto {
+  @IsString() @MinLength(1) @MaxLength(128) password!: string;
+}
+
+export class TwoStepEnableDto {
+  @IsString() @Matches(/^\d{6}$/, { message: 'Enter the 6-digit code' }) code!: string;
+}
+
+export class TwoStepDisableDto extends TwoStepPasswordDto {
+  @IsString() @Matches(/^\d{6}$/, { message: 'Enter the 6-digit code or a backup code' }) code!: string;
+}
+
+export class TwoStepRequiredDto extends TwoStepPasswordDto {
+  @IsBoolean() required!: boolean;
+}
