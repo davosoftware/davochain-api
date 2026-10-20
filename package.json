@@ -20,7 +20,7 @@
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
     "seed": "ts-node prisma/seed.ts",
-    "check:r2": "ts-node --transpile-only --compiler-options {\"module\":\"CommonJS\"} scripts/check-r2.ts",
+    "check:r2": "ts-node --transpile-only scripts/check-r2.ts",
     "smoke": "node scripts/smoke.mjs",
     "setup": "prisma migrate dev --name init && prisma generate && ts-node prisma/seed.ts",
     "stop": "node scripts/free-port.mjs",
