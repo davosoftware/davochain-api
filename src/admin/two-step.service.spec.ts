@@ -2,6 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Unauthorize
 import { AdminOtpPurpose, AdminRole } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import { TwoStepService, TWO_STEP_REQUIRED_FLAG, maskEmail } from './two-step.service';
+import { CodeCooldownError } from './otp.service';
 
 /** M7 rules (spec docs/superpowers/specs/2026-10-20-admin-two-step-design.md §3–§6). */
 const sha = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -136,6 +137,15 @@ describe('Starting the second step', () => {
     const row = s.challenges()[0];
     expect(row.ticketHash).toBe(sha(ticket));
     expect(row.expiresAt.getTime() - Date.now()).toBeGreaterThan(9 * 60_000);
+  });
+
+  it('signing in again within a minute reuses the code just sent instead of failing; "Send a new code" still waits', async () => {
+    const s = setup();
+    const { ticket } = await s.svc.startChallenge({ id: 'a1' }, 'CODE');
+    s.otps.issue.mockRejectedValueOnce(new CodeCooldownError(40));
+    await expect(s.svc.sendCode(ticket, { reuseRecent: true })).resolves.toEqual({ delivered: true, sentTo: 'a**@davochain.test' });
+    s.otps.issue.mockRejectedValueOnce(new CodeCooldownError(40));
+    await expect(s.svc.sendCode(ticket)).rejects.toThrow('A code was just sent. Try again in 40 seconds.');
   });
 
   it('masks the email the code went to', () => {

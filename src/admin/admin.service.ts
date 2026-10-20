@@ -92,7 +92,7 @@ export class AdminService {
       const kind = admin.twoStepEnabled ? 'CODE' : (await this.twoStep.isRequired()) ? 'SETUP' : null;
       if (kind) {
         const { ticket } = await this.twoStep.startChallenge(admin, kind, context?.ip);
-        const { delivered, sentTo } = await this.twoStep.sendCode(ticket);
+        const { delivered, sentTo } = await this.twoStep.sendCode(ticket, { reuseRecent: true });
         return { twoStep: kind, ticket, sentTo, delivered };
       }
     }

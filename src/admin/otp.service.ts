@@ -20,6 +20,13 @@ const NOT_RIGHT = 'That code is not right.';
 /** One code at a time, and not a fresh one every second. */
 const RESEND_COOLDOWN_MS = 60_000;
 
+/** A code of this kind went out less than a minute ago; that one is still good. */
+export class CodeCooldownError extends BadRequestException {
+  constructor(readonly waitSeconds: number) {
+    super(`A code was just sent. Try again in ${waitSeconds} seconds.`);
+  }
+}
+
 /** M7: the email each kind of code is sent with. */
 const TEMPLATE: Record<AdminOtpPurpose, string> = {
   PASSWORD_RESET: 'admin.password_reset',
@@ -81,7 +88,7 @@ export class AdminOtpService {
       const wait = Math.ceil(
         (RESEND_COOLDOWN_MS - (Date.now() - recent.createdAt.getTime())) / 1000,
       );
-      throw new BadRequestException(`A code was just sent. Try again in ${wait} seconds.`);
+      throw new CodeCooldownError(wait);
     }
 
     const recipients = [admin.email];

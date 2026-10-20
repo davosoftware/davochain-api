@@ -36,6 +36,8 @@ const testSettings = {
   RATE_LIMIT_AUTH_LOGIN_IP: '2000/15m',
   // Every admin suite signs the same test owner in; a full run passes 10 per 15 minutes on its own.
   RATE_LIMIT_AUTH_LOGIN_ACCT: '2000/15m',
+  // The two-step suite changes its own settings more than 5 times in an hour.
+  RATE_LIMIT_AUTH_CHANGE_PASSWORD_USER: '2000/1h',
 };
 
 console.log(`\n  Starting the API in e2e test mode on port ${port}:`);

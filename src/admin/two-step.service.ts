@@ -16,7 +16,7 @@ import { OpsAlertsService } from '../common/ops-alerts/ops-alerts.service';
 import { MailService } from '../common/mail.service';
 import { EmailTemplateService } from '../cms/email-template.service';
 import { recordFailedLogin } from '../auth/failed-logins';
-import { AdminOtpService } from './otp.service';
+import { AdminOtpService, CodeCooldownError } from './otp.service';
 import { AdminSessionsService } from './sessions.service';
 import { WRONG_PASSWORD_MESSAGE } from './ngn-withdrawals.service';
 
@@ -83,12 +83,23 @@ export class TwoStepService {
     return { ticket };
   }
 
-  /** Email the code this sign-in needs (first send and "Send a new code"). Uses no attempt. */
-  async sendCode(ticket: string): Promise<{ delivered: boolean; sentTo: string }> {
+  /**
+   * Email the code this sign-in needs (first send and "Send a new code"). Uses no attempt.
+   *
+   * \`reuseRecent\` (the sign-in itself): when a code of this kind went out less
+   * than a minute ago, that code is still good, so signing in again straight
+   * away reuses it instead of failing. "Send a new code" keeps the wait.
+   */
+  async sendCode(ticket: string, opts: { reuseRecent?: boolean } = {}): Promise<{ delivered: boolean; sentTo: string }> {
     const { challenge, admin } = await this.openChallenge(ticket);
     const purpose = challenge.kind === AdminChallengeKind.SETUP ? AdminOtpPurpose.TWO_STEP_CHANGE : AdminOtpPurpose.LOGIN;
-    const { delivered } = await this.otps.issue(admin.id, purpose);
-    return { delivered, sentTo: maskEmail(admin.email) };
+    try {
+      const { delivered } = await this.otps.issue(admin.id, purpose);
+      return { delivered, sentTo: maskEmail(admin.email) };
+    } catch (err) {
+      if (opts.reuseRecent && err instanceof CodeCooldownError) return { delivered: true, sentTo: maskEmail(admin.email) };
+      throw err;
+    }
   }
 
   /** Finish a CODE sign-in with the emailed code or a backup code. */
