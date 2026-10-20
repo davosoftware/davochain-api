@@ -34,6 +34,7 @@ import { TreasuryModule } from '../treasury/treasury.module';
 import { TreasuryAdminController } from './treasury-admin.controller';
 import { KycDocumentsAdminController } from './kyc-documents-admin.controller';
 import { DojahSettingsService } from './dojah-settings.service';
+import { TwoStepService } from './two-step.service';
 import { WithdrawalsModule } from '../withdrawals/withdrawals.module';
 
 @Module({
@@ -59,7 +60,7 @@ import { WithdrawalsModule } from '../withdrawals/withdrawals.module';
     WithdrawalsModule,
   ],
   controllers: [AdminController, AdminAuthController, AlertRecipientsController, KycBasicReviewController, ComplianceController, DojahAdminController, TreasuryAdminController, KycDocumentsAdminController],
-  providers: [AdminService, UsersAdminService, AdminsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService, AdminSessionsService, AdminOtpService, NgnWithdrawalsService, AdminGuard, LevelAdminService, DojahSettingsService],
+  providers: [AdminService, UsersAdminService, AdminsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService, AdminSessionsService, AdminOtpService, NgnWithdrawalsService, AdminGuard, LevelAdminService, DojahSettingsService, TwoStepService],
   exports: [AdminService, UsersAdminService, AdminsService, AdminSessionsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService],
 })
 export class AdminModule {}
