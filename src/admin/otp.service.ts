@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
-import { AdminOtpPurpose, AdminRole } from '@prisma/client';
+import { AdminOtpPurpose, AdminRole, Prisma } from '@prisma/client';
 import { createHash, randomInt, timingSafeEqual } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../common/mail.service';
@@ -19,6 +19,13 @@ const NOT_RIGHT = 'That code is not right.';
 
 /** One code at a time, and not a fresh one every second. */
 const RESEND_COOLDOWN_MS = 60_000;
+
+/** M7: the email each kind of code is sent with. */
+const TEMPLATE: Record<AdminOtpPurpose, string> = {
+  PASSWORD_RESET: 'admin.password_reset',
+  LOGIN: 'admin.login_code',
+  TWO_STEP_CHANGE: 'admin.two_step_code',
+};
 
 @Injectable()
 export class AdminOtpService {
@@ -50,6 +57,14 @@ export class AdminOtpService {
    * account should see happen, not read about afterwards.
    */
   async requestPasswordReset(adminId: string): Promise<{ delivered: boolean; sentTo: string[] }> {
+    return this.issue(adminId, AdminOtpPurpose.PASSWORD_RESET);
+  }
+
+  /**
+   * Issue a code for one purpose (M7). Only a password reset is copied to the
+   * owners; a sign-in or two-step code is the admin's alone.
+   */
+  async issue(adminId: string, purpose: AdminOtpPurpose): Promise<{ delivered: boolean; sentTo: string[] }> {
     const admin = await this.prisma.adminUser.findUnique({
       where: { id: adminId },
       select: { id: true, email: true, name: true, role: true, isActive: true },
@@ -59,7 +74,7 @@ export class AdminOtpService {
     }
 
     const recent = await this.prisma.adminOtp.findFirst({
-      where: { adminUserId: adminId, purpose: AdminOtpPurpose.PASSWORD_RESET, consumedAt: null },
+      where: { adminUserId: adminId, purpose, consumedAt: null },
       orderBy: { createdAt: 'desc' },
     });
     if (recent && Date.now() - recent.createdAt.getTime() < RESEND_COOLDOWN_MS) {
@@ -70,7 +85,7 @@ export class AdminOtpService {
     }
 
     const recipients = [admin.email];
-    if (admin.role === AdminRole.SUB_ADMIN) {
+    if (purpose === AdminOtpPurpose.PASSWORD_RESET && admin.role === AdminRole.SUB_ADMIN) {
       const owners = await this.prisma.adminUser.findMany({
         where: { role: AdminRole.OWNER, isActive: true },
         select: { email: true },
@@ -85,14 +100,14 @@ export class AdminOtpService {
     // Supersede anything outstanding: two live codes means a stolen older one
     // still works after the owner asked for a new one.
     await this.prisma.adminOtp.updateMany({
-      where: { adminUserId: adminId, purpose: AdminOtpPurpose.PASSWORD_RESET, consumedAt: null },
+      where: { adminUserId: adminId, purpose, consumedAt: null },
       data: { consumedAt: new Date() },
     });
 
     await this.prisma.adminOtp.create({
       data: {
         adminUserId: adminId,
-        purpose: AdminOtpPurpose.PASSWORD_RESET,
+        purpose,
         codeHash: this.hash(code),
         sentTo: recipients,
         expiresAt: new Date(Date.now() + TTL_MS),
@@ -115,7 +130,7 @@ export class AdminOtpService {
        * an error.
        */
       const rendered = await this.templates.render(
-        isOwnerCopy ? 'admin.password_reset_notice' : 'admin.password_reset',
+        isOwnerCopy ? 'admin.password_reset_notice' : TEMPLATE[purpose],
         isOwnerCopy
           ? {
               // The owner's own name is not to hand here; the greeting stays
@@ -135,7 +150,7 @@ export class AdminOtpService {
       const message =
         rendered ??
         (await this.templates.render(
-          isOwnerCopy ? 'admin.password_reset_notice' : 'admin.password_reset',
+          isOwnerCopy ? 'admin.password_reset_notice' : TEMPLATE[purpose],
           isOwnerCopy
             ? { firstName: 'there', code, expiresIn, adminName: admin.name, adminEmail: admin.email }
             : { firstName: admin.name.split(' ')[0], code, expiresIn },
@@ -148,7 +163,7 @@ export class AdminOtpService {
         subject: message.subject,
         text: message.text,
         html: message.html,
-        templateKey: isOwnerCopy ? 'admin.password_reset_notice' : 'admin.password_reset',
+        templateKey: isOwnerCopy ? 'admin.password_reset_notice' : TEMPLATE[purpose],
       });
       delivered = delivered || sent;
     }
@@ -156,7 +171,7 @@ export class AdminOtpService {
     if (!delivered && mayLogSecrets()) {
       // Without this, no reset can be tested until SMTP exists. Guarded on the
       // environment because a production log is not a place for a live code.
-      this.log.warn(`SMTP not configured — reset code for ${admin.email} is ${code}`);
+      this.log.warn(`SMTP not configured — ${purpose} code for ${admin.email} is ${code}`);
     }
 
     return { delivered, sentTo: recipients };
@@ -168,9 +183,9 @@ export class AdminOtpService {
    * Burnt whether it was right or wrong once the attempts run out, so a
    * six-digit code can never be walked through.
    */
-  async consume(adminId: string, code: string): Promise<void> {
+  async consume(adminId: string, code: string, purpose: AdminOtpPurpose = AdminOtpPurpose.PASSWORD_RESET): Promise<void> {
     const otp = await this.prisma.adminOtp.findFirst({
-      where: { adminUserId: adminId, purpose: AdminOtpPurpose.PASSWORD_RESET, consumedAt: null },
+      where: { adminUserId: adminId, purpose, consumedAt: null },
       orderBy: { createdAt: 'desc' },
     });
     if (!otp) throw new BadRequestException(NOT_RIGHT);
@@ -214,5 +229,27 @@ export class AdminOtpService {
       data: { consumedAt: new Date() },
     });
     if (used.count !== 1) throw new BadRequestException(NOT_RIGHT);
+  }
+
+  /**
+   * M7: the id of the open, unexpired code of this purpose that `code` is, or
+   * null. Uses up no attempt: the caller limits attempts itself (a sign-in
+   * challenge allows five in all, across the emailed code and backup codes).
+   */
+  async match(adminId: string, code: string, purpose: AdminOtpPurpose): Promise<string | null> {
+    const otp = await this.prisma.adminOtp.findFirst({
+      where: { adminUserId: adminId, purpose, consumedAt: null },
+      orderBy: { createdAt: 'desc' },
+    });
+    if (!otp || otp.expiresAt.getTime() <= Date.now()) return null;
+    const given = Buffer.from(this.hash(code.trim()));
+    const expected = Buffer.from(otp.codeHash);
+    return given.length === expected.length && timingSafeEqual(given, expected) ? otp.id : null;
+  }
+
+  /** M7: burn a matched code, once, inside the caller's transaction. False if it was already used. */
+  async consumeById(db: Pick<Prisma.TransactionClient, 'adminOtp'>, id: string): Promise<boolean> {
+    const used = await db.adminOtp.updateMany({ where: { id, consumedAt: null }, data: { consumedAt: new Date() } });
+    return used.count === 1;
   }
 }
