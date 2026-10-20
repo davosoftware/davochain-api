@@ -898,10 +898,17 @@ model AdminUser {
   /// their own dashboard.
   permissions String[] @default([])
 
-  auditEntries AdminAuditLog[]
-  sessions     AdminSession[]
-  otps         AdminOtp[]
-  invites      AdminInvite[]
+  /// M7: after the password, a 6-digit code emailed to the admin (or a backup
+  /// code). Each admin chooses; an owner can require it for everyone.
+  twoStepEnabled   Boolean   @default(false)
+  twoStepEnabledAt DateTime?
+
+  auditEntries    AdminAuditLog[]
+  sessions        AdminSession[]
+  otps            AdminOtp[]
+  invites         AdminInvite[]
+  backupCodes     AdminBackupCode[]
+  loginChallenges AdminLoginChallenge[]
 
   @@map("admin_users")
 }
@@ -940,6 +947,10 @@ model AdminSession {
 
 enum AdminOtpPurpose {
   PASSWORD_RESET
+  /// M7: the second step of a sign-in.
+  LOGIN
+  /// M7: confirming two-step sign-in is switched on or off.
+  TWO_STEP_CHANGE
 }
 
 /// A one-time code emailed to an admin. Stored as a hash: a leaked database
@@ -963,6 +974,49 @@ model AdminOtp {
 
   @@index([adminUserId, purpose, consumedAt])
   @@map("admin_otps")
+}
+
+/// M7: one of an admin's 10 single-use backup codes, for when the emailed code
+/// cannot be had. Stored as a hash; shown to the admin once.
+model AdminBackupCode {
+  id          String    @id @default(uuid())
+  adminUserId String
+  codeHash    String
+  usedAt      DateTime?
+  createdAt   DateTime  @default(now())
+
+  admin AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+
+  @@index([adminUserId, usedAt])
+  @@map("admin_backup_codes")
+}
+
+enum AdminChallengeKind {
+  /// Two-step is on: the emailed code or a backup code finishes the sign-in.
+  CODE
+  /// An owner requires two-step and this admin has not switched it on: they
+  /// switch it on (emailed code) to finish the sign-in.
+  SETUP
+}
+
+/// M7: a sign-in that passed the password and waits for its second step. The
+/// browser holds a random ticket; only its hash is stored. Single use.
+model AdminLoginChallenge {
+  id          String             @id @default(uuid())
+  adminUserId String
+  ticketHash  String             @unique
+  kind        AdminChallengeKind
+  /// Wrong codes against this sign-in. The fifth burns it.
+  attempts    Int                @default(0)
+  expiresAt   DateTime
+  consumedAt  DateTime?
+  ip          String?
+  createdAt   DateTime           @default(now())
+
+  admin AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+
+  @@index([adminUserId, createdAt])
+  @@map("admin_login_challenges")
 }
 
 /// Everything the public website and the apps read about this business.

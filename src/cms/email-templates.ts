@@ -593,6 +593,66 @@ deactivate the account from **Settings → Team** now.
 ${SIGN_OFF}`),
   },
   {
+    key: 'admin.login_code',
+    label: 'Admin sign-in code',
+    hint: 'M7: the six-digit code an admin with two-step sign-in types after their password.',
+    group: 'Admin team',
+    variables: ['code', 'expiresIn'],
+    sentBy: 'AdminOtpService.issue (LOGIN)',
+    subject: 'Your {{companyName}} admin sign-in code',
+    body:
+      html('Hi {{firstName}},\n\nYour sign-in code is:') +
+      codeBlock('code') +
+      html(`It expires in {{expiresIn}}. If you did not just sign in, someone has your password:
+change it now from **Settings**, and tell an owner.
+${SIGN_OFF}`),
+  },
+  {
+    key: 'admin.two_step_code',
+    label: 'Admin two-step change code',
+    hint: 'M7: confirms an admin is switching two-step sign-in on or off.',
+    group: 'Admin team',
+    variables: ['code', 'expiresIn'],
+    sentBy: 'AdminOtpService.issue (TWO_STEP_CHANGE)',
+    subject: 'Confirm your {{companyName}} two-step sign-in change',
+    body:
+      html('Hi {{firstName}},\n\nYour code to change two-step sign-in is:') +
+      codeBlock('code') +
+      html(`It expires in {{expiresIn}}. If you did not ask for this, change your password now and tell an owner.
+${SIGN_OFF}`),
+  },
+  {
+    key: 'admin.two_step_backup_used',
+    label: 'Admin backup code used',
+    hint: 'M7: security notice after a backup code is used to sign in.',
+    group: 'Admin team',
+    variables: ['left'],
+    sentBy: 'AdminAuthController.verifyLogin',
+    subject: 'A backup code was used to sign in to {{companyName}} admin',
+    body: html(`Hi {{firstName}},
+
+One of your two-step backup codes was just used to sign in. You have **{{left}}** left.
+
+If this was not you, change your password now and tell an owner. You can make a new set of
+backup codes from **Settings → Security**.
+${SIGN_OFF}`),
+  },
+  {
+    key: 'admin.two_step_disabled',
+    label: 'Admin two-step switched off',
+    hint: 'M7: security notice after an admin switches two-step sign-in off.',
+    group: 'Admin team',
+    variables: [],
+    sentBy: 'TwoStepService.disable',
+    subject: 'Two-step sign-in was switched off for your {{companyName}} admin account',
+    body: html(`Hi {{firstName}},
+
+Two-step sign-in was just switched off for your admin account. Signing in now needs only your password.
+
+If this was not you, change your password now and tell an owner.
+${SIGN_OFF}`),
+  },
+  {
     key: 'admin.password_changed',
     label: 'Admin password changed',
     hint: 'Security notice after an admin password changes, by either route.',
