@@ -295,6 +295,18 @@ export const envSchema = z
           ctx.addIssue({ code: z.ZodIssueCode.custom, path: [name], message: `${name} is required when STORAGE_DRIVER=r2` });
         }
       }
+      // The name, never the address: the code builds the address itself from R2_ACCOUNT_ID.
+      const bucket = env.R2_BUCKET;
+      if (bucket && !/^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/.test(bucket)) {
+        const fromUrl = /^https?:\/\/[^/]+\/([a-z0-9][a-z0-9-]{1,61}[a-z0-9])\/?$/.exec(bucket)?.[1];
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['R2_BUCKET'],
+          message: fromUrl
+            ? `R2_BUCKET takes only the bucket's name, not its address. Use R2_BUCKET=${fromUrl}`
+            : "R2_BUCKET takes only the bucket's name (3-63 lowercase letters, numbers and hyphens), as shown in Cloudflare → R2",
+        });
+      }
     }
     // The Flutterwave mock accepts any deposit; it must never run where real people are.
     if (env.FLW_USE_MOCK && !['development', 'test'].includes(env.NODE_ENV)) {

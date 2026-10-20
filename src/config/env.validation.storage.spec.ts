@@ -46,6 +46,14 @@ describe('File storage environment rules', () => {
     expect(issues({ NODE_ENV: 'production', ...R2 }, 'R2_BUCKET')).toEqual([]);
   });
 
+  it('refuses a bucket ADDRESS where the bucket NAME belongs, and says what to put', () => {
+    const msg = issues({ ...R2, R2_BUCKET: 'https://acc.r2.cloudflarestorage.com/davochain' }, 'R2_BUCKET')[0];
+    expect(msg).toMatch(/only the bucket's name/);
+    expect(msg).toMatch(/R2_BUCKET=davochain/);
+    expect(issues({ ...R2, R2_BUCKET: 'Davochain Files' }, 'R2_BUCKET')[0]).toMatch(/only the bucket's name/);
+    expect(issues({ ...R2, R2_BUCKET: 'davochain' }, 'R2_BUCKET')).toEqual([]);
+  });
+
   it('refuses an unknown driver', () => {
     expect(issues({ STORAGE_DRIVER: 's3' }, 'STORAGE_DRIVER').length).toBeGreaterThan(0);
   });
