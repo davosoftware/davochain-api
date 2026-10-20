@@ -22,9 +22,16 @@ export interface DriftRow {
   heldInSubAccounts: string;
   drift: string;
   withinTolerance: boolean;
-  /** True when some sub-account could not be read, so drift proves nothing. */
+  /** True when this run did not read every holder (more than 200, or some unreadable). The drift is still valid for those it read. */
   partial: boolean;
+  /** Customers whose sub-account was read this run (both sides cover exactly these). */
+  customersChecked: number;
+  /** Customers holding something in all. */
+  customersHolding: number;
 }
+
+/** A2: where the last run stopped, so the next one carries on from there. */
+const RECONCILE_CURSOR = 'reconcile_cursor';
 
 export type MismatchReason = 'BEING_CHECKED' | 'IN_PROGRESS' | 'UNEXPLAINED' | 'UNREADABLE';
 
@@ -115,74 +122,78 @@ export class ReconciliationService {
       }),
     ]);
 
-    // What we believe each user is owed, per asset.
+    // What we believe each customer is owed, per asset (A2: kept per customer,
+    // so each run can compare exactly the customers it managed to read).
+    const owed = new Map<string, Map<string, Decimal>>();
+    const add = (userId: string, asset: string, amount: Decimal) => {
+      const mine = owed.get(userId) ?? new Map<string, Decimal>();
+      mine.set(asset, (mine.get(asset) ?? ZERO).plus(amount));
+      owed.set(userId, mine);
+    };
+    for (const b of holders) add(b.userId, b.assetCode, dec(b.available).plus(dec(b.locked)));
+    for (const r of receivables) add(r.userId, r.assetCode, dec(r.amount));
+
+    // A2: this run's turn. Customers in a fixed order; start after the last
+    // one read by the previous run, wrap round, read up to 200. Over several
+    // runs, every holder is checked.
+    const all = [...owed.keys()].sort();
+    const truncated = all.length > ReconciliationService.MAX_USERS_PER_RUN;
+    let batch = all;
+    if (truncated) {
+      const cursor = (await this.prisma.systemFlag.findUnique({ where: { key: RECONCILE_CURSOR } }))?.value;
+      let from = typeof cursor === 'string' ? all.findIndex((u) => u > cursor) : 0;
+      if (from < 0) from = 0;
+      batch = [...all.slice(from), ...all.slice(0, from)].slice(0, ReconciliationService.MAX_USERS_PER_RUN);
+    }
+
+    // What Quidax actually holds, for the customers in this batch.
     const owedByAsset = new Map<string, Decimal>();
-    const userIds = new Set<string>();
-    const add = (asset: string, amount: Decimal) =>
-      owedByAsset.set(asset, (owedByAsset.get(asset) ?? ZERO).plus(amount));
-
-    for (const b of holders) {
-      userIds.add(b.userId);
-      add(b.assetCode, dec(b.available).plus(dec(b.locked)));
-    }
-    for (const r of receivables) {
-      userIds.add(r.userId);
-      add(r.assetCode, dec(r.amount));
-    }
-
-    // What Quidax actually holds in those sub-accounts.
     const heldByAsset = new Map<string, Decimal>();
     let scanned = 0;
     let unreadable = 0;
-
-    for (const userId of [...userIds].slice(0, ReconciliationService.MAX_USERS_PER_RUN)) {
-      let subId: string;
+    for (const userId of batch) {
+      let held: Array<{ currency?: string; balance?: string }>;
       try {
-        subId = await this.settlement.quidaxIdFor(userId);
+        held = await this.quidax.fetchWallets(await this.settlement.quidaxIdFor(userId));
       } catch {
+        // Not provisioned, or a network blip. Left out of BOTH sides: an
+        // unreadable customer proves nothing either way.
         unreadable++;
-        continue; // not provisioned yet — they cannot be holding anything
+        continue;
       }
-
-      try {
-        for (const wallet of await this.quidax.fetchWallets(subId)) {
-          const code = wallet.currency?.toLowerCase();
-          if (!code || !crypto.has(code)) continue;
-          heldByAsset.set(code, (heldByAsset.get(code) ?? ZERO).plus(dec(wallet.balance || '0')));
-        }
-        scanned++;
-      } catch {
-        // A network blip must not be reported as missing customer funds.
-        unreadable++;
+      scanned++;
+      for (const [code, amount] of owed.get(userId) ?? []) {
+        owedByAsset.set(code, (owedByAsset.get(code) ?? ZERO).plus(amount));
+      }
+      for (const wallet of held) {
+        const code = wallet.currency?.toLowerCase();
+        if (!code || !crypto.has(code)) continue;
+        heldByAsset.set(code, (heldByAsset.get(code) ?? ZERO).plus(dec(wallet.balance || '0')));
       }
     }
 
-    if (unreadable > 0) {
-      this.log.warn(
-        `Reconciliation could not read ${unreadable} sub-account(s); treating this run as partial`,
-      );
+    if (truncated && batch.length > 0) {
+      const last = batch[batch.length - 1];
+      await this.prisma.systemFlag.upsert({
+        where: { key: RECONCILE_CURSOR },
+        create: { key: RECONCILE_CURSOR, value: last, updatedBy: 'reconcile' },
+        update: { value: last, updatedBy: 'reconcile' },
+      });
     }
-    // H4: more holders than one run scans means "held" covers only some of
-    // them while "owed" covers everyone. That difference is not drift.
-    const truncated = userIds.size > ReconciliationService.MAX_USERS_PER_RUN;
-    if (truncated) {
-      this.log.warn(
-        `Reconciliation scanned ${ReconciliationService.MAX_USERS_PER_RUN} of ${userIds.size} holders; treating this run as partial`,
-      );
-    }
+    if (unreadable > 0) this.log.warn(`Reconciliation could not read ${unreadable} sub-account(s); they are left out of this run`);
+    if (truncated) this.log.log(`Reconciliation checked ${scanned} of ${all.length} holders this run (the rest in turn)`);
+
+    // "Partial" now only says the run did not cover every holder; the drift it
+    // reports is still valid, because both sides cover the same customers.
     const partial = unreadable > 0 || truncated;
-
     const rows: DriftRow[] = [];
     for (const code of crypto) {
-      const owed = owedByAsset.get(code) ?? ZERO;
+      const owedHere = owedByAsset.get(code) ?? ZERO;
       const held = heldByAsset.get(code) ?? ZERO;
-
       // Nothing owed and nothing held is the normal state for an unused coin.
-      if (owed.isZero() && held.isZero()) continue;
-
+      if (owedHere.isZero() && held.isZero()) continue;
       const totals = await this.ledger.projectedTotals(code);
-      const drift = owed.minus(held);
-
+      const drift = owedHere.minus(held);
       rows.push({
         asset: code,
         ledgerTotal: totals.userTotal.toFixed(),
@@ -190,9 +201,10 @@ export class ReconciliationService {
         lockedTotal: totals.lockedTotal.toFixed(),
         heldInSubAccounts: held.toFixed(),
         drift: drift.toFixed(),
-        // A partial scan cannot prove a shortfall, so never claim one.
-        withinTolerance: partial ? true : drift.abs().lte(dec(ReconciliationService.TOLERANCE)),
+        withinTolerance: drift.abs().lte(dec(ReconciliationService.TOLERANCE)),
         partial,
+        customersChecked: scanned,
+        customersHolding: all.length,
       });
     }
 
