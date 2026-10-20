@@ -6,6 +6,20 @@
  * Background work gets its own small lane so a fee-claim run of 400 receivables
  * can never starve live trading.
  */
+/**
+ * M9: the lane is so busy that this call would wait longer than its lane
+ * allows. Thrown BEFORE anything is sent, so nothing happened upstream.
+ */
+export class LaneBusyError extends Error {
+  constructor(
+    readonly lane: string,
+    readonly retryAfterMs: number,
+  ) {
+    super(`Quidax lane "${lane}" is busy: the wait would be ${Math.ceil(retryAfterMs / 1000)} s`);
+    this.name = 'LaneBusyError';
+  }
+}
+
 export class TokenBucket {
   private tokens: number;
   private lastRefill = Date.now();
@@ -35,12 +49,19 @@ export class TokenBucket {
     this.lastRefill = now;
   }
 
-  async take(): Promise<void> {
+  /**
+   * One call's turn. With `maxWaitMs` (M9), a call that would have to wait
+   * longer, counting the calls already queued in front, is refused at once
+   * with LaneBusyError instead of waiting without end.
+   */
+  async take(maxWaitMs = Infinity): Promise<void> {
     this.refill();
-    if (this.tokens >= 1) {
+    if (this.queue.length === 0 && this.tokens >= 1) {
       this.tokens -= 1;
       return;
     }
+    const waitMs = (this.queue.length + 1 - this.tokens) / this.refillPerMs;
+    if (waitMs > maxWaitMs) throw new LaneBusyError(this.name, waitMs);
     await new Promise<void>((resolve) => {
       this.queue.push(resolve);
       this.scheduleDrain();

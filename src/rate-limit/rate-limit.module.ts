@@ -38,6 +38,7 @@ function limiterRedis(config: ConfigService): Redis {
     { provide: RATE_LIMIT_REDIS, inject: [ConfigService], useFactory: limiterRedis },
     RateLimitService,
   ],
-  exports: [RateLimitService],
+  // The Quidax client shares this fail-fast connection for its budget (M9).
+  exports: [RateLimitService, RATE_LIMIT_REDIS],
 })
 export class RateLimitModule {}

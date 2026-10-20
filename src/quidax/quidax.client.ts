@@ -1,9 +1,12 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CredentialsService } from '../common/credentials.service';
 import { request } from 'undici';
 import { ulid } from 'ulid';
+import type Redis from 'ioredis';
 import { TokenBucket } from './rate-limiter';
+import { LaneBusyError, SharedTokenBucket } from './shared-bucket';
+import { RATE_LIMIT_REDIS } from '../rate-limit/rate-limit.service';
 import { QuidaxError, QuidaxRateLimitError, QuidaxUnknownError } from './quidax.errors';
 import type {
   QuidaxDeposit,
@@ -22,6 +25,12 @@ import type {
 } from './quidax.types';
 
 type Lane = 'default' | 'address' | 'background';
+
+/**
+ * M9: the longest a call may wait for its turn before it is refused as busy.
+ * Short where a person is waiting on a screen, longer for background jobs.
+ */
+export const LANE_MAX_WAIT_MS: Readonly<Record<Lane, number>> = { default: 10_000, address: 10_000, background: 120_000 };
 
 interface CallOpts {
   lane?: Lane;
@@ -48,27 +57,31 @@ export class QuidaxClient {
    * us when an admin rotates the key.
    */
   private readonly bootSecretKey: string;
-  private readonly lanes: Record<Lane, TokenBucket>;
+  private readonly lanes: Record<Lane, SharedTokenBucket>;
 
   constructor(
     @Inject(ConfigService) private readonly config: ConfigService,
     private readonly credentials: CredentialsService,
+    /**
+     * M9: with Redis, every API server shares one budget (Quidax counts per
+     * API key, not per server). Without it (tests, scripts), each process
+     * keeps its own count, as before.
+     */
+    @Optional() @Inject(RATE_LIMIT_REDIS) redis?: Redis | null,
   ) {
     this.baseUrl = this.config.getOrThrow<string>('QUIDAX_BASE_URL').replace(/\/+$/, '');
     this.bootSecretKey = this.config.get<string>('QUIDAX_SECRET_KEY') ?? '';
+    const perMinute = (n: number) => n / 60_000;
+    const perSecond = (n: number) => n / 1_000;
+    const lane = (name: Lane, capacity: number, refillPerMs: number) =>
+      new SharedTokenBucket(redis ?? null, `quidax:rl:${name}`, capacity, refillPerMs, new TokenBucket(capacity, refillPerMs, name));
+    const def = this.config.get<number>('QUIDAX_RATE_LIMIT_PER_MINUTE') ?? 240;
+    const addr = this.config.get<number>('QUIDAX_ADDRESS_RATE_LIMIT_PER_SECOND') ?? 15;
+    const bg = this.config.get<number>('QUIDAX_BACKGROUND_RATE_LIMIT_PER_MINUTE') ?? 30;
     this.lanes = {
-      default: TokenBucket.perMinute(
-        this.config.get<number>('QUIDAX_RATE_LIMIT_PER_MINUTE') ?? 240,
-        'default',
-      ),
-      address: TokenBucket.perSecond(
-        this.config.get<number>('QUIDAX_ADDRESS_RATE_LIMIT_PER_SECOND') ?? 15,
-        'address',
-      ),
-      background: TokenBucket.perMinute(
-        this.config.get<number>('QUIDAX_BACKGROUND_RATE_LIMIT_PER_MINUTE') ?? 30,
-        'background',
-      ),
+      default: lane('default', def, perMinute(def)),
+      address: lane('address', addr, perSecond(addr)),
+      background: lane('background', bg, perMinute(bg)),
     };
   }
 
@@ -102,7 +115,14 @@ export class QuidaxClient {
     let lastRetryable: Error | null = null;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-      await lane.take();
+      // M9: refused BEFORE anything is sent. A write only ever gets a second
+      // attempt after a 429 (nothing done), so "busy" always means nothing happened.
+      try {
+        await lane.take(LANE_MAX_WAIT_MS[opts.lane ?? 'default']);
+      } catch (err) {
+        if (err instanceof LaneBusyError) throw new QuidaxRateLimitError(429, err.retryAfterMs);
+        throw err;
+      }
 
       try {
         const res = await request(url.toString(), {
