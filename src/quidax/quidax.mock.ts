@@ -523,4 +523,13 @@ export class QuidaxMockClient extends QuidaxClient {
   override async fetchAllSubUserDeposits(): Promise<never[]> {
     return [];
   }
+
+  /**
+   * The mock knows no deposits (the list above is empty), so a look-up is
+   * "not found", as Quidax answers. Never falls through to the real API: a
+   * hand-made deposit message is therefore never credited in development (A1).
+   */
+  override async fetchDeposit(_userId: string, depositId: string): Promise<never> {
+    throw new QuidaxError(`Deposit ${depositId} not found`, null, 404);
+  }
 }

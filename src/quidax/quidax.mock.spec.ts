@@ -47,3 +47,10 @@ describe('QuidaxMockClient NGN bank withdrawals', () => {
     await expect(quidax.fetchWithdrawalByReference('dvc_ngnwd_test-1', 'another-account')).resolves.toBeNull();
   });
 });
+describe('QuidaxMockClient deposits (OPEN_ISSUES A1)', () => {
+  it('knows no deposits, so a deposit look-up answers "not found" and never calls the real Quidax', async () => {
+    const err = await client().fetchDeposit('sub-1', 'dep-1').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(QuidaxError);
+    expect((err as QuidaxError).httpStatus).toBe(404);
+  });
+});

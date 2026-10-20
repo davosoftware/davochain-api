@@ -7,6 +7,7 @@ import { ProvisioningService } from '../users/provisioning.service';
 import { DepositsService } from '../deposits/deposits.service';
 import { SettlementService } from '../trades/settlement.service';
 import { JOBS, QUEUES } from '../common/queues';
+import { QuidaxEventConfirmer } from './quidax-event-confirmer';
 import type {
   QuidaxDeposit,
   QuidaxPaymentAddress,
@@ -31,6 +32,7 @@ export class WebhooksProcessor extends WorkerHost {
     private readonly provisioning: ProvisioningService,
     private readonly deposits: DepositsService,
     private readonly settlement: SettlementService,
+    private readonly confirm: QuidaxEventConfirmer,
   ) {
     super();
   }
@@ -70,25 +72,27 @@ export class WebhooksProcessor extends WorkerHost {
       case 'deposit.successful':
       case 'deposit.on_hold':
       case 'deposit.failed_aml':
-      case 'deposit.rejected':
-        return this.deposits.applyWebhook(
-          envelope.event,
-          envelope.data as unknown as QuidaxDeposit,
-        );
+      case 'deposit.rejected': {
+        // A1: credited from Quidax's own record, never the message's.
+        const real = await this.confirm.deposit(envelope.data as unknown as QuidaxDeposit);
+        if (real) await this.deposits.applyWebhook(envelope.event, real);
+        return;
+      }
 
       case 'withdraw.successful':
-      case 'withdraw.rejected':
-        return this.settlement.applyWithdrawalWebhook(
-          envelope.event,
-          envelope.data as unknown as QuidaxWithdrawal,
-        );
+      case 'withdraw.rejected': {
+        // A1: a "rejected" message never refunds money Quidax says it sent.
+        const real = await this.confirm.withdrawal(envelope.data as unknown as QuidaxWithdrawal);
+        if (real) await this.settlement.applyWithdrawalWebhook(real.event, real.data);
+        return;
+      }
 
       case 'swap_transaction.complete':
-      case 'swap_transaction.failed':
-        return this.settlement.applySwapWebhook(
-          envelope.event,
-          envelope.data as unknown as QuidaxSwapTransaction,
-        );
+      case 'swap_transaction.failed': {
+        const real = await this.confirm.swap(envelope.data as unknown as QuidaxSwapTransaction);
+        if (real) await this.settlement.applySwapWebhook(real.event, real.data);
+        return;
+      }
 
       case 'wallet.updated':
         // Reconciliation signal only. NEVER credit a user from this — it
@@ -109,8 +113,11 @@ export class WebhooksProcessor extends WorkerHost {
         ? await this.prisma.depositAddress.findFirst({ where: { quidaxAddressId: data.id } })
         : null) ?? (await this.addresses.findByAddress(data.address));
 
+    // A1: the address comes from Quidax's list of this customer's addresses,
+    // never from the message: a forged message must not show a customer
+    // somebody else's address to pay into.
     if (row) {
-      await this.addresses.applyGenerated(row.id, data.address, data.destination_tag ?? null);
+      await this.addresses.resolve(row.id);
       return;
     }
 
@@ -124,7 +131,7 @@ export class WebhooksProcessor extends WorkerHost {
       where: { userId, assetCode: data.currency.toLowerCase(), address: null },
     });
     if (pending) {
-      await this.addresses.applyGenerated(pending.id, data.address, data.destination_tag ?? null);
+      await this.addresses.resolve(pending.id);
     }
   }
 
