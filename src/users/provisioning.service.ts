@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional, ServiceUnavailableException } from '@nestjs/common';
+import { AlertType } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -6,6 +7,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { QuidaxClient } from '../quidax/quidax.client';
 import { QuidaxError } from '../quidax/quidax.errors';
 import { JOBS, QUEUES, jobId } from '../common/queues';
+import { JobLeaseService } from '../common/job-lease.service';
+import { OpsAlertsService } from '../common/ops-alerts/ops-alerts.service';
 
 /**
  * Creates the Quidax sub-account behind a user.
@@ -29,7 +32,12 @@ export class ProvisioningService {
     private readonly quidax: QuidaxClient,
     private readonly config: ConfigService,
     @InjectQueue(QUEUES.PROVISIONING) private readonly queue: Queue,
+    @Optional() private readonly leases?: JobLeaseService,
+    @Optional() private readonly alerts?: OpsAlertsService,
   ) {}
+
+  /** How long to wait between looks while another server creates the account. */
+  private waitMs = 500;
 
   /** Queue provisioning. Safe to call repeatedly — the job is idempotent. */
   async enqueue(userId: string): Promise<void> {
@@ -52,7 +60,29 @@ export class ProvisioningService {
    * retry after a timeout cannot create a second sub-account for the user —
    * which would be permanent and unfixable.
    */
+  /**
+   * A3: one creation per customer at a time, across every server. Quidax
+   * sub-accounts can never be deleted, so the sign-up job and the on-demand
+   * path ("Receive" before the job ran) must never both create one. The loser
+   * waits for the winner's account instead.
+   */
   async provision(userId: string): Promise<{ quidaxUserId: string; created: boolean }> {
+    const existing = await this.prisma.quidaxAccount.findUnique({ where: { userId } });
+    if (existing) return { quidaxUserId: existing.quidaxUserId, created: false };
+    if (!this.leases) return this.create(userId);
+
+    const run = await this.leases.run(`provision-${userId}`, 60_000, () => this.create(userId));
+    if (run.ran) return run.result;
+
+    for (let i = 0; i < 20; i++) {
+      await new Promise((resolve) => setTimeout(resolve, this.waitMs));
+      const made = await this.prisma.quidaxAccount.findUnique({ where: { userId } });
+      if (made) return { quidaxUserId: made.quidaxUserId, created: false };
+    }
+    throw new ServiceUnavailableException('Your wallet is still being set up. Try again in a moment.');
+  }
+
+  private async create(userId: string): Promise<{ quidaxUserId: string; created: boolean }> {
     const existing = await this.prisma.quidaxAccount.findUnique({ where: { userId } });
     if (existing) return { quidaxUserId: existing.quidaxUserId, created: false };
 
@@ -82,8 +112,18 @@ export class ProvisioningService {
       // we lost the response. Recover by looking it up rather than creating a
       // second account — an orphaned sub-account can never be deleted.
       if (err instanceof QuidaxError && /exist|taken|unique/i.test(err.message)) {
-        this.log.warn(`Alias ${aliasEmail} already exists upstream; reconciling`);
-        throw err; // TODO: Quidax has no "find by email" — needs manual recovery
+        // A3: the account exists at Quidax but we never recorded it (an earlier
+        // answer was lost). Our Quidax client cannot look it up by email, so an
+        // owner links it by hand; until then this customer has no wallet.
+        this.log.error(`Alias ${aliasEmail} already exists at Quidax but is not recorded for ${user.id}`);
+        await this.alerts
+          ?.raise(AlertType.RECONCILIATION_DRIFT, `quidax-account:${user.id}`, 'A Quidax sub-account already exists but is not recorded', [
+            `Customer: ${user.id}`,
+            `Alias email at Quidax: ${aliasEmail}`,
+            'Find this sub-account in the Quidax dashboard and record its id for the customer (quidax_accounts).',
+          ])
+          .catch(() => undefined);
+        throw err;
       }
       throw err;
     }
