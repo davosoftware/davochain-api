@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Start the API in end-to-end TEST mode: every outside provider mocked, Basic
- * verification switched on, and a sign-up limit high enough for the e2e suite
+ * and Advanced verification switched on, and a sign-up limit high enough for the e2e suite
  * (one run registers ~50 users; the real limit is 5 per hour per IP).
  *
  *   npm run start:e2e              (port 3000, the default the tests use)
@@ -26,6 +26,8 @@ const testSettings = {
   PORT: port,
   DOJAH_USE_MOCK: 'true',
   KYC_BASIC_ENABLED: 'true',
+  // Advanced checks (spec 2026-10-21) on the Dojah mock.
+  KYC_ADVANCED_ENABLED: 'true',
   QUIDAX_USE_MOCK: 'true',
   FLW_USE_MOCK: 'true',
   // Files go to the in-memory store, never the real R2 bucket.

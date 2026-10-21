@@ -82,3 +82,14 @@ Expected result: `Test Suites: 6 passed` and `Tests: 89 passed`. In PowerShell a
 | `-t "…"` still fails in setup | `-t` picks which tests run, but each file's setup (registering a user) still runs, so it needs the test-mode server too |
 | `Admin login failed` | check `E2E_ADMIN_EMAIL` / `E2E_ADMIN_PASSWORD`, or re-run `create-admin` (it resets the password) |
 | A maintenance test fails half-way | it restores the setting in a `finally` block. If the server was killed mid-test, switch it off in the dashboard (System → Site settings). |
+
+## When your own dev server is running (Advanced checks, 21 Oct 2026)
+
+Advanced KYC checks run on a background queue in Redis. If your dev server (`npm run start:dev`, port 3000) is running from the same folder, it shares that queue and can pick up the test server's jobs, but it can't see the test server's in-memory files, so checks sit in "CHECKING" for a while. Give the test server its own Redis:
+
+```bash
+docker run -d --name davochain-e2e-redis -p 6380:6379 redis:7-alpine
+REDIS_PORT=6380 npm run start:e2e -- 3001
+API_URL=http://localhost:3001 E2E_ADMIN_EMAIL=… E2E_ADMIN_PASSWORD=… npm run test:e2e
+docker rm -f davochain-e2e-redis
+```
