@@ -2074,41 +2074,34 @@ enum VirtualAccountStatus {
   INACTIVE
 }
 
-/// One permanent Flutterwave account number. A user normally has exactly one
-/// (isPrimary). A timed-out creation can leave another, DISCOVERED when money
-/// first lands in it; it still routes to the same user through the shared txRef.
+/// One permanent Payrep deposit account (pooled into our main account). A user
+/// normally has exactly one (isPrimary). Money into a number we don't know is
+/// held as UNMATCHED for ops to link.
 model VirtualAccount {
   id             String               @id @default(uuid())
   userId         String
-  provider       PaymentProvider      @default(FLUTTERWAVE)
-  /// Flutterwave's id for the account. Null when DISCOVERED from a deposit.
-  orderRef       String?              @unique
-  /// Not unique: Flutterwave's test mode gives every account the same mock number.
-  accountNumber  String
+  provider       PaymentProvider      @default(PAYREP)
+  /// Payrep's customer id for the account (shinobi_customer_id). Null when it didn't say.
+  providerRef    String?              @unique
+  /// A real, permanent Payrep account number: one per account.
+  accountNumber  String               @unique
   accountName    String
   bankName       String
-  /// dcva_<userId without dashes> — the same on every account this user has.
-  txRef          String
-  flwRef         String?
   /// "BVN" | "NIN": which kind of number opened it. Never the number itself.
   identityType   String?
   isPrimary      Boolean              @default(false)
   /// "CREATED" | "DISCOVERED"
   source         String
+  /// Ours to enforce: Payrep has no API to switch an account off, so deposits into an INACTIVE one are held.
   desiredStatus  VirtualAccountStatus @default(ACTIVE)
-  /// account_status as Flutterwave last reported it ("active" | "inactive").
+  /// The account's status as Payrep last reported it (e.g. "active").
   providerStatus String?
-  lastSyncedAt   DateTime?
-  syncError      String?
-  syncFailures   Int                  @default(0)
   createdAt      DateTime             @default(now())
   updatedAt      DateTime             @updatedAt
 
   user User @relation(fields: [userId], references: [id])
 
   @@index([userId])
-  @@index([accountNumber])
-  @@index([txRef])
   @@map("virtual_accounts")
 }
 
@@ -2141,54 +2134,51 @@ enum CollectionOutcome {
   NOT_FOUND
 }
 
-/// Our copy of one Flutterwave payment, and what we did about it.
-model FlutterwaveCollection {
-  id                   String             @id @default(uuid())
-  flwTransactionId     String             @unique
-  txRef                String?
+/// One naira payment into one of our deposit accounts, as the rail reported it (spec 2026-10-20 §6).
+/// Credited at most once: transactionId is unique, and so is the transaction's reference.
+model NairaCollection {
+  id                    String             @id @default(uuid())
+  provider              PaymentProvider    @default(PAYREP)
+  /// Payrep's transaction_id.
+  providerTransactionId String             @unique
+  /// Payrep's reference_number.
+  referenceNumber       String?
   /// The bank session id.
-  flwRef               String?
-  virtualAccountNumber String?
-  amount               Decimal?           @db.Decimal(38, 18)
-  chargedAmount        Decimal?           @db.Decimal(38, 18)
-  appFee               Decimal?           @db.Decimal(38, 18)
-  merchantFee          Decimal?           @db.Decimal(38, 18)
-  amountSettled        Decimal?           @db.Decimal(38, 18)
-  currency             String?
-  paymentType          String?
-  /// successful | failed | pending | … as Flutterwave last said.
-  providerStatus       String?
-  payerName            String?
-  payerBankName        String?
-  payerBankCode        String?
-  payerAccountMasked   String?
-  providerCreatedAt    DateTime?
-  outcome              CollectionOutcome
-  previousOutcome      CollectionOutcome?
-  userId               String?
-  transactionId        String?            @unique
-  /// "WEBHOOK" | "SWEEP" | "SETTLEMENT"
-  firstSource          String
-  firstSeenAt          DateTime           @default(now())
-  lastCheckedAt        DateTime?
-  checkCount           Int                @default(0)
+  sessionId             String?
+  /// Our account that was paid.
+  accountNumber         String?
+  amount                Decimal?           @db.Decimal(38, 18)
+  /// What Payrep kept (charges).
+  fee                   Decimal?           @db.Decimal(38, 18)
+  /// amount − fee: what reached our main account.
+  amountSettled         Decimal?           @db.Decimal(38, 18)
+  channel               String?
+  /// success | pending | failed | reversed … as Payrep last said.
+  providerStatus        String?
+  payerName             String?
+  payerBankName         String?
+  payerAccountMasked    String?
+  providerCreatedAt     DateTime?
+  outcome               CollectionOutcome
+  previousOutcome       CollectionOutcome?
+  userId                String?
+  transactionId         String?            @unique
+  /// "WEBHOOK" | "SWEEP"
+  firstSource           String
+  firstSeenAt           DateTime           @default(now())
+  lastCheckedAt         DateTime?
+  checkCount            Int                @default(0)
   /// The webhook's own fields, unverified, kept for support only.
-  webhookHint          Json?
-  settlementId         String?
-  settlementStatus     String?
-  settlementAmount     Decimal?           @db.Decimal(38, 18)
-  settledAt            DateTime?
-  assignedBy           String?
-  assignReason         String?
-  createdAt            DateTime           @default(now())
-  updatedAt            DateTime           @updatedAt
+  webhookHint           Json?
+  assignedBy            String?
+  assignReason          String?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
 
-  @@index([outcome, providerCreatedAt])
   @@index([outcome, lastCheckedAt])
   @@index([userId])
-  @@index([txRef])
-  @@index([settlementId])
-  @@map("flutterwave_collections")
+  @@index([accountNumber])
+  @@map("naira_collections")
 }
 
 /// A lease that lets exactly one API replica run a scheduled job at a time.

@@ -49,12 +49,12 @@ const MODELS = {
     }),
   },
   virtualAccount: {
-    unique: [['id'], ['orderRef']],
+    unique: [['id'], ['providerRef'], ['accountNumber']],
     autoId: true,
     decimals: [],
     defaults: () => ({
-      provider: 'FLUTTERWAVE', orderRef: null, flwRef: null, identityType: null, isPrimary: false,
-      desiredStatus: 'ACTIVE', providerStatus: null, lastSyncedAt: null, syncError: null, syncFailures: 0,
+      provider: 'PAYREP', providerRef: null, identityType: null, isPrimary: false,
+      desiredStatus: 'ACTIVE', providerStatus: null,
     }),
   },
   virtualAccountRequest: {
@@ -63,17 +63,16 @@ const MODELS = {
     decimals: [],
     defaults: () => ({ stateSince: new Date(), windowStartedAt: null, attemptsInWindow: 0, lastError: null }),
   },
-  flutterwaveCollection: {
-    unique: [['id'], ['flwTransactionId'], ['transactionId']],
+  nairaCollection: {
+    unique: [['id'], ['providerTransactionId'], ['transactionId']],
     autoId: true,
-    decimals: ['amount', 'chargedAmount', 'appFee', 'merchantFee', 'amountSettled', 'settlementAmount'],
+    decimals: ['amount', 'fee', 'amountSettled'],
     defaults: () => ({
-      txRef: null, flwRef: null, virtualAccountNumber: null, amount: null, chargedAmount: null, appFee: null,
-      merchantFee: null, amountSettled: null, currency: null, paymentType: null, providerStatus: null,
-      payerName: null, payerBankName: null, payerBankCode: null, payerAccountMasked: null,
-      providerCreatedAt: null, outcome: 'UNVERIFIED', previousOutcome: null, userId: null, transactionId: null,
-      firstSeenAt: new Date(), lastCheckedAt: null, checkCount: 0, webhookHint: null, settlementId: null,
-      settlementStatus: null, settlementAmount: null, settledAt: null, assignedBy: null, assignReason: null,
+      provider: 'PAYREP', referenceNumber: null, sessionId: null, accountNumber: null, amount: null, fee: null,
+      amountSettled: null, channel: null, providerStatus: null, payerName: null, payerBankName: null,
+      payerAccountMasked: null, providerCreatedAt: null, outcome: 'UNVERIFIED', previousOutcome: null, userId: null,
+      transactionId: null, firstSeenAt: new Date(), lastCheckedAt: null, checkCount: 0, webhookHint: null,
+      assignedBy: null, assignReason: null,
     }),
   },
   transaction: {
@@ -472,7 +471,7 @@ export class FakePrisma {
   readonly kycProfile = new FakeModel(this, 'kycProfile');
   readonly virtualAccount = new FakeModel(this, 'virtualAccount');
   readonly virtualAccountRequest = new FakeModel(this, 'virtualAccountRequest');
-  readonly flutterwaveCollection = new FakeModel(this, 'flutterwaveCollection');
+  readonly nairaCollection = new FakeModel(this, 'nairaCollection');
   readonly transaction = new FakeModel(this, 'transaction');
   readonly webhookEvent = new FakeModel(this, 'webhookEvent');
   readonly alert = new FakeModel(this, 'alert');
