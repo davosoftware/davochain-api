@@ -8,7 +8,7 @@ import { AML_BACKOFF_MS, LEASE_MS } from '../dojah/dojah.config';
 import type { NormalisedIdentity } from '../dojah/dojah.types';
 import { OpsAlertsService } from '../common/ops-alerts/ops-alerts.service';
 import { SYSTEM_ACTOR_ID } from '../common/system-actor';
-import { redactIds } from '../flutterwave/flutterwave.errors';
+import { redactIds } from '../common/redact';
 import { AML_STATUS_TRANSITIONS } from './aml-transitions';
 
 export type Tx = PrismaService | Prisma.TransactionClient;

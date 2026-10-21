@@ -1,4 +1,4 @@
-import { redactIds } from '../flutterwave/flutterwave.errors';
+import { redactIds } from '../common/redact';
 
 /**
  * Why a Dojah call failed, in the terms the rest of the code acts on.

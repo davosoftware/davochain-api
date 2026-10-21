@@ -4,7 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { AlertType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { MailService } from '../mail.service';
-import { redactIds } from '../../flutterwave/flutterwave.errors';
+import { redactIds } from '../redact';
 
 const HOUR = 3_600_000;
 

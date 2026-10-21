@@ -41,6 +41,27 @@ export const CREDENTIALS = [
     hint: 'Must equal Settings → Webhooks → Secret hash in the Flutterwave dashboard. A wrong value means every webhook is rejected.',
   },
   {
+    group: 'Payrep',
+    name: 'payrep.clientId',
+    label: 'Client ID',
+    env: 'PAYREP_CLIENT_ID',
+    hint: 'From the Payrep portal → API Keys. Test IDs start pk_test_ and are refused in production; live IDs (pk_live_) are refused everywhere else.',
+  },
+  {
+    group: 'Payrep',
+    name: 'payrep.clientSecret',
+    label: 'Client secret',
+    env: 'PAYREP_CLIENT_SECRET',
+    hint: 'Pairs with the client ID (sk_test_ / sk_live_). Authorises every payout, Treasury move and deposit-account request.',
+  },
+  {
+    group: 'Payrep',
+    name: 'payrep.webhookSecret',
+    label: 'Webhook signing secret',
+    env: 'PAYREP_WEBHOOK_SECRET',
+    hint: 'The 64-character signing secret shown when our webhook URL was registered. A wrong value means every Payrep webhook is refused.',
+  },
+  {
     group: 'Dojah',
     name: 'dojah.appId',
     label: 'App ID',

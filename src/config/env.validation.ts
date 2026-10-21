@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { z } from 'zod';
 import { keyModeProblem } from '../flutterwave/key-mode';
+import { payrepKeyModeProblem } from '../payrep/key-mode';
 import { rateLimitEnvProblems } from '../rate-limit/policies';
 import { isProxyAddress } from '../rate-limit/trust-proxy';
 
@@ -29,6 +30,9 @@ const num = (def: number) =>
     .optional()
     .transform((v) => (v === undefined || v === '' ? def : Number(v)))
     .pipe(z.number());
+
+/** An empty value in .env (a placeholder waiting to be filled) counts as unset. */
+const emptyToUndefined = (v: unknown) => (typeof v === 'string' && v.trim() === '' ? undefined : v);
 
 const csv = z
   .string()
@@ -194,6 +198,13 @@ export const envSchema = z
     FLW_SECRET_KEY: z.string().optional(),
     FLW_SECRET_HASH: z.string().optional(),
     FLW_RATE_LIMIT_PER_MINUTE: int(120),
+    // ── Payrep MFB (the naira rail, spec 2026-10-20 §8). An empty value counts as unset. ──
+    PAYREP_USE_MOCK: bool(true),
+    PAYREP_BASE_URL: z.preprocess(emptyToUndefined, z.string().url().default('https://shogun-dev.payrepmfb.com')),
+    PAYREP_CLIENT_ID: z.preprocess(emptyToUndefined, z.string().optional()),
+    PAYREP_CLIENT_SECRET: z.preprocess(emptyToUndefined, z.string().optional()),
+    PAYREP_MAIN_ACCOUNT: z.preprocess(emptyToUndefined, z.string().regex(/^\d{10}$/, 'PAYREP_MAIN_ACCOUNT is a 10-digit account number').optional()),
+    PAYREP_WEBHOOK_SECRET: z.preprocess(emptyToUndefined, z.string().regex(/^[0-9a-f]{64}$/i, 'PAYREP_WEBHOOK_SECRET is 64 hexadecimal characters').optional()),
     NGN_DEPOSITS_ENABLED: bool(false),
     /** HMAC key for BVN/NIN hashes. Rotating it means users re-enter their number. */
     KYC_HASH_KEY: z.string().optional(),
@@ -354,6 +365,28 @@ export const envSchema = z
         path: ['FLW_BASE_URL'],
         message: 'FLW_BASE_URL must use https in staging and production',
       });
+    }
+    // ── Payrep (spec 2026-10-20 §8) ──
+    // The mock accepts any deposit; it must never run where real people are.
+    if (env.PAYREP_USE_MOCK && !['development', 'test'].includes(env.NODE_ENV)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['PAYREP_USE_MOCK'], message: 'PAYREP_USE_MOCK=true is only allowed in development and test' });
+    }
+    if (!env.PAYREP_USE_MOCK) {
+      if (!env.PAYREP_MAIN_ACCOUNT) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['PAYREP_MAIN_ACCOUNT'], message: 'PAYREP_MAIN_ACCOUNT is required when the Payrep mock is off' });
+      }
+      if (!env.PAYREP_WEBHOOK_SECRET) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['PAYREP_WEBHOOK_SECRET'], message: 'PAYREP_WEBHOOK_SECRET is required when the Payrep mock is off' });
+      }
+      // Live keys only in production; test keys everywhere else.
+      if (env.PAYREP_CLIENT_ID && env.PAYREP_CLIENT_SECRET) {
+        const problem = payrepKeyModeProblem(env.PAYREP_CLIENT_ID, env.PAYREP_CLIENT_SECRET, env.NODE_ENV);
+        if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['PAYREP_CLIENT_SECRET'], message: problem });
+      }
+    }
+    // The bearer token and client secret travel in every request.
+    if ((env.NODE_ENV === 'staging' || env.NODE_ENV === 'production') && !env.PAYREP_BASE_URL.startsWith('https://')) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['PAYREP_BASE_URL'], message: 'PAYREP_BASE_URL must use https in staging and production' });
     }
     // ── Dojah ──
     if (env.DOJAH_USE_MOCK && !['development', 'test'].includes(env.NODE_ENV)) {

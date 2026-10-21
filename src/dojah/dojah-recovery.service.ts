@@ -6,7 +6,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { OpsAlertsService } from '../common/ops-alerts/ops-alerts.service';
 import { BasicVerificationService } from '../kyc/basic-verification.service';
 import { AmlService } from '../compliance/aml.service';
-import { redactIds } from '../flutterwave/flutterwave.errors';
+import { redactIds } from '../common/redact';
 import { AdvancedRunner } from '../kyc/advanced/advanced-runner.service';
 
 export interface UnknownCall {
