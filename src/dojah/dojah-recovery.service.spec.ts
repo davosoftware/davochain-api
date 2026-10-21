@@ -35,6 +35,7 @@ describe('DojahRecoveryService', () => {
     const prisma = {
       kycVerification: { findMany: jest.fn(async () => [{ id: 'v1', userId: 'u1', lookupStartedAt: new Date('2026-10-14T10:00:00Z'), lookupOutcome: 'UNKNOWN', possiblyCharged: true, idHash: 'h1:secret', idLast4: '2222' }]) },
       amlScreening: { findMany: jest.fn(async () => [{ id: 's1', userId: 'u1', screenStartedAt: new Date('2026-10-14T10:01:00Z'), callOutcome: 'SUCCEEDED', possibleDuplicateCharge: true, entityId: 'e1', inputs: { names: 'John' } }]) },
+      advancedVerification: { findMany: jest.fn(async () => []) },
     };
     const svc = new DojahRecoveryService(lease as never, {} as never, {} as never, prisma as never, { raise: jest.fn() } as never);
     const rows = await svc.unknownCalls();
@@ -47,8 +48,33 @@ describe('DojahRecoveryService', () => {
 
   it('the weekly digest alerts only when there is something to reconcile', async () => {
     const alerts = { raise: jest.fn(async () => true) };
-    const empty = { kycVerification: { findMany: async () => [] }, amlScreening: { findMany: async () => [] } };
+    const empty = { kycVerification: { findMany: async () => [] }, amlScreening: { findMany: async () => [] }, advancedVerification: { findMany: async () => [] } };
     await new DojahRecoveryService(lease as never, {} as never, {} as never, empty as never, alerts as never).weeklyDigest();
     expect(alerts.raise).not.toHaveBeenCalled();
+  });
+});
+
+describe('DojahRecoveryService and Advanced (spec 2026-10-21 §6)', () => {
+  it('runs the Advanced sweep inside the lease and reports it', async () => {
+    const advanced = { sweep: jest.fn(async () => ({ requeued: 2, timedOut: 1 })) };
+    const aml = { markStaleInFlight: async () => 0, dueRetries: async () => [], send: jest.fn() };
+    const svc = new DojahRecoveryService(lease as never, { failStaleLookups: async () => 0 } as never, aml as never, {} as never, { raise: jest.fn() } as never, advanced as never);
+    expect(await svc.tick()).toEqual({ lookupsFailed: 0, screensUnknown: 0, retried: 0, advanced: { requeued: 2, timedOut: 1 } });
+  });
+
+  it('lists Advanced calls in doubt for billing reconciliation', async () => {
+    const prisma = {
+      kycVerification: { findMany: jest.fn(async () => []) },
+      amlScreening: { findMany: jest.fn(async () => []) },
+      advancedVerification: {
+        findMany: jest.fn(async () => [
+          { id: 'a1', userId: 'u1', updatedAt: new Date('2026-10-21T10:00:00Z'), readOutcome: 'SUCCEEDED', livenessOutcome: 'UNKNOWN', matchOutcome: null, addressOutcome: null, readSends: 2, livenessSends: 1, matchSends: 0, addressSends: 0, possiblyCharged: true },
+        ]),
+      },
+    };
+    const svc = new DojahRecoveryService(lease as never, {} as never, {} as never, prisma as never, { raise: jest.fn() } as never, {} as never);
+    expect(await svc.unknownCalls()).toEqual([
+      { kind: 'ADVANCED', id: 'a1', userId: 'u1', at: '2026-10-21T10:00:00.000Z', outcome: 'liveness:UNKNOWN', possiblyCharged: true, possibleDuplicateCharge: true, entityId: null },
+    ]);
   });
 });

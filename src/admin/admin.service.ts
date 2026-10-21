@@ -362,6 +362,9 @@ export class AdminService {
     // Final review I4: a Basic verification in progress is decided only through its own flow.
     const active = await this.prisma.kycVerification.findFirst({ where: { activeFor: userId }, select: { id: true } });
     if (active) throw new ConflictException('This person is in Basic verification. Decide it from the Basic review or Compliance review.');
+    // Spec 2026-10-21 §8: an open Advanced attempt is decided only on its own page.
+    const advancedOpen = await this.prisma.advancedVerification.findFirst({ where: { activeFor: userId }, select: { id: true } });
+    if (advancedOpen) throw new ConflictException('This person has an Advanced check open. Decide it on the Advanced page.');
     const profile = await this.prisma.kycProfile.findUniqueOrThrow({ where: { userId } });
 
     const [updated] = await this.prisma.$transaction([

@@ -128,3 +128,20 @@ describe('final review I4: the old review route cannot touch a Basic verificatio
     expect(prisma.kycProfile.findUniqueOrThrow).not.toHaveBeenCalled();
   });
 });
+
+describe('Advanced (spec 2026-10-21 §8): the old review route steps aside while an Advanced check is open', () => {
+  it('refuses with 409 and points to the Advanced page', async () => {
+    const prisma = {
+      kycVerification: { findFirst: jest.fn(async () => null) },
+      advancedVerification: { findFirst: jest.fn(async () => ({ id: 'x' })) },
+      kycProfile: { findUniqueOrThrow: jest.fn(async () => ({ id: 'p', tier: 'TIER_1' })) },
+    };
+    const svc = Object.create(AdminService.prototype) as AdminService;
+    (svc as unknown as { prisma: unknown }).prisma = prisma;
+    await expect(svc.reviewKyc('a1', 'u1', { approve: true, tier: 'TIER_2' as never })).rejects.toMatchObject({
+      status: 409,
+      message: 'This person has an Advanced check open. Decide it on the Advanced page.',
+    });
+    expect(prisma.kycProfile.findUniqueOrThrow).not.toHaveBeenCalled();
+  });
+});

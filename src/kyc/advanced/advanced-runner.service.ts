@@ -246,6 +246,35 @@ export class AdvancedRunner {
     }
   }
 
+  /**
+   * Spec §6: queue again any CHECKING row nobody has touched for 2 minutes (a
+   * lost job, a Redis restart); end any still CHECKING after an hour. Ending is
+   * FAILED_SYSTEM, which never counts against the customer.
+   */
+  async sweep(now = new Date()): Promise<{ requeued: number; timedOut: number }> {
+    const quiet = new Date(now.getTime() - 2 * 60_000);
+    const old = new Date(now.getTime() - 60 * 60_000);
+    let timedOut = 0;
+    for (const v of await this.prisma.advancedVerification.findMany({ where: { state: 'CHECKING', createdAt: { lt: old } }, take: 100 })) {
+      const unsure = [v.readOutcome, v.livenessOutcome, v.matchOutcome, v.addressOutcome].some((o) => o === 'IN_FLIGHT' || o === 'UNKNOWN');
+      await this.failSystem(v.id, 'TIMED_OUT', unsure);
+      timedOut++;
+    }
+    let requeued = 0;
+    // A fresh job id every 10 minutes: BullMQ ignores an id it already holds, even a finished one.
+    const bucket = `r${Math.floor(now.getTime() / 600_000)}`;
+    const quietRows = await this.prisma.advancedVerification.findMany({
+      where: { state: 'CHECKING', updatedAt: { lt: quiet }, createdAt: { gte: old } },
+      take: 100,
+      select: { id: true },
+    });
+    for (const v of quietRows) {
+      await this.submitter.enqueue(v.id, bucket).catch((e) => this.log.warn(`requeue ${v.id}: ${(e as Error).message}`));
+      requeued++;
+    }
+    return { requeued, timedOut };
+  }
+
   /** Our side or Dojah's failed: frees the slot and never counts against the customer. */
   async failSystem(id: string, reason: string, possiblyCharged: boolean): Promise<void> {
     await this.prisma.advancedVerification.updateMany({
