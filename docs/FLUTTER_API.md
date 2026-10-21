@@ -20,6 +20,15 @@
    - **Integration notes:** UX rules and gotchas
 3. Use **Part 2, Appendices** for push notifications, enum values, ready-made Dart code, testing on the local backend, and known limitations.
 
+## What changed for the app (21 October 2026): Advanced verification
+
+| Change | Where | What the app must do |
+| --- | --- | --- |
+| **Two new upload types:** `NATIONAL_ID` (front of the card) and `ID_BACK` (back of a national ID or driver's licence) | 4.3 | Use them for Advanced. `VOTERS_CARD` is still accepted as an upload but **not** for Advanced. |
+| **Advanced step A: ID + selfie** | 4.6 | Upload the ID and a camera selfie, then `POST /v1/kyc/advanced/identity`. Answer is `202` "CHECKING"; poll `GET /v1/kyc`. |
+| **Advanced step B: proof of address** | 4.6 | Upload ONE document of the customer's choice, then `POST /v1/kyc/advanced/address`. A tenancy agreement is **optional**: any one of the four kinds is enough. |
+| **`GET /v1/kyc` has an `advanced` block, and `level` names all four levels** | 4.1 | `level` is now `NONE`, `BASIC`, `ADVANCED_IN_PROGRESS` or `ADVANCED` (before, Advanced customers read `BASIC`). Show `advanced.identity.reason` / `advanced.address.reason` as they are: they are written for customers. |
+
 ## What changed for the app (19 October 2026): naira payouts through the naira rail
 
 | Change | Where | What the app must do |
@@ -85,7 +94,7 @@ Admins now decide, on one screen, what people at each level may do: **None** (no
 | 1 | [Health](#1-health) | 1.1 Server health |
 | 2 | [Authentication](#2-authentication) | 2.1 Register · 2.2 Log in · 2.3 Refresh token · 2.4 Log out · 2.5 Change password · 2.6 Request reset code · 2.7 Reset password · 2.8 Who am I (token) |
 | 3 | [Profile & wallets](#3-profile--wallets) | 3.1 Get profile · 3.2 Get wallet balances |
-| 4 | [KYC](#4-kyc-identity-verification) | 4.1 Get KYC status · 4.2 Basic verification · 4.3 Attach document (not ready) · 4.4 States and LGAs · 4.5 Basic screen flow |
+| 4 | [KYC](#4-kyc-identity-verification) | 4.1 Get KYC status · 4.2 Basic verification · 4.3 Upload a document · 4.4 States and LGAs · 4.5 Basic screen flow · 4.6 Advanced verification |
 | 5 | [Assets](#5-assets--networks) | 5.1 List coins · 5.2 List a coin's networks |
 | 6 | [Deposits](#6-deposits) | 6.1 Get deposit address · 6.2 List my addresses · 6.3 Deposit history · 6.4 Naira account · 6.5 Open naira account |
 | 7 | [Trading](#7-trading-buy-sell-swap) | 7.1 Get a quote · 7.2 Execute a quote · 7.3 Trade history · 7.4 Get one transaction |
@@ -843,6 +852,11 @@ Authorization: Bearer eyJhbGciOi…
   "underReview": true,
   "attemptsLeftToday": 2,
   "attemptsLeftTotal": 9,
+  "advanced": {
+    "identity": { "state": "NONE", "reason": null, "attemptsLeft": { "today": 3, "total": 10 } },
+    "address":  { "state": "NONE", "reason": null, "attemptsLeft": { "today": 3, "total": 10 } },
+    "recencyMonths": 3
+  },
   "limits": {
     "current": {
       "deposit":  { "singleNgn": "0.00", "dailyNgn": "0.00", "usedTodayNgn": "0.00", "remainingTodayNgn": "0.00" },
@@ -864,10 +878,12 @@ Authorization: Bearer eyJhbGciOi…
 | `submittedAt` | string \| null | Last submission |
 | `bvnLast4` | string \| null | Last 4 BVN digits (for "BVN ending 5678") |
 | `documents[]` | array | `{ "type": "PASSPORT", "status": "PENDING", "uploadedAt": "…" }`. Empty for now. |
-| `level` | string | `NONE` or `BASIC` |
+| `level` | string | `NONE`, `BASIC`, `ADVANCED_IN_PROGRESS` (ID and selfie done, address not yet) or `ADVANCED` |
 | `basicState` | string \| null | The latest Basic submission: `CREATED`, `LOOKED_UP`, `APPROVED`, `IDENTITY_REVIEW`, `COMPLIANCE_REVIEW`, `REJECTED_NOT_FOUND`, `REJECTED_BY_REVIEW`, `FAILED_SYSTEM`. `null` if never submitted. |
 | `underReview` | boolean | `true` while a person is reviewing. Never says why. |
 | `attemptsLeftToday` / `attemptsLeftTotal` | number | Basic submissions left (3 a day, 10 in all, by default). A "temporarily unavailable" failure doesn't use one. |
+| `advanced.identity` / `advanced.address` | object | Each Advanced step: `state` is `NONE`, `CHECKING`, `IN_REVIEW`, `APPROVED`, `REJECTED` or `FAILED` (our side failed: no attempt used). `reason` is a customer-ready sentence when `IN_REVIEW`, `REJECTED` or `FAILED`, otherwise `null`. `attemptsLeft` counts per step (3 a day, 10 in all, by default). See 4.6. |
+| `advanced.recencyMonths` | number | How recent a proof-of-address document must be (3 by default). Show it on the address screen. |
 | `limits.current.deposit` / `.withdraw` | object | **This user, today** (resets at midnight Lagos time) |
 | `…singleNgn` | string | Max per transaction |
 | `…dailyNgn` | string | Max per day |
@@ -974,7 +990,7 @@ Uploads one ID document. The server checks what the file really is, stores it pr
 
 | Field | Type | Rules |
 | --- | --- | --- |
-| `type` | text | One of `PASSPORT, DRIVERS_LICENSE, VOTERS_CARD, SELFIE, PROOF_OF_ADDRESS` (BVN and NIN are numbers: use 4.2) |
+| `type` | text | One of `NATIONAL_ID, ID_BACK, PASSPORT, DRIVERS_LICENSE, VOTERS_CARD, SELFIE, PROOF_OF_ADDRESS` (BVN and NIN are numbers: use 4.2). For Advanced (4.6) use `NATIONAL_ID`/`PASSPORT`/`DRIVERS_LICENSE` for the front, `ID_BACK` for the back, `SELFIE` for the selfie. |
 | `file` | file | JPEG, PNG or WebP photo, or a PDF. **10 MB at most.** The file name and the type your phone says it is are ignored: the server reads the file itself. |
 
 ```dart
@@ -1052,6 +1068,54 @@ Returns Nigeria's 36 states and the FCT, each with its local government areas, f
 | `66666666666` | Test Sanctioned, 1985-06-06 | `COMPLIANCE_REVIEW`, and every gated call then answers `ACCOUNT_UNDER_REVIEW` |
 
 Against the Dojah **sandbox** instead, `22222222222` belongs to "John Doe Adamu", born 2000-05-01.
+
+---
+
+### 4.6 Advanced verification (ID, selfie, proof of address)
+
+Added 21 Oct 2026. Two steps, each checked automatically by Dojah in the background; anything unclear waits for a person.
+
+| Step | Needs | Gives |
+| --- | --- | --- |
+| **A. ID + selfie** | Basic (`level: BASIC`) | `ADVANCED_IN_PROGRESS` (TIER_2) |
+| **B. Proof of address** | Step A done | `ADVANCED` (TIER_3) |
+
+#### Step A: `POST /v1/kyc/advanced/identity`
+**Auth:** Bearer · **Success:** `202` · **Rate limit:** 10 per hour
+
+1. Upload with 4.3: the front (`NATIONAL_ID`, `PASSPORT` photo page, or `DRIVERS_LICENSE`), the back if it has one (`ID_BACK`; **required** for a national ID, optional for a driver's licence, **not allowed** for a passport), and a `SELFIE` taken with the camera.
+2. Send their ids:
+```json
+{ "idType": "NATIONAL_ID", "frontDocumentId": "…", "backDocumentId": "…", "selfieDocumentId": "…" }
+```
+3. Answer `202`: `{ "verificationId": "…", "state": "CHECKING" }`. Show "Checking your documents" and poll `GET /v1/kyc` every 2–3 seconds until `advanced.identity.state` is not `CHECKING` (usually under 15 seconds).
+4. On `APPROVED` the customer is signed out (their new level lives in the token): sign in again.
+
+#### Step B: `POST /v1/kyc/advanced/address`
+Upload **one** `PROOF_OF_ADDRESS` file, then:
+```json
+{ "kind": "UTILITY_BILL", "documentId": "…" }
+```
+`kind` is `UTILITY_BILL`, `BANK_STATEMENT`, `GOVERNMENT_LETTER` or `TENANCY`. **Let the customer choose; none is compulsory.** The document must show their name and address and be issued in the last `advanced.recencyMonths` months; a tenancy agreement must still be running. Same answer and polling as step A, on `advanced.address`.
+
+#### Photos
+- **Send camera photos as JPEG** (convert iPhone HEIC first), the whole document in frame, no glare.
+- A **PDF** proof of address is accepted but always waits for a person; a photo or screenshot is checked in seconds. A PDF ID or selfie is refused (`400`).
+
+#### Errors
+
+| Status | When | `message` |
+| --- | --- | --- |
+| 400 | A document id is wrong, not this customer's, the wrong type, a PDF where a photo is needed, or already used | e.g. `"frontDocumentId was not found"`, `"selfieDocumentId must be a SELFIE upload"`, `"frontDocumentId must be a photo, not a PDF"` |
+| 403 | Level too low | `"Complete Basic verification first."` / `"Complete your ID and selfie check first."` |
+| 403 | All attempts used | `"You've used all your verification attempts. Contact support."` |
+| 409 | A check is already running or waiting for a person | `"A check is already in progress."` |
+| 409 | Already done | `"Your ID and selfie are already verified."` / `"You are already fully verified."` |
+| 429 | Today's attempts used | `"You've used today's attempts. Try again tomorrow."` |
+| 503 | Switched off, or Dojah unavailable | `"Advanced verification isn't available right now."` / `"Verification is temporarily unavailable. Please try again later."` |
+
+#### Testing on the local backend (mock Dojah)
+Normal photos pass. To see other answers, the test files in `src/dojah/dojah.mock.ts` carry a marker (`id-expired`, `match-borderline`, `live-fail`, `addr-old`, …); the e2e tests in `test/e2e/kyc-advanced.e2e-spec.ts` show how.
 
 ---
 
