@@ -36,6 +36,7 @@ export function classifyHttp(
     // Name the problem, never the IP address itself (spec §6).
     return { ok: false, error: new DojahError('IP', `Dojah ${op}: this server's IP is not whitelisted on the Dojah app (HTTP 403)`, status) };
   }
+  if (status === 424) return { ok: false, error: new DojahError('UNPROCESSABLE', msg('the document could not be processed'), status) };
   if (status === 429) return { ok: false, error: new DojahError('RATE_LIMITED', msg('rate limited'), status) };
   if (status >= 500) return { ok: false, error: new DojahError('SERVER', msg('server error'), status) };
   return { ok: false, error: new DojahError('BAD_REQUEST', msg('the request was refused'), status) };

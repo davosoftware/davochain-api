@@ -15,6 +15,8 @@ export type DojahFailureKind =
   | 'RATE_LIMITED'
   | 'SERVER'
   | 'NOT_SENT'
+  /** Dojah answered 424: it could not process the document. Definitely failed. */
+  | 'UNPROCESSABLE'
   | 'UNKNOWN';
 
 export class DojahError extends Error {

@@ -1,0 +1,15 @@
+{
+  "entity": {
+    "selfie": {
+      "age_range": "25-35",
+      "card_type": "Passport",
+      "confidence_value": 98.79,
+      "match": true,
+      "photoId_glare": false,
+      "photoId_image_blurry": false,
+      "selfie_glare": false,
+      "selfie_image_blurry": false,
+      "sunglasses": false
+    }
+  }
+}

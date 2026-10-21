@@ -1,0 +1,10 @@
+{
+  "entity": {
+    "status": { "overall_status": 0, "reason": "NOT_VALID", "document_type": "Yes", "document_images": "Yes", "text": "Yes", "expiry": "Yes" },
+    "document_type": { "document_name": "Nigeria Passport", "document_country_name": "Nigeria", "document_country_code": "NGA" },
+    "document_images": { "portrait": "AAAA", "document_front_side": "AAAA", "document_back_side": "" },
+    "text_data": [
+      { "field_name": "Date of Birth", "field_key": "dob", "status": 1, "value": "1990-01-01" }
+    ]
+  }
+}

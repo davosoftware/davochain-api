@@ -2,6 +2,41 @@ import { DojahApi, type AmlInput } from './dojah.client';
 import { DojahError } from './dojah.errors';
 import { normaliseIdentity, parseAmlResult } from './normalise';
 import type { AmlResult, LookupResult } from './dojah.types';
+import type { FileStore } from '../storage/file-store';
+import type { AdvancedIdTypeName, BillRead, IdRead, LivenessRead, MatchRead } from '../kyc/advanced/advanced.types';
+
+/**
+ * Advanced test images carry "DOJAH-MOCK:<scenario>" after a real 1-pixel PNG,
+ * so the upload check still sees a PNG and the mock knows what to answer.
+ */
+export const MOCK_MARKER = 'DOJAH-MOCK:';
+const PNG_1PX = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
+export function mockImage(scenario?: string): Buffer {
+  return scenario ? Buffer.concat([PNG_1PX, Buffer.from(MOCK_MARKER + scenario)]) : Buffer.from(PNG_1PX);
+}
+const scenarioOf = (bytes: Buffer): string | null => {
+  const at = bytes.indexOf(MOCK_MARKER);
+  return at < 0 ? null : (bytes.subarray(at + MOCK_MARKER.length).toString().match(/^[a-z0-9-]+/)?.[0] ?? null);
+};
+const fromB64 = (b64: string) => scenarioOf(Buffer.from(b64, 'base64'));
+const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
+const MONTH = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+/** Month names, never dd/mm: an ambiguous date is read the cautious way, which would make a "recent" test date flaky. */
+const spelled = (iso: string) => {
+  const [y, m, d] = iso.split('-').map(Number);
+  return `${d} ${MONTH[m - 1]} ${y}`;
+};
+const FAIL: Record<string, () => DojahError> = {
+  timeout: () => new DojahError('UNKNOWN', 'mock timeout', 0),
+  wallet: () => new DojahError('WALLET', 'mock 402', 402),
+  '424': () => new DojahError('UNPROCESSABLE', 'mock 424', 424),
+  server: () => new DojahError('SERVER', 'mock 500', 500),
+};
+/** "<call>-timeout", "<call>-wallet", "<call>-424" and "<call>-server" fail that call. */
+const failFor = (s: string | null, call: 'id' | 'live' | 'match' | 'addr') => {
+  const m = s?.match(new RegExp(`^${call}-(timeout|wallet|424|server)$`));
+  if (m) throw FAIL[m[1]]();
+};
 
 const rec = (first: string, middle: string, last: string, dob: string | null, gender = 'Male') => ({
   entity: { first_name: first, middle_name: middle, last_name: last, date_of_birth: dob, gender, customer: 'mock-customer' },
@@ -44,7 +79,84 @@ const AML: Record<string, unknown> = {
  * (env validation refuses it elsewhere). Unknown numbers return the clean record.
  */
 export class DojahMockClient extends DojahApi {
-  readonly calls = { lookup: 0, aml: 0, balance: 0 };
+  readonly calls = { lookup: 0, aml: 0, balance: 0, readId: 0, liveness: 0, faceMatch: 0, utilityBill: 0, ocr: 0 };
+
+  /** The file store lets a "memory://" bill link be read back, as Dojah would fetch a real one. */
+  constructor(private readonly files?: FileStore) {
+    super();
+  }
+
+  async readId(i: { idType: AdvancedIdTypeName; front: string; back?: string }) {
+    this.calls.readId++;
+    const s = fromB64(i.front);
+    failFor(s, 'id');
+    const read: IdRead = {
+      valid: s !== 'id-invalid',
+      documentName: { NATIONAL_ID: 'Nigeria National ID Card', PASSPORT: 'Nigeria Passport', DRIVERS_LICENSE: "Nigeria Driver's Licence" }[i.idType],
+      firstName: s === 'id-name' ? 'SOMEBODY' : 'SOMEONE',
+      middleName: null,
+      lastName: 'CLEAN',
+      dateOfBirth: s === 'id-dob' ? '1990-01-01' : '1995-03-03',
+      expiry: s === 'id-expired' ? '2020-01-01' : s === 'id-noexpiry' ? null : '2030-01-01',
+      // A random number by default, so tests never trip the duplicate-ID check by accident.
+      documentNumber: s?.startsWith('id-num-') ? s.slice(7).toUpperCase() : `A${Math.floor(Math.random() * 1e8)}`,
+      unreadable: [],
+    };
+    return { read, portrait: s === 'id-noportrait' ? null : 'bW9jay1wb3J0cmFpdA==', httpStatus: 200 };
+  }
+
+  async liveness(selfie: string) {
+    this.calls.liveness++;
+    const s = fromB64(selfie);
+    failFor(s, 'live');
+    const read: LivenessRead = { live: s !== 'live-fail', probability: s === 'live-low' ? 80 : 98, faceDetected: s !== 'live-noface', multiFace: s === 'live-multi' };
+    return { read, httpStatus: 200 };
+  }
+
+  async faceMatch(selfie: string, _idPhoto: string) {
+    this.calls.faceMatch++;
+    const s = fromB64(selfie);
+    failFor(s, 'match');
+    const read: MatchRead = { confidence: s === 'match-borderline' ? 68 : s === 'match-fail' ? 40 : 92 };
+    return { read, httpStatus: 200 };
+  }
+
+  async utilityBill(url: string) {
+    this.calls.utilityBill++;
+    const key = url.startsWith('memory://') ? decodeURIComponent(url.slice('memory://'.length).split('?')[0]) : null;
+    const stored = key && this.files ? await this.files.get(key) : null;
+    const s = stored ? scenarioOf(stored.bytes) : null;
+    failFor(s, 'addr');
+    const read: BillRead = {
+      ok: true,
+      fullName: s === 'addr-name' ? 'OTHER PERSON' : 'SOMEONE CLEAN',
+      street: '1 E2E Street',
+      city: 'Ikeja',
+      state: 'Lagos',
+      issueDate: s === 'addr-old' ? '2024-01-01' : daysAgo(10),
+      isRecent: s !== 'addr-old',
+      provider: 'Ikeja Electric (mock)',
+    };
+    return { read, httpStatus: 200 };
+  }
+
+  async ocr(image: string) {
+    this.calls.ocr++;
+    const s = fromB64(image);
+    failFor(s, 'addr');
+    const name = s === 'addr-name' ? 'MR OTHER PERSON' : 'SOMEONE CLEAN';
+    const lines =
+      s === 'tenancy-running'
+        ? ['TENANCY AGREEMENT', `Tenant: ${name}`, '1 E2E Street, Ikeja, Lagos', `from 1 January 2025 to ${spelled(daysAgo(-300))}`]
+        : s === 'tenancy-ended'
+          ? ['TENANCY AGREEMENT', `Tenant: ${name}`, '1 E2E Street, Ikeja, Lagos', 'from 1 January 2023 to 31 December 2024']
+          : s === 'ocr-nodate'
+            ? ['STATEMENT', name, '1 E2E Street, Ikeja, Lagos', 'no date printed on this page at all']
+            : s === 'ocr-sparse'
+              ? ['X']
+              : ['ACCOUNT STATEMENT', name, '1 E2E Street, Ikeja, Lagos', `Statement date: ${spelled(s === 'addr-old' ? '2024-01-01' : daysAgo(10))}`];
+    return { lines, httpStatus: 200 };
+  }
 
   async lookup(_idType: 'BVN' | 'NIN', idNumber: string): Promise<LookupResult> {
     this.calls.lookup++;

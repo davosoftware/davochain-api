@@ -71,3 +71,14 @@ describe('classifyTransportError (plan §R1.2)', () => {
     expect(classifyTransportError(Object.assign(new Error('fetch failed'), { cause: e('ECONNREFUSED') })).kind).toBe('NOT_SENT');
   });
 });
+
+describe('classifyHttp for documents (Advanced)', () => {
+  it('reads 424 as a document Dojah could not process (definitely failed)', () => {
+    const v = classifyHttp(424, { error: 'Unable to process' }, 'readId');
+    expect(v.ok).toBe(false);
+    if (!v.ok) {
+      expect(v.error.kind).toBe('UNPROCESSABLE');
+      expect(v.error.definitelyFailed).toBe(true);
+    }
+  });
+});

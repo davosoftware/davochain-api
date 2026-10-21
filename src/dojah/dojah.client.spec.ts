@@ -2,6 +2,7 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import type { AddressInfo } from 'node:net';
 import { DojahClient } from './dojah.client';
 import { DojahError } from './dojah.errors';
+import type { DojahOp } from './dojah.types';
 
 type Handler = (req: IncomingMessage, res: ServerResponse, body: string) => void;
 
@@ -28,7 +29,7 @@ afterAll(() => {
 });
 beforeEach(() => (seen.length = 0));
 
-function client(deadlines = { lookup: 2000, aml: 2000, balance: 2000 }) {
+function client(deadlines: Partial<Record<DojahOp, number>> = { lookup: 2000, aml: 2000, balance: 2000 }) {
   const cfg = { baseUrl: base, credentials: async () => ({ appId: 'app-1', secretKey: 'sk-1' }) };
   const c = new DojahClient(cfg as never, deadlines);
   (c as unknown as { sleep: (ms: number) => Promise<void> }).sleep = async () => undefined;
@@ -124,5 +125,67 @@ describe('DojahClient', () => {
   it('a balance that is not a number is UNKNOWN, not zero', async () => {
     handler = (_q, res) => json(res, 200, { entity: { wallet_balance: 'n/a' } });
     await expect(client().balance()).rejects.toMatchObject({ kind: 'UNKNOWN' });
+  });
+});
+
+describe('DojahClient: the Advanced calls (spec 2026-10-21 §3)', () => {
+  const ok = (body: unknown) => (_q: IncomingMessage, res: ServerResponse) => json(res, 200, body);
+
+  it('readId sends base64 and the Dojah document_type, and keeps the portrait apart', async () => {
+    handler = ok({ entity: { status: { overall_status: 1 }, document_images: { portrait: 'PPP' }, text_data: [] } });
+    const r = await client().readId({ idType: 'DRIVERS_LICENSE', front: 'FRONT', back: 'BACK' });
+    expect(seen[0]).toMatchObject({ method: 'POST', url: '/api/v1/document/analysis' });
+    expect(JSON.parse(seen[0].body)).toEqual({ input_type: 'base64', imagefrontside: 'FRONT', imagebackside: 'BACK', document_type: 'DRIVING_LICENSE' });
+    expect(r).toMatchObject({ portrait: 'PPP', httpStatus: 200, read: { valid: true } });
+  });
+
+  it('readId leaves imagebackside out when there is no back', async () => {
+    handler = ok({ entity: {} });
+    await client().readId({ idType: 'PASSPORT', front: 'F' });
+    expect(JSON.parse(seen[0].body)).toEqual({ input_type: 'base64', imagefrontside: 'F', document_type: 'PASSPORT' });
+  });
+
+  it('liveness sends image', async () => {
+    handler = ok({ entity: { liveness: { liveness_check: true, liveness_probability: 97 }, face: { face_detected: true } } });
+    const r = await client().liveness('SELFIE');
+    expect(seen[0].url).toBe('/api/v1/ml/liveness');
+    expect(JSON.parse(seen[0].body)).toEqual({ image: 'SELFIE' });
+    expect(r.read).toMatchObject({ live: true, probability: 97 });
+  });
+
+  it('faceMatch sends selfie_image and photoid_image', async () => {
+    handler = ok({ entity: { selfie: { confidence_value: 88 } } });
+    const r = await client().faceMatch('S', 'P');
+    expect(seen[0].url).toBe('/api/v1/kyc/photoid/verify');
+    expect(JSON.parse(seen[0].body)).toEqual({ selfie_image: 'S', photoid_image: 'P' });
+    expect(r.read).toEqual({ confidence: 88 });
+  });
+
+  it('utilityBill sends input_type url', async () => {
+    handler = ok({ entity: { result: { status: 'success' } } });
+    await client().utilityBill('https://x.example/f');
+    expect(seen[0].url).toBe('/api/v1/document/analysis/utility_bill');
+    expect(JSON.parse(seen[0].body)).toEqual({ input_type: 'url', input_value: 'https://x.example/f' });
+  });
+
+  it('ocr sends img and returns the lines', async () => {
+    handler = ok({ entity: { data: ['A', 'B'] } });
+    const r = await client().ocr('IMG');
+    expect(seen[0].url).toBe('/api/v1/ml/ocr/generic');
+    expect(JSON.parse(seen[0].body)).toEqual({ img: 'IMG' });
+    expect(r).toEqual({ lines: ['A', 'B'], httpStatus: 200 });
+  });
+
+  it('a paid Advanced call is never retried after a timeout', async () => {
+    handler = () => undefined; // never answers
+    const err = await client({ lookup: 200, aml: 200, balance: 200, readId: 200 }).readId({ idType: 'PASSPORT', front: 'F' }).catch((e) => e);
+    expect(err).toMatchObject({ kind: 'UNKNOWN' });
+    expect(seen).toHaveLength(1);
+  });
+
+  it('a 424 is UNPROCESSABLE, sent once', async () => {
+    handler = (_q, res) => json(res, 424, { error: 'could not process' });
+    await expect(client().ocr('IMG')).rejects.toMatchObject({ kind: 'UNPROCESSABLE', httpStatus: 424 });
+    expect(seen).toHaveLength(1);
   });
 });

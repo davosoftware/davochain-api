@@ -5,7 +5,9 @@ import { DEADLINES, DojahConfig } from './dojah.config';
 import { classifyHttp, classifyTransportError } from './dojah.classify';
 import { DojahError } from './dojah.errors';
 import { normaliseIdentity, parseAmlResult } from './normalise';
+import { parseBill, parseIdAnalysis, parseLiveness, parseMatch, parseOcr } from './advanced-parse';
 import type { AmlResult, DojahOp, LookupResult } from './dojah.types';
+import type { AdvancedIdTypeName, BillRead, IdRead, LivenessRead, MatchRead } from '../kyc/advanced/advanced.types';
 
 export interface AmlInput {
   names: string;
@@ -19,7 +21,17 @@ export abstract class DojahApi {
   abstract lookup(idType: 'BVN' | 'NIN', idNumber: string): Promise<LookupResult>;
   abstract screen(input: AmlInput, reference: string): Promise<AmlResult>;
   abstract balance(): Promise<number>;
+  /** Advanced (spec 2026-10-21 §3). Every image is base64 with no "data:" prefix. */
+  abstract readId(i: { idType: AdvancedIdTypeName; front: string; back?: string }): Promise<{ read: IdRead; portrait: string | null; httpStatus: number }>;
+  abstract liveness(selfie: string): Promise<{ read: LivenessRead; httpStatus: number }>;
+  abstract faceMatch(selfie: string, idPhoto: string): Promise<{ read: MatchRead; httpStatus: number }>;
+  abstract utilityBill(url: string): Promise<{ read: BillRead; httpStatus: number }>;
+  abstract ocr(image: string): Promise<{ lines: string[]; httpStatus: number }>;
 }
+
+const DOJAH_DOCUMENT_TYPE: Record<AdvancedIdTypeName, string> = { NATIONAL_ID: 'NATIONAL_ID', PASSPORT: 'PASSPORT', DRIVERS_LICENSE: 'DRIVING_LICENSE' };
+/** Paid, like lookup: retried only if never sent or on 429 (plan §R1.3). */
+const paidRetry = (e: DojahError) => e.kind === 'NOT_SENT' || e.kind === 'RATE_LIMITED';
 
 const BACKOFF_MS = [250, 1000];
 
@@ -35,7 +47,7 @@ export class DojahClient extends DojahApi {
 
   constructor(
     private readonly cfg: Pick<DojahConfig, 'baseUrl' | 'credentials'>,
-    private readonly deadlines: { lookup: number; aml: number; balance: number } = DEADLINES,
+    private readonly deadlines: Partial<Record<DojahOp, number>> = DEADLINES,
   ) {
     super();
   }
@@ -74,6 +86,39 @@ export class DojahClient extends DojahApi {
     return n;
   }
 
+  async readId(i: { idType: AdvancedIdTypeName; front: string; back?: string }) {
+    const body = { input_type: 'base64', imagefrontside: i.front, ...(i.back ? { imagebackside: i.back } : {}), document_type: DOJAH_DOCUMENT_TYPE[i.idType] };
+    const r = await this.post('readId', '/api/v1/document/analysis', body);
+    return { ...parseIdAnalysis(r.body), httpStatus: r.status };
+  }
+
+  async liveness(selfie: string) {
+    const r = await this.post('liveness', '/api/v1/ml/liveness', { image: selfie });
+    return { read: parseLiveness(r.body), httpStatus: r.status };
+  }
+
+  async faceMatch(selfie: string, idPhoto: string) {
+    const r = await this.post('faceMatch', '/api/v1/kyc/photoid/verify', { selfie_image: selfie, photoid_image: idPhoto });
+    return { read: parseMatch(r.body), httpStatus: r.status };
+  }
+
+  async utilityBill(url: string) {
+    const r = await this.post('utilityBill', '/api/v1/document/analysis/utility_bill', { input_type: 'url', input_value: url });
+    return { read: parseBill(r.body), httpStatus: r.status };
+  }
+
+  async ocr(image: string) {
+    const r = await this.post('ocr', '/api/v1/ml/ocr/generic', { img: image });
+    return { lines: parseOcr(r.body), httpStatus: r.status };
+  }
+
+  /** These bodies hold faces and documents: call() never logs a body. */
+  private async post(op: DojahOp, path: string, body: unknown): Promise<{ body: unknown; status: number }> {
+    const r = await this.call(op, 'POST', path, path, body, paidRetry);
+    if ('notFound' in r) throw new DojahError('BAD_REQUEST', `Dojah ${op} answered 404`, 404);
+    return r;
+  }
+
   protected sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
@@ -87,7 +132,7 @@ export class DojahClient extends DojahApi {
     retryable: (e: DojahError) => boolean,
   ): Promise<{ body: unknown; status: number } | { notFound: true }> {
     const { appId, secretKey } = await this.cfg.credentials();
-    const deadline = this.deadlines[op];
+    const deadline = this.deadlines[op] ?? DEADLINES[op];
     let last: DojahError | null = null;
 
     for (let attempt = 0; attempt <= BACKOFF_MS.length; attempt++) {

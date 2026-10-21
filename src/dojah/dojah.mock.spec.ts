@@ -1,4 +1,5 @@
-import { DojahMockClient } from './dojah.mock';
+import { DojahMockClient, mockImage } from './dojah.mock';
+import { MemoryFileStore } from '../storage/memory-file-store';
 
 const m = () => new DojahMockClient();
 
@@ -59,5 +60,38 @@ describe('DojahMockClient: number families (H8)', () => {
   it('the exact special numbers keep their meaning', async () => {
     await expect(new DojahMockClient().lookup('BVN', '11111111111')).resolves.toMatchObject({ found: false });
     await expect(new DojahMockClient().lookup('BVN', '40200000001')).rejects.toBeDefined();
+  });
+});
+
+describe('Advanced on the mock (markers choose the scenario)', () => {
+  const files = new MemoryFileStore();
+  const mock = new DojahMockClient(files);
+  const b64 = (s?: string) => mockImage(s).toString('base64');
+
+  it('mockImage is still a PNG to the upload check', () => {
+    expect(mockImage('id-expired').subarray(0, 8)).toEqual(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  });
+  it('a plain image reads as the clean test person', async () => {
+    const r = await mock.readId({ idType: 'NATIONAL_ID', front: b64(), back: b64() });
+    expect(r.read).toMatchObject({ valid: true, firstName: 'SOMEONE', lastName: 'CLEAN', dateOfBirth: '1995-03-03' });
+    expect(r.portrait).toBeTruthy();
+  });
+  it('markers choose a scenario', async () => {
+    expect((await mock.readId({ idType: 'PASSPORT', front: b64('id-expired') })).read.expiry).toBe('2020-01-01');
+    await expect(mock.readId({ idType: 'PASSPORT', front: b64('id-424') })).rejects.toMatchObject({ kind: 'UNPROCESSABLE' });
+    await expect(mock.liveness(b64('live-timeout'))).rejects.toMatchObject({ kind: 'UNKNOWN' });
+    expect((await mock.liveness(b64('live-low'))).read.probability).toBe(80);
+    expect((await mock.faceMatch(b64('match-borderline'), 'x')).read.confidence).toBe(68);
+    expect((await mock.readId({ idType: 'PASSPORT', front: b64('id-num-dup12345') })).read.documentNumber).toBe('DUP12345');
+  });
+  it.todo('a utility bill link is read back from the memory store (turned on in Task 6)');
+  it('the text reader writes dates with month names (never ambiguous)', async () => {
+    const r = await mock.ocr(b64());
+    expect(r.lines.join(' ')).toMatch(/Statement date: \d{1,2} [A-Z][a-z]+ \d{4}/);
+  });
+  it('counts calls', async () => {
+    const before = mock.calls.liveness;
+    await mock.liveness(b64());
+    expect(mock.calls.liveness).toBe(before + 1);
   });
 });

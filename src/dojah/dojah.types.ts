@@ -1,4 +1,4 @@
-export type DojahOp = 'lookup' | 'aml' | 'balance';
+export type DojahOp = 'lookup' | 'aml' | 'balance' | 'readId' | 'liveness' | 'faceMatch' | 'utilityBill' | 'ocr';
 
 export interface NormalisedIdentity {
   usable: boolean;

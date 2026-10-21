@@ -72,7 +72,7 @@ export const LEASE_MS = 5 * 60_000;
 /** Retries for an AML screen that DEFINITELY failed: free under plan §R1.1. */
 export const AML_BACKOFF_MS = [2 * 60_000, 10 * 60_000, 20 * 60_000] as const;
 /** Exact per-call deadlines. Worst latency seen in the sandbox was 2.1 s. */
-export const DEADLINES = { lookup: 15_000, aml: 30_000, balance: 8_000 } as const;
+export const DEADLINES = { lookup: 15_000, aml: 30_000, balance: 8_000, readId: 30_000, liveness: 20_000, faceMatch: 20_000, utilityBill: 30_000, ocr: 30_000 } as const;
 
 /**
  * Dojah settings. The mode guards (mock only in development/test, live URL only

@@ -1,0 +1,14 @@
+{
+  "entity": {
+    "face": {
+      "face_detected": true,
+      "message": "face detected",
+      "multiface_detected": false,
+      "details": { "age_range": { "low": 25, "high": 35 }, "smile": { "value": false, "confidence": 92 }, "gender": { "value": "Male", "confidence": 99 }, "eyeglasses": { "value": false }, "sunglasses": { "value": false }, "beard": { "value": false }, "mustache": { "value": false }, "eyes_open": { "value": true }, "mouth_open": { "value": false }, "emotions": [] },
+      "quality": { "brightness": 80, "sharpness": 90 },
+      "confidence": 99.9,
+      "bounding_box": { "width": 0.4, "height": 0.5, "left": 0.3, "top": 0.2 }
+    },
+    "liveness": { "liveness_check": true, "liveness_probability": 98 }
+  }
+}
