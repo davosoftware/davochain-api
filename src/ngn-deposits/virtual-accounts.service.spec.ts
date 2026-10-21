@@ -1,8 +1,7 @@
 import { HttpException, Logger } from '@nestjs/common';
-import { FlutterwaveError, FlutterwaveUnknownError } from '../flutterwave/flutterwave.errors';
-import { FlutterwaveMockClient } from '../flutterwave/flutterwave.mock';
-import type { FlwStaticAccount } from '../flutterwave/flutterwave.types';
 import { KycHashService, legacyHashIdentity } from '../kyc/kyc-hash';
+import { PayrepError } from '../payrep/payrep.errors';
+import { PayrepMock } from '../payrep/payrep.mock';
 import { FakePrisma } from './testing/fake-prisma';
 import { VirtualAccountsService } from './virtual-accounts.service';
 
@@ -10,13 +9,14 @@ const BVN = '22222223883';
 const OTHER = '22222223884';
 const NIN = '12345678901';
 const USER = '7f3c2a1b-9e8d-4c6f-a1b2-c3d4e5f60718';
-const TX_REF = 'dcva_7f3c2a1b9e8d4c6fa1b2c3d4e5f60718';
+const POOL = '7801234567';
 const MINUTE = 60_000;
 
 interface Options {
   user?: Record<string, unknown>;
   profile?: Record<string, unknown>;
   readiness?: { depositsEnabled?: boolean; canCreateAccounts?: boolean };
+  mainAccount?: string | null;
 }
 
 async function setup(o: Options = {}) {
@@ -24,18 +24,17 @@ async function setup(o: Options = {}) {
   const hasher = new KycHashService({ get: () => 'k'.repeat(32) } as never);
   await db.user.create({
     data: {
-      id: USER, email: 'ada@example.com', firstName: 'Ada', lastName: 'Obi',
+      id: USER, email: 'ada@example.com', firstName: 'Ada', lastName: 'Obi', phone: '+2348012345678',
       status: 'ACTIVE', kycTier: 'TIER_1', kycStatus: 'APPROVED', amlStatus: 'CLEAR', ...o.user,
     },
   });
   await db.kycProfile.create({ data: { userId: USER, bvnHash: hasher.hash(BVN), bvnLast4: '3883', ...o.profile } });
-  const client = new FlutterwaveMockClient({
-    rateLimitPerMinute: 100_000, port: 1, secretKey: async () => 'FLWSECK_TEST-x-X', secretHash: async () => 'h',
-  } as never);
+  const payrep = new PayrepMock({ port: 1 });
+  const cfg = { mainAccount: o.mainAccount === undefined ? POOL : o.mainAccount };
   const readiness = { report: jest.fn(async () => ({ depositsEnabled: true, canCreateAccounts: true, ...o.readiness })) };
   const alerts = { raise: jest.fn(async () => true) };
-  const svc = new VirtualAccountsService(db as never, client, readiness as never, hasher, alerts as never);
-  return { db, client, readiness, alerts, svc };
+  const svc = new VirtualAccountsService(db as never, payrep, cfg as never, readiness as never, hasher, alerts as never);
+  return { db, payrep, cfg, readiness, alerts, svc };
 }
 
 /** The HttpException a call failed with; fails the test if it succeeded. */
@@ -48,25 +47,30 @@ async function failure(p: Promise<unknown>): Promise<HttpException> {
   )) as HttpException;
 }
 
-describe('VirtualAccountsService.openForUser', () => {
-  it("opens a permanent account with the user's tx_ref, names and BVN, and answers 201", async () => {
-    const { svc, db, client } = await setup();
-    const create = jest.spyOn(client, 'createStaticVirtualAccount');
+describe('VirtualAccountsService.openForUser (Payrep, spec §4)', () => {
+  it('opens a pooled, prefixed Payrep account with the verified number and a local phone, and answers 201', async () => {
+    const { svc, db, payrep } = await setup();
+    const create = jest.spyOn(payrep, 'createCustomerAccount');
     const res = await svc.openForUser(USER, { bvn: BVN });
     expect(res.httpStatus).toBe(201);
-    expect(res.body).toMatchObject({ accountName: 'Ada Obi', bankName: 'Flutterwave MFB (mock)', status: 'ACTIVE' });
-    expect(create).toHaveBeenCalledWith({
-      email: 'ada@example.com', txRef: TX_REF, firstName: 'Ada', lastName: 'Obi', narration: 'Ada Obi', bvn: BVN,
-    });
+    expect(res.body).toMatchObject({ accountNumber: expect.stringMatching(/^20\d{8}$/), bankName: 'Payrep MFB', status: 'ACTIVE' });
+    expect(create).toHaveBeenCalledWith({ bvn: BVN, phoneNumber: '08012345678', poolAccountNumber: POOL });
     expect(db.rows('virtualAccount')).toEqual([
-      expect.objectContaining({ userId: USER, txRef: TX_REF, isPrimary: true, source: 'CREATED', identityType: 'BVN', providerStatus: 'active' }),
+      expect.objectContaining({ userId: USER, provider: 'PAYREP', isPrimary: true, source: 'CREATED', identityType: 'BVN', providerStatus: 'active', providerRef: expect.any(String) }),
     ]);
     expect(db.rows('virtualAccountRequest')[0]).toMatchObject({ state: 'IDLE', attemptsInWindow: 1, lastError: null });
   });
 
-  it('hands back an existing account with 200 and asks Flutterwave only once', async () => {
-    const { svc, client } = await setup();
-    const create = jest.spyOn(client, 'createStaticVirtualAccount');
+  it('leaves the phone out when it is not a Nigerian number', async () => {
+    const { svc, payrep } = await setup({ user: { phone: '+447700900123' } });
+    const create = jest.spyOn(payrep, 'createCustomerAccount');
+    await svc.openForUser(USER, { bvn: BVN });
+    expect(create).toHaveBeenCalledWith({ bvn: BVN, phoneNumber: undefined, poolAccountNumber: POOL });
+  });
+
+  it('hands back an existing account with 200 and asks Payrep only once', async () => {
+    const { svc, payrep } = await setup();
+    const create = jest.spyOn(payrep, 'createCustomerAccount');
     const first = await svc.openForUser(USER, { bvn: BVN });
     const again = await svc.openForUser(USER, { bvn: BVN });
     expect(again).toEqual({ httpStatus: 200, body: first.body });
@@ -79,9 +83,9 @@ describe('VirtualAccountsService.openForUser', () => {
     ['a suspended user', { user: { status: 'SUSPENDED' } }, /not active/],
     ['while deposits are switched off', { readiness: { depositsEnabled: false } }, /not available yet/],
     ['while the rail is not ready', { readiness: { canCreateAccounts: false } }, /temporarily unavailable/],
-  ])('refuses %s with 403 and never calls Flutterwave', async (_name, options, reason) => {
-    const { svc, client } = await setup(options as Options);
-    const create = jest.spyOn(client, 'createStaticVirtualAccount');
+  ])('refuses %s with 403 and never calls Payrep', async (_name, options, reason) => {
+    const { svc, payrep } = await setup(options as Options);
+    const create = jest.spyOn(payrep, 'createCustomerAccount');
     const err = await failure(svc.openForUser(USER, { bvn: BVN }));
     expect(err.getStatus()).toBe(403);
     expect(err.getResponse()).toMatchObject({ code: 'NOT_ELIGIBLE', message: expect.stringMatching(reason as RegExp) });
@@ -97,8 +101,8 @@ describe('VirtualAccountsService.openForUser', () => {
   });
 
   it('refuses a number that does not match KYC, counts the attempt, and goes idle', async () => {
-    const { svc, db, client } = await setup();
-    const create = jest.spyOn(client, 'createStaticVirtualAccount');
+    const { svc, db, payrep } = await setup();
+    const create = jest.spyOn(payrep, 'createCustomerAccount');
     const err = await failure(svc.openForUser(USER, { bvn: OTHER }));
     expect(err.getStatus()).toBe(400);
     expect(err.getResponse()).toMatchObject({ code: 'IDENTITY_MISMATCH' });
@@ -120,45 +124,44 @@ describe('VirtualAccountsService.openForUser', () => {
     expect(db.rows('kycProfile')[0].bvnHash).toMatch(/^h1:[0-9a-f]{64}$/);
   });
 
-  it('turns a Flutterwave rejection into 400, counts the attempt, and keeps a redacted reason', async () => {
-    const { svc, db, client } = await setup();
-    client.failNext('createStaticVirtualAccount', new FlutterwaveError('DEFINITE', `BVN ${BVN} could not be validated`, 400));
+  it('83 (identity rejected) is a 400 the customer can act on, with a redacted reason kept', async () => {
+    const { svc, db, payrep } = await setup();
+    jest.spyOn(payrep, 'createCustomerAccount').mockRejectedValueOnce(new PayrepError('REFUSED', `Identity ${BVN} verification failed`, 200, '83'));
     const err = await failure(svc.openForUser(USER, { bvn: BVN }));
     expect(err.getStatus()).toBe(400);
     expect(err.getResponse()).toMatchObject({ code: 'PROVIDER_REJECTED' });
     const request = db.rows('virtualAccountRequest')[0];
     expect(request).toMatchObject({ state: 'IDLE', attemptsInWindow: 1 });
-    expect(request.lastError).toBe('BVN [REDACTED] could not be validated');
+    expect(request.lastError).toBe('Identity [REDACTED] verification failed');
   });
 
-  it('answers 503 and alerts when Flutterwave refuses our credentials', async () => {
-    const { svc, db, client, alerts } = await setup();
-    client.failNext('createStaticVirtualAccount', new FlutterwaveError('CONFIG', 'Authorization required', 401));
+  it('answers 503 and alerts when Payrep refuses our setup', async () => {
+    const { svc, db, payrep, alerts } = await setup();
+    jest.spyOn(payrep, 'createCustomerAccount').mockRejectedValueOnce(new PayrepError('CONFIG', 'Pool account not found', 200, '42'));
     const err = await failure(svc.openForUser(USER, { bvn: BVN }));
     expect(err.getStatus()).toBe(503);
     expect(alerts.raise).toHaveBeenCalledWith('NAIRA_RAIL_CONFIG', 'config', expect.any(String), expect.any(Array));
     expect(db.rows('virtualAccountRequest')[0].state).toBe('IDLE');
   });
 
-  it('answers 202 when the outcome is unknown; a retry may open a second account, which still routes to the user', async () => {
-    const { svc, db, client } = await setup();
-    const real = client.createStaticVirtualAccount.bind(client);
-    let orphan: FlwStaticAccount | undefined;
-    jest.spyOn(client, 'createStaticVirtualAccount').mockImplementationOnce(async (input) => {
-      orphan = await real(input); // Flutterwave made it…
-      throw new FlutterwaveUnknownError('Flutterwave POST /virtual-account-numbers did not answer: timeout', 'POST', '/virtual-account-numbers');
-    });
-    const first = await svc.openForUser(USER, { bvn: BVN });
-    expect(first).toEqual({ httpStatus: 202, body: { status: 'PENDING', message: expect.any(String) } });
-    expect(db.rows('virtualAccountRequest')[0].state).toBe('UNKNOWN');
-
-    const second = await svc.openForUser(USER, { bvn: BVN }); // …and creation is not idempotent
-    expect(second.httpStatus).toBe(201);
-    expect(db.rows('virtualAccount')).toHaveLength(1);
-    await expect(svc.findOwner(TX_REF, orphan!.account_number)).resolves.toEqual({ userId: USER, via: 'TX_REF', accountKnown: false });
+  it('a CONFIG problem (no main account) is 503 and alerts, without calling Payrep', async () => {
+    const { svc, payrep, alerts } = await setup({ mainAccount: null });
+    const create = jest.spyOn(payrep, 'createCustomerAccount');
+    expect((await failure(svc.openForUser(USER, { bvn: BVN }))).getStatus()).toBe(503);
+    expect(create).not.toHaveBeenCalled();
+    expect(alerts.raise).toHaveBeenCalledWith('NAIRA_RAIL_CONFIG', 'config', expect.any(String), expect.any(Array));
   });
 
-  it('answers 202 and keeps the order ref for ops when recording a created account fails', async () => {
+  it('an unclear answer is 202 PENDING; the attempt is UNKNOWN and nothing is recorded', async () => {
+    const { svc, db, payrep } = await setup();
+    jest.spyOn(payrep, 'createCustomerAccount').mockRejectedValueOnce(new PayrepError('UNCLEAR', 'timeout', 0, null));
+    const r = await svc.openForUser(USER, { bvn: BVN });
+    expect(r).toEqual({ httpStatus: 202, body: expect.objectContaining({ status: 'PENDING' }) });
+    expect(db.rows('virtualAccount')).toHaveLength(0);
+    expect(db.rows('virtualAccountRequest')[0].state).toBe('UNKNOWN');
+  });
+
+  it('answers 202 and keeps the account number for ops when recording a created account fails', async () => {
     const { svc, db, alerts } = await setup();
     db.failNext('virtualAccount', 'create', new Error('database unavailable'));
     const res = await svc.openForUser(USER, { bvn: BVN });
@@ -166,19 +169,18 @@ describe('VirtualAccountsService.openForUser', () => {
     expect(db.rows('virtualAccount')).toHaveLength(0);
     expect(db.rows('virtualAccountRequest')[0]).toMatchObject({ state: 'UNKNOWN', lastError: 'database unavailable' });
     expect(alerts.raise).toHaveBeenCalledWith(
-      'VIRTUAL_ACCOUNT_SYNC', expect.stringMatching(/^va-unrecorded:URF_MOCK_/), expect.any(String),
-      expect.arrayContaining([expect.stringMatching(/^Order ref: URF_MOCK_/)]), expect.any(Number),
+      'VIRTUAL_ACCOUNT_SYNC', expect.stringMatching(/^va-unrecorded:20\d{8}$/), expect.any(String),
+      expect.arrayContaining([expect.stringMatching(/^Account number: 20\d{8}$/)]), expect.any(Number),
     );
     expect(JSON.stringify(alerts.raise.mock.calls)).not.toContain(BVN);
   });
 
-  it('hands back an account that appeared while the request waited, without claiming or calling Flutterwave', async () => {
-    const { svc, db, client, readiness } = await setup();
-    const create = jest.spyOn(client, 'createStaticVirtualAccount');
+  it('hands back an account that appeared while the request waited, without claiming or calling Payrep', async () => {
+    const { svc, db, payrep, readiness } = await setup();
+    const create = jest.spyOn(payrep, 'createCustomerAccount');
     readiness.report.mockImplementationOnce(async () => {
-      // the user's other request finishes while this one checks eligibility
       await db.virtualAccount.create({
-        data: { userId: USER, orderRef: 'URF_RACE', accountNumber: '9000000099', accountName: 'Ada Obi', bankName: 'Flutterwave MFB', txRef: TX_REF, isPrimary: true, source: 'CREATED', providerStatus: 'active' },
+        data: { userId: USER, accountNumber: '9000000099', accountName: 'Ada Obi', bankName: 'Payrep MFB', isPrimary: true, source: 'CREATED', providerStatus: 'active' },
       });
       return { depositsEnabled: true, canCreateAccounts: true };
     });
@@ -220,21 +222,17 @@ describe('VirtualAccountsService.openForUser', () => {
     );
     const evidence: unknown[] = [];
     try {
-      const arrangements: Array<(c: FlutterwaveMockClient) => void> = [
+      const arrangements: Array<(p: PayrepMock) => void> = [
         () => undefined, // success
-        (c) => c.failNext('createStaticVirtualAccount', new FlutterwaveError('DEFINITE', `BVN ${BVN} could not be validated`, 400, `bvn ${BVN}`)),
-        (c) => c.failNext('createStaticVirtualAccount', new FlutterwaveError('CONFIG', `key refused for ${BVN}`, 401)),
-        (c) => c.failNext('createStaticVirtualAccount', new FlutterwaveUnknownError(`timeout while sending ${BVN}`, 'POST', '/virtual-account-numbers')),
+        (p) => void jest.spyOn(p, 'createCustomerAccount').mockRejectedValueOnce(new PayrepError('REFUSED', `BVN ${BVN} could not be validated`, 200, '83')),
+        (p) => void jest.spyOn(p, 'createCustomerAccount').mockRejectedValueOnce(new PayrepError('CONFIG', `key refused for ${BVN}`, 200, '41')),
+        (p) => void jest.spyOn(p, 'createCustomerAccount').mockRejectedValueOnce(new PayrepError('UNCLEAR', `timeout while sending ${BVN}`, 0, null)),
       ];
       for (const arrange of arrangements) {
         const s = await setup();
-        arrange(s.client);
+        arrange(s.payrep);
         const outcome = await s.svc.openForUser(USER, { bvn: BVN }).catch((e: unknown) => e);
-        evidence.push(
-          outcome instanceof HttpException ? [outcome.message, outcome.getResponse()] : outcome,
-          s.db.allWrites(),
-          s.alerts.raise.mock.calls,
-        );
+        evidence.push(outcome instanceof HttpException ? [outcome.message, outcome.getResponse()] : outcome, s.db.allWrites(), s.alerts.raise.mock.calls);
       }
       const mismatch = await setup();
       const refused = await failure(mismatch.svc.openForUser(USER, { bvn: OTHER }));
@@ -249,72 +247,37 @@ describe('VirtualAccountsService.openForUser', () => {
   });
 });
 
-describe('VirtualAccountsService: reading, routing and status', () => {
-  it('shows the account, INACTIVE when Flutterwave says so, and 404 with eligibility when there is none', async () => {
+describe('VirtualAccountsService: reading, owners and "off"', () => {
+  it('shows the account, INACTIVE when switched off, and 404 with eligibility when there is none', async () => {
     const { svc, db } = await setup();
     const none = await failure(svc.getForUser(USER));
     expect(none.getStatus()).toBe(404);
     expect(none.getResponse()).toMatchObject({ code: 'NO_VIRTUAL_ACCOUNT', eligible: true, reason: null });
     await svc.openForUser(USER, { bvn: BVN });
-    await expect(svc.getForUser(USER)).resolves.toMatchObject({ status: 'ACTIVE', accountName: 'Ada Obi' });
-    await db.virtualAccount.updateMany({ where: { userId: USER }, data: { providerStatus: 'inactive' } });
+    await expect(svc.getForUser(USER)).resolves.toMatchObject({ status: 'ACTIVE', bankName: 'Payrep MFB' });
+    await db.virtualAccount.updateMany({ where: { userId: USER }, data: { desiredStatus: 'INACTIVE' } });
     await expect(svc.getForUser(USER)).resolves.toMatchObject({ status: 'INACTIVE' });
   });
 
-  it('finds the owner by tx_ref first, then by account number, and refuses an ambiguous number', async () => {
-    const { svc, db } = await setup();
+  it('findOwnerByAccount knows switched-off accounts (Review Focus 4)', async () => {
+    const { svc } = await setup();
     await svc.openForUser(USER, { bvn: BVN });
-    const number = db.rows('virtualAccount')[0].accountNumber as string;
-    await expect(svc.findOwner(TX_REF, number)).resolves.toEqual({ userId: USER, via: 'TX_REF', accountKnown: true });
-    await expect(svc.findOwner('dcbt_someone_else', number)).resolves.toEqual({ userId: USER, via: 'ACCOUNT_NUMBER', accountKnown: true });
-    await expect(svc.findOwner('dcbt_someone_else', '0000000001')).resolves.toBeNull();
-    await expect(svc.findOwner('dcva_00000000000000000000000000000000', null)).resolves.toBeNull();
-
-    await db.user.create({ data: { id: 'u2', email: 'b@x.y', firstName: 'B', lastName: 'C' } });
-    await db.virtualAccount.create({
-      data: { userId: 'u2', accountNumber: number, accountName: 'B C', bankName: 'X', txRef: 'dcva_x', source: 'CREATED' },
-    });
-    await expect(svc.findOwner(null, number)).resolves.toBeNull();
-  });
-
-  it('records a discovered account, primary only when the user has none, and only once', async () => {
-    const { svc, db } = await setup();
-    const first = await svc.recordDiscovered(USER, '0067100155');
-    expect(first).toMatchObject({ source: 'DISCOVERED', isPrimary: true, orderRef: null, accountName: 'Ada Obi', txRef: TX_REF });
-    await svc.recordDiscovered(USER, '0067100155');
-    expect(db.rows('virtualAccount')).toHaveLength(1);
-    expect((await svc.recordDiscovered(USER, '0067100156')).isPrimary).toBe(false);
-  });
-
-  it("deactivates a user's accounts at Flutterwave, and never throws when Flutterwave fails", async () => {
-    const { svc, db, client } = await setup();
-    await svc.openForUser(USER, { bvn: BVN });
+    const [va] = await svc.listForUser(USER);
+    await expect(svc.findOwnerByAccount(va.accountNumber)).resolves.toEqual({ userId: USER, switchedOff: false });
     await svc.setDesiredForUser(USER, 'INACTIVE');
-    expect(db.rows('virtualAccount')[0]).toMatchObject({ desiredStatus: 'INACTIVE', providerStatus: 'inactive', syncFailures: 0, syncError: null });
-    await expect(client.getVirtualAccount(db.rows('virtualAccount')[0].orderRef as string)).resolves.toMatchObject({ account_status: 'inactive' });
-
-    client.failNext('setVirtualAccountStatus', new FlutterwaveUnknownError('timeout', 'POST', '/virtual-account-numbers/x'));
-    await expect(svc.setDesiredForUser(USER, 'ACTIVE')).resolves.toBeUndefined();
-    expect(db.rows('virtualAccount')[0]).toMatchObject({ desiredStatus: 'ACTIVE', providerStatus: 'inactive', syncFailures: 1 });
+    await expect(svc.findOwnerByAccount(va.accountNumber)).resolves.toEqual({ userId: USER, switchedOff: true });
+    await expect(svc.findOwnerByAccount('0000000000')).resolves.toBeNull();
   });
 
-  it('re-pushes accounts Flutterwave disagrees about, skips ones it cannot manage, and alerts after three failed runs', async () => {
-    const { svc, db, client, alerts } = await setup();
+  it('setDesiredForUser only records the wish (Payrep has no switch-off API) and never throws', async () => {
+    const { svc, db, payrep } = await setup();
     await svc.openForUser(USER, { bvn: BVN });
-    await svc.recordDiscovered(USER, '0067100155'); // no order ref: cannot be pushed
-    await db.virtualAccount.updateMany({ where: { userId: USER }, data: { desiredStatus: 'INACTIVE' } });
-    const push = jest
-      .spyOn(client, 'setVirtualAccountStatus')
-      .mockRejectedValue(new FlutterwaveUnknownError('timeout', 'POST', '/virtual-account-numbers/x'));
-    for (let run = 1; run <= 3; run++) await svc.syncStatuses();
-    expect(push).toHaveBeenCalledTimes(3);
-    expect(alerts.raise).toHaveBeenCalledTimes(1);
-    expect(alerts.raise).toHaveBeenCalledWith(
-      'VIRTUAL_ACCOUNT_SYNC', expect.stringMatching(/^va-sync:/), expect.any(String), expect.any(Array), expect.any(Number),
-    );
-    push.mockRestore();
-    await expect(svc.syncStatuses()).resolves.toEqual({ checked: 1, fixed: 1, failing: 0 });
-    expect(db.rows('virtualAccount').find((r) => r.orderRef)).toMatchObject({ providerStatus: 'inactive', syncFailures: 0 });
+    const calls = jest.spyOn(payrep, 'createCustomerAccount');
+    await svc.setDesiredForUser(USER, 'INACTIVE', { background: true });
+    expect(db.rows('virtualAccount')[0]).toMatchObject({ desiredStatus: 'INACTIVE' });
+    expect(calls).not.toHaveBeenCalled();
+    db.failNext('virtualAccount', 'updateMany', new Error('database unavailable'));
+    await expect(svc.setDesiredForUser(USER, 'ACTIVE')).resolves.toBeUndefined();
   });
 
   it("lets an admin switch one account, refusing another user's with 404", async () => {
@@ -324,7 +287,7 @@ describe('VirtualAccountsService: reading, routing and status', () => {
     expect((await failure(svc.setDesired('someone-else', vaId, 'INACTIVE'))).getStatus()).toBe(404);
     const { before, after } = await svc.setDesired(USER, vaId, 'INACTIVE');
     expect(before).toMatchObject({ id: vaId, desiredStatus: 'ACTIVE' });
-    expect(after).toMatchObject({ id: vaId, desiredStatus: 'INACTIVE', providerStatus: 'inactive' });
+    expect(after).toMatchObject({ id: vaId, desiredStatus: 'INACTIVE', providerRef: expect.any(String) });
     await expect(svc.listForUser(USER)).resolves.toEqual([expect.objectContaining({ id: vaId, desiredStatus: 'INACTIVE' })]);
   });
 });

@@ -11,20 +11,21 @@ import {
 } from '@nestjs/common';
 import { AlertType, KycStatus, KycTier, UserStatus, VirtualAccount, VirtualAccountStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
-import { FlutterwaveClient } from '../flutterwave/flutterwave.client';
-import { FlutterwaveError, redactIds } from '../flutterwave/flutterwave.errors';
-import type { FlwStaticAccount } from '../flutterwave/flutterwave.types';
+import { redactIds } from '../common/redact';
+import { PayrepApi } from '../payrep/payrep.api';
+import { PayrepConfig } from '../payrep/payrep.config';
+import { PayrepError } from '../payrep/payrep.errors';
+import type { PayrepCustomerAccount } from '../payrep/payrep.types';
 import { KycHashService } from '../kyc/kyc-hash';
 import { OpsAlertsService } from '../common/ops-alerts/ops-alerts.service';
 import { ReadinessService } from './readiness.service';
-import { txRefForUser, userIdFromTxRef } from './tx-ref';
+import { localNigerianPhone } from './phone';
 
 const CREATING_LOCK_MS = 2 * 60_000;
 const ATTEMPT_WINDOW_MS = 24 * 3_600_000;
 const MAX_ATTEMPTS = 5;
-const SYNC_ALERT_AFTER = 3;
 const SIX_HOURS = 6 * 3_600_000;
-export const DEFAULT_VA_BANK_NAME = 'Flutterwave MFB';
+export const DEFAULT_VA_BANK_NAME = 'Payrep MFB';
 
 const TIER_RANK: Record<KycTier, number> = { TIER_0: 0, TIER_1: 1, TIER_2: 2, TIER_3: 3 };
 const PENDING_MESSAGE = "We're setting up your account. Try again in a few minutes.";
@@ -41,11 +42,10 @@ export interface OpenAccountResult {
   body: VirtualAccountView | { status: 'PENDING'; message: string };
 }
 
+/** Whose deposit account this is, and whether an admin or compliance switched it off. */
 export interface AccountOwner {
   userId: string;
-  via: 'TX_REF' | 'ACCOUNT_NUMBER';
-  /** False when the tx_ref is ours but the paid account number is not on record yet. */
-  accountKnown: boolean;
+  switchedOff: boolean;
 }
 
 export interface AdminVirtualAccount {
@@ -53,26 +53,27 @@ export interface AdminVirtualAccount {
   accountNumber: string;
   accountName: string;
   bankName: string;
-  orderRef: string | null;
+  providerRef: string | null;
   source: string;
   isPrimary: boolean;
   identityType: string | null;
   desiredStatus: VirtualAccountStatus;
   providerStatus: string | null;
-  lastSyncedAt: Date | null;
-  syncError: string | null;
-  syncFailures: number;
   createdAt: Date;
 }
 
 /**
- * Permanent Flutterwave virtual accounts, one per customer (spec §6.4).
+ * Permanent Payrep deposit accounts, one per customer (spec 2026-10-20 §4),
+ * pooled into our main account and named with our business prefix.
  *
  * The BVN or NIN arrives in one request, is checked against the KYC hash, is
- * sent once to Flutterwave, and is gone: it is never stored, logged, queued or
- * put in an error. Creation is not idempotent at Flutterwave, so an unknown
- * outcome is never treated as a failure. Any account it did make carries this
- * user's tx_ref, and the first deposit into it routes here and records it.
+ * sent once to Payrep, and is gone: it is never stored, logged, queued or put
+ * in an error. Opening an account is not idempotent at Payrep, so an unknown
+ * outcome is never treated as a failure; a deposit into a number we don't know
+ * is held as UNMATCHED and alerts ops, who can link it.
+ *
+ * Payrep has no API to switch an account off. "Off" is recorded here, and
+ * deposits into an account that is off are HELD for an admin (pay-in.service.ts).
  */
 @Injectable()
 export class VirtualAccountsService {
@@ -80,7 +81,8 @@ export class VirtualAccountsService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly client: FlutterwaveClient,
+    private readonly payrep: PayrepApi,
+    private readonly payrepCfg: PayrepConfig,
     private readonly readiness: ReadinessService,
     private readonly hasher: KycHashService,
     private readonly alerts: OpsAlertsService,
@@ -140,7 +142,7 @@ export class VirtualAccountsService {
       throw new BadRequestException({ statusCode: 400, code: 'BAD_IDENTITY_NUMBER', message: `A ${identityType} is 11 digits.` });
     }
 
-    // 1. Already has one: hand it back. Nothing goes to Flutterwave.
+    // 1. Already has one: hand it back. Nothing goes to Payrep.
     const existing = await this.primaryFor(userId);
     if (existing) return { httpStatus: 200, body: this.view(existing) };
 
@@ -164,56 +166,55 @@ export class VirtualAccountsService {
         throw err;
       }
 
-      // 5. Ask Flutterwave. Sent exactly once.
+      // 5. Ask Payrep. Sent exactly once.
       const user = await this.prisma.user.findUniqueOrThrow({ where: { id: userId } });
       const narration = `${user.firstName} ${user.lastName}`.trim();
-      let created: FlwStaticAccount;
+      const pool = this.payrepCfg.mainAccount;
+      if (!pool) {
+        lastError = 'PAYREP_MAIN_ACCOUNT is not set';
+        await this.alerts.raise(AlertType.NAIRA_RAIL_CONFIG, 'config', 'Naira deposit accounts are off: PAYREP_MAIN_ACCOUNT is not set', [lastError]);
+        throw this.unavailable();
+      }
+      let created: PayrepCustomerAccount;
       try {
-        created = await this.client.createStaticVirtualAccount({
-          email: user.email,
-          txRef: txRefForUser(userId),
-          firstName: user.firstName,
-          lastName: user.lastName,
-          narration,
+        created = await this.payrep.createCustomerAccount({
           ...(identityType === 'BVN' ? { bvn: value } : { nin: value }),
+          phoneNumber: localNigerianPhone(user.phone),
+          poolAccountNumber: pool,
         });
       } catch (err) {
         lastError = redactIds((err as Error).message).slice(0, 500);
-        if (err instanceof FlutterwaveError && err.kind === 'CONFIG') {
-          await this.alerts.raise(AlertType.NAIRA_RAIL_CONFIG, 'config', 'Flutterwave refused to open a virtual account', [lastError]);
-          throw new ServiceUnavailableException({
-            statusCode: 503,
-            code: 'DEPOSITS_UNAVAILABLE',
-            message: 'Naira deposits are temporarily unavailable. Try again later.',
-          });
+        if (err instanceof PayrepError && err.kind === 'CONFIG') {
+          await this.alerts.raise(AlertType.NAIRA_RAIL_CONFIG, 'config', 'Payrep refused to open a deposit account', [lastError]);
+          throw this.unavailable();
         }
-        if (err instanceof FlutterwaveError && err.kind !== 'RATE_LIMITED') {
+        if (err instanceof PayrepError && err.kind === 'REFUSED') {
           throw new BadRequestException({
             statusCode: 400,
             code: 'PROVIDER_REJECTED',
-            message: `Flutterwave could not open an account with that ${identityType}. Check the number and try again.`,
+            message: `Payrep could not open an account with that ${identityType}. Check the number and try again.`,
           });
         }
-        // Unknown (or throttled): Flutterwave may well have made the account.
+        // Unclear: Payrep may have opened it. A deposit into a number we don't know is held as UNMATCHED and alerts ops.
         state = 'UNKNOWN';
-        this.log.warn(`Virtual account for ${userId}: outcome unknown (${lastError})`);
+        this.log.warn(`Deposit account for ${userId}: outcome unknown (${lastError})`);
         return { httpStatus: 202, body: { status: 'PENDING', message: PENDING_MESSAGE } };
       }
 
-      // Flutterwave has it. If recording fails, the first deposit still routes by tx_ref.
+      // Payrep has it. If recording fails, a deposit into this number is held as UNMATCHED and alerts ops, who can link it.
       state = 'UNKNOWN';
       let account: VirtualAccount;
       try {
         account = await this.record(userId, created, narration, identityType);
       } catch (err) {
-        // Flutterwave has the account; we failed to write it down. Keep what ops needs to manage it.
+        // Payrep has the account; we failed to write it down. Keep what ops needs to link it.
         lastError = redactIds((err as Error).message).slice(0, 500);
-        this.log.error(`Flutterwave opened account ${created.account_number} (order ${created.order_ref}) for ${userId}, but recording it failed: ${lastError}`);
+        this.log.error(`Payrep opened account ${created.accountNumber} for ${userId}, but recording it failed: ${lastError}`);
         await this.alerts.raise(
           AlertType.VIRTUAL_ACCOUNT_SYNC,
-          `va-unrecorded:${created.order_ref}`,
-          `Virtual account ${created.account_number} was opened but not recorded`,
-          [`User: ${userId}`, `Order ref: ${created.order_ref}`, `Account number: ${created.account_number}`, `Error: ${lastError}`],
+          `va-unrecorded:${created.accountNumber}`,
+          `Deposit account ${created.accountNumber} was opened but not recorded`,
+          [`User: ${userId}`, `Account number: ${created.accountNumber}`, `Payrep customer: ${created.providerRef ?? 'unknown'}`, `Error: ${lastError}`],
           SIX_HOURS,
         );
         return { httpStatus: 202, body: { status: 'PENDING', message: PENDING_MESSAGE } };
@@ -229,89 +230,26 @@ export class VirtualAccountsService {
 
   // ── routing deposits ──────────────────────────────────────
 
-  /** Whose payment is this? Our tx_ref first; then Flutterwave's record of the account paid. */
-  async findOwner(
-    txRef: string | null | undefined,
-    accountNumber: string | null | undefined,
-  ): Promise<AccountOwner | null> {
-    const fromRef = userIdFromTxRef(txRef);
-    if (fromRef) {
-      const user = await this.prisma.user.findUnique({ where: { id: fromRef } });
-      if (user) {
-        const accountKnown = accountNumber
-          ? (await this.prisma.virtualAccount.count({ where: { userId: user.id, accountNumber } })) > 0
-          : true;
-        return { userId: user.id, via: 'TX_REF', accountKnown };
-      }
-    }
-    if (accountNumber) {
-      const matches = await this.prisma.virtualAccount.findMany({ where: { accountNumber } });
-      const owners = [...new Set(matches.map((m) => m.userId))];
-      // Two owners for one number (Flutterwave's test mode does this) means we cannot tell.
-      if (owners.length === 1) return { userId: owners[0], via: 'ACCOUNT_NUMBER', accountKnown: true };
-    }
-    return null;
+  /** Whose deposit is this? Payrep accounts are real, unique numbers (spec §6). */
+  async findOwnerByAccount(accountNumber: string): Promise<AccountOwner | null> {
+    const va = await this.prisma.virtualAccount.findUnique({ where: { accountNumber } });
+    return va ? { userId: va.userId, switchedOff: va.desiredStatus === VirtualAccountStatus.INACTIVE } : null;
   }
 
-  /** An account we learned about from a deposit instead of from creating it. */
-  async recordDiscovered(userId: string, accountNumber: string): Promise<VirtualAccount> {
-    const account = await this.prisma.serializable(async (t) => {
-      const known = await t.virtualAccount.findFirst({ where: { userId, accountNumber } });
-      if (known) return { account: known, created: false };
-      const user = await t.user.findUniqueOrThrow({ where: { id: userId } });
-      const primary = await t.virtualAccount.findFirst({ where: { userId, isPrimary: true } });
-      const created = await t.virtualAccount.create({
-        data: {
-          userId,
-          orderRef: null,
-          accountNumber,
-          accountName: `${user.firstName} ${user.lastName}`.trim(),
-          bankName: primary?.bankName ?? DEFAULT_VA_BANK_NAME,
-          txRef: txRefForUser(userId),
-          identityType: null,
-          isPrimary: !primary,
-          source: 'DISCOVERED',
-          providerStatus: 'active',
-          lastSyncedAt: new Date(),
-        },
-      });
-      return { account: created, created: true };
-    });
-    if (account.created) {
-      this.log.warn(`Discovered virtual account ${accountNumber} for ${userId} from a deposit; it has no order ref`);
-    }
-    return account.account;
-  }
-
-  // ── status: desired versus Flutterwave ────────────────────
+  // ── "off": ours to enforce ────────────────────────────────
 
   /**
    * Suspension and reinstatement hooks. Never throws: a suspension must not
-   * fail on Flutterwave. The wish is saved first; with `background`, Flutterwave
-   * is told after this returns (and the 10-minute sync retries), so a slow
-   * provider never holds up the admin.
+   * fail on a database hiccup here. Payrep has no API to switch an account off,
+   * so only the wish is saved; deposits into an account that is off are HELD.
+   * `opts` is kept for the existing callers.
    */
-  async setDesiredForUser(
-    userId: string,
-    desired: VirtualAccountStatus,
-    opts: { background?: boolean } = {},
-  ): Promise<void> {
+  async setDesiredForUser(userId: string, desired: VirtualAccountStatus, _opts: { background?: boolean } = {}): Promise<void> {
     try {
       await this.prisma.virtualAccount.updateMany({ where: { userId }, data: { desiredStatus: desired } });
     } catch (err) {
-      this.log.error(`Could not set ${userId}'s virtual accounts ${desired}: ${redactIds((err as Error).message)}`);
-      return;
+      this.log.error(`Could not set ${userId}'s deposit accounts ${desired}: ${redactIds((err as Error).message)}`);
     }
-    const pushAll = async (): Promise<void> => {
-      try {
-        const managed = await this.prisma.virtualAccount.findMany({ where: { userId, orderRef: { not: null } } });
-        for (const va of managed) await this.push(va);
-      } catch (err) {
-        this.log.error(`Could not push ${userId}'s virtual accounts to Flutterwave: ${redactIds((err as Error).message)}`);
-      }
-    };
-    if (opts.background) void pushAll();
-    else await pushAll();
   }
 
   async setDesired(
@@ -322,8 +260,7 @@ export class VirtualAccountsService {
     const va = await this.prisma.virtualAccount.findFirst({ where: { id: vaId, userId } });
     if (!va) throw new NotFoundException('No such virtual account for this user');
     const updated = await this.prisma.virtualAccount.update({ where: { id: vaId }, data: { desiredStatus: desired } });
-    const after = await this.push(updated);
-    return { before: this.adminView(va), after: this.adminView(after) };
+    return { before: this.adminView(va), after: this.adminView(updated) };
   }
 
   async listForUser(userId: string): Promise<AdminVirtualAccount[]> {
@@ -331,49 +268,15 @@ export class VirtualAccountsService {
     return rows.map((r) => this.adminView(r));
   }
 
-  /** Every 10 minutes: push accounts whose Flutterwave status differs from what we want. */
-  async syncStatuses(): Promise<{ checked: number; fixed: number; failing: number }> {
-    const candidates = await this.prisma.virtualAccount.findMany({
-      where: {
-        orderRef: { not: null },
-        OR: [
-          { providerStatus: null },
-          { desiredStatus: VirtualAccountStatus.ACTIVE, providerStatus: { not: 'active' } },
-          { desiredStatus: VirtualAccountStatus.INACTIVE, providerStatus: { not: 'inactive' } },
-        ],
-      },
-      orderBy: { updatedAt: 'asc' },
-      take: 200,
-    });
-    let fixed = 0;
-    let failing = 0;
-    for (const va of candidates) {
-      const after = await this.push(va);
-      if (after.syncFailures === 0) {
-        fixed++;
-        continue;
-      }
-      failing++;
-      if (after.syncFailures >= SYNC_ALERT_AFTER) {
-        await this.alerts.raise(
-          AlertType.VIRTUAL_ACCOUNT_SYNC,
-          `va-sync:${va.id}`,
-          `Virtual account ${va.accountNumber} will not sync with Flutterwave`,
-          [
-            `User: ${va.userId}`,
-            `Wanted: ${va.desiredStatus}`,
-            `Flutterwave reports: ${after.providerStatus ?? 'unknown'}`,
-            `Last error: ${after.syncError ?? 'none'}`,
-            `Failed runs: ${after.syncFailures}`,
-          ],
-          SIX_HOURS,
-        );
-      }
-    }
-    return { checked: candidates.length, fixed, failing };
-  }
-
   // ── internals ─────────────────────────────────────────────
+
+  private unavailable(): ServiceUnavailableException {
+    return new ServiceUnavailableException({
+      statusCode: 503,
+      code: 'DEPOSITS_UNAVAILABLE',
+      message: 'Naira deposits are temporarily unavailable. Try again later.',
+    });
+  }
 
   private primaryFor(userId: string): Promise<VirtualAccount | null> {
     return this.prisma.virtualAccount.findFirst({ where: { userId, isPrimary: true }, orderBy: { createdAt: 'asc' } });
@@ -395,15 +298,12 @@ export class VirtualAccountsService {
       accountNumber: va.accountNumber,
       accountName: va.accountName,
       bankName: va.bankName,
-      orderRef: va.orderRef,
+      providerRef: va.providerRef,
       source: va.source,
       isPrimary: va.isPrimary,
       identityType: va.identityType,
       desiredStatus: va.desiredStatus,
       providerStatus: va.providerStatus,
-      lastSyncedAt: va.lastSyncedAt,
-      syncError: va.syncError,
-      syncFailures: va.syncFailures,
       createdAt: va.createdAt,
     };
   }
@@ -490,8 +390,8 @@ export class VirtualAccountsService {
 
   private record(
     userId: string,
-    created: FlwStaticAccount,
-    accountName: string,
+    created: PayrepCustomerAccount,
+    narration: string,
     identityType: 'BVN' | 'NIN',
   ): Promise<VirtualAccount> {
     return this.prisma.serializable(async (t) => {
@@ -499,45 +399,17 @@ export class VirtualAccountsService {
       return t.virtualAccount.create({
         data: {
           userId,
-          orderRef: created.order_ref,
-          accountNumber: created.account_number,
-          accountName,
-          bankName: created.bank_name || DEFAULT_VA_BANK_NAME,
-          txRef: txRefForUser(userId),
-          flwRef: created.flw_ref ?? null,
+          provider: 'PAYREP',
+          providerRef: created.providerRef,
+          accountNumber: created.accountNumber,
+          accountName: created.accountName || narration,
+          bankName: created.bankName || DEFAULT_VA_BANK_NAME,
           identityType,
           isPrimary: !hasPrimary,
           source: 'CREATED',
-          providerStatus: (created.account_status ?? 'active').toLowerCase(),
-          lastSyncedAt: new Date(),
+          providerStatus: created.status || 'active',
         },
       });
     });
-  }
-
-  /** Make Flutterwave match desiredStatus, then read back what it says. Records the outcome; never throws for Flutterwave. */
-  private async push(va: VirtualAccount): Promise<VirtualAccount> {
-    if (!va.orderRef) return va;
-    const target = va.desiredStatus === VirtualAccountStatus.ACTIVE ? 'active' : 'inactive';
-    try {
-      await this.client.setVirtualAccountStatus(va.orderRef, target);
-      const fresh = await this.client.getVirtualAccount(va.orderRef);
-      const providerStatus = fresh.account_status ? fresh.account_status.toLowerCase() : null;
-      const synced = providerStatus === target;
-      return await this.prisma.virtualAccount.update({
-        where: { id: va.id },
-        data: {
-          providerStatus,
-          lastSyncedAt: new Date(),
-          syncError: synced ? null : `Flutterwave still reports ${providerStatus ?? 'no status'}`,
-          syncFailures: synced ? 0 : { increment: 1 },
-        },
-      });
-    } catch (err) {
-      return this.prisma.virtualAccount.update({
-        where: { id: va.id },
-        data: { syncError: redactIds((err as Error).message).slice(0, 500), syncFailures: { increment: 1 } },
-      });
-    }
   }
 }
