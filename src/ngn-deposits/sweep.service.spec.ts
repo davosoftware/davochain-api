@@ -1,88 +1,84 @@
-import { FlutterwaveError, FlutterwaveUnknownError } from '../flutterwave/flutterwave.errors';
-import type { ListTransactionsQuery } from '../flutterwave/flutterwave.types';
+import { PayrepError } from '../payrep/payrep.errors';
+import type { PayrepCollection } from '../payrep/payrep.types';
 import { SweepService } from './sweep.service';
 import { FakePrisma } from './testing/fake-prisma';
 
-const TX_REF = 'dcva_7f3c2a1b9e8d4c6fa1b2c3d4e5f60718';
+const OURS = '2012345678';
 const MINUTE = 60_000;
 
 function setup() {
   const db = new FakePrisma();
-  const client = { listTransactions: jest.fn() };
-  const payIn = { enqueue: jest.fn(async () => undefined) };
-  const accounts = { syncStatuses: jest.fn(async () => ({ checked: 0, fixed: 0, failing: 0 })) };
+  const payrep = { fetchCredits: jest.fn() };
+  const payIn = { enqueue: jest.fn(async () => undefined), intake: jest.fn(async () => undefined) };
   const leases = {
     run: jest.fn(async (_name: string, _ttl: number, fn: () => Promise<unknown>) => ({ ran: true, result: await fn() })),
   };
   const alerts = { raise: jest.fn(async () => true) };
-  const svc = new SweepService(db as never, client as never, payIn as never, accounts as never, leases as never, alerts as never);
-  return { db, client, payIn, accounts, leases, alerts, svc };
+  const svc = new SweepService(db as never, payrep as never, payIn as never, leases as never, alerts as never);
+  return { db, payrep, payIn, leases, alerts, svc };
 }
 
-const item = (id: string, over: Record<string, unknown> = {}) => ({
-  id, tx_ref: TX_REF, payment_type: 'bank_transfer', status: 'successful', amount: '1500', ...over,
+const credit = (id: string, over: Partial<PayrepCollection> = {}): PayrepCollection => ({
+  transactionId: id, referenceNumber: `R${id}`, sessionId: null, status: 'success', amount: '1500.00', fee: '0.00', channel: 'bank_transfer',
+  createdAt: '2026-10-07T10:00:00Z', accountNumber: OURS, transactionType: 'credit', payerName: 'A', payerBankName: 'B', payerAccountMasked: null, ...over,
 });
 
+async function ourAccount(db: FakePrisma) {
+  await db.virtualAccount.create({ data: { userId: 'u1', accountNumber: OURS, accountName: 'A', bankName: 'Payrep MFB', source: 'CREATED' } });
+}
+
 describe('SweepService.sweep', () => {
-  it('reads every page and queues only our unsettled bank-transfer payments', async () => {
-    const { db, client, payIn, svc } = setup();
-    client.listTransactions.mockImplementation(async (q: ListTransactionsQuery) =>
-      q.page === 1
-        ? { items: [item('1'), item('2', { payment_type: 'card' }), item('3', { tx_ref: 'dcbt_someone_else' })], totalPages: 2 }
-        : { items: [item('4'), item('x/1')], totalPages: 2 },
-    );
-    await db.flutterwaveCollection.create({ data: { flwTransactionId: '4', firstSource: 'WEBHOOK', outcome: 'CREDITED' } });
-
-    await expect(svc.sweep(new Date('2026-10-07T12:00:00Z'))).resolves.toEqual({ status: 'OK', pages: 2, seen: 5, queued: 1, error: null });
-    expect(payIn.enqueue.mock.calls).toEqual([['1', 'SWEEP']]);
-    expect(db.rows('flutterwaveCollection').map((r) => [r.flwTransactionId, r.firstSource, r.outcome])).toEqual([
-      ['4', 'WEBHOOK', 'CREDITED'],
-      ['1', 'SWEEP', 'UNVERIFIED'],
+  it('reads every page and hands on only unsettled credits into our accounts', async () => {
+    const { db, payrep, payIn, svc } = setup();
+    await ourAccount(db);
+    await db.nairaCollection.create({ data: { providerTransactionId: '4', firstSource: 'WEBHOOK', outcome: 'CREDITED' } });
+    payrep.fetchCredits
+      .mockResolvedValueOnce({ items: [credit('1'), credit('2', { accountNumber: '2099999999' }), credit('3', { accountNumber: null })], next: { createdAt: 'c', id: '3' } })
+      .mockResolvedValueOnce({ items: [credit('4')], next: null });
+    await expect(svc.sweep(new Date('2026-10-07T12:00:00Z'))).resolves.toEqual({ status: 'OK', pages: 2, seen: 4, queued: 1, error: null });
+    expect(payIn.intake.mock.calls).toEqual([
+      [{ transactionId: '1', accountNumber: OURS, referenceNumber: 'R1', createdAt: '2026-10-07T10:00:00Z', event: 'sweep' }, 'SWEEP'],
     ]);
+    expect(payrep.fetchCredits.mock.calls[1][1]).toEqual({ createdAt: 'c', id: '3' });
   });
 
-  it('asks for successful NGN payments from two Lagos days back to one ahead', async () => {
-    const { client, svc } = setup();
-    client.listTransactions.mockResolvedValue({ items: [], totalPages: 0 });
-    await svc.sweep(new Date('2026-10-07T23:30:00Z')); // already 8 October in Lagos
-    expect(client.listTransactions).toHaveBeenCalledWith({
-      from: '2026-10-06', to: '2026-10-09', page: 1, status: 'successful', currency: 'NGN',
-    });
+  it('asks for credits from two days back to one ahead', async () => {
+    const { payrep, svc } = setup();
+    payrep.fetchCredits.mockResolvedValue({ items: [], next: null });
+    await svc.sweep(new Date('2026-10-07T12:00:00Z'));
+    expect(payrep.fetchCredits).toHaveBeenCalledWith({ startDate: '2026-10-05', endDate: '2026-10-08' }, null);
   });
 
-  it('stops at 500 pages and says the run was partial', async () => {
-    const { client, svc } = setup();
-    client.listTransactions.mockResolvedValue({ items: [], totalPages: 1000 });
-    await expect(svc.sweep()).resolves.toMatchObject({ status: 'PARTIAL', pages: 500 });
-    expect(client.listTransactions).toHaveBeenCalledTimes(500);
+  it('stops at the page limit and says the run was partial', async () => {
+    const { payrep, svc } = setup();
+    payrep.fetchCredits.mockResolvedValue({ items: [], next: { createdAt: 'c', id: 'x' } });
+    await expect(svc.sweep()).resolves.toMatchObject({ status: 'PARTIAL', pages: 100 });
+    expect(payrep.fetchCredits).toHaveBeenCalledTimes(100);
   });
 
   it('keeps what it found when a page fails, and calls the run partial', async () => {
-    const { client, payIn, svc } = setup();
-    client.listTransactions
-      .mockResolvedValueOnce({ items: [item('1')], totalPages: 3 })
-      .mockRejectedValueOnce(new FlutterwaveUnknownError('timeout', 'GET', '/transactions'));
+    const { db, payrep, payIn, svc } = setup();
+    await ourAccount(db);
+    payrep.fetchCredits
+      .mockResolvedValueOnce({ items: [credit('1')], next: { createdAt: 'c', id: '1' } })
+      .mockRejectedValueOnce(new PayrepError('UNCLEAR', 'timeout', 0, null));
     await expect(svc.sweep()).resolves.toEqual({ status: 'PARTIAL', pages: 1, seen: 1, queued: 1, error: 'timeout' });
-    expect(payIn.enqueue).toHaveBeenCalledTimes(1);
+    expect(payIn.intake).toHaveBeenCalledTimes(1);
   });
 
-  it('alerts when Flutterwave refuses our key', async () => {
-    const { client, alerts, svc } = setup();
-    client.listTransactions.mockRejectedValue(new FlutterwaveError('CONFIG', 'Authorization required', 401));
+  it('alerts when Payrep refuses our keys', async () => {
+    const { payrep, alerts, svc } = setup();
+    payrep.fetchCredits.mockRejectedValue(new PayrepError('CONFIG', 'Unauthorized - invalid API credentials', 200, '41'));
     await expect(svc.sweep()).resolves.toMatchObject({ status: 'PARTIAL' });
     expect(alerts.raise).toHaveBeenCalledWith('NAIRA_RAIL_CONFIG', 'config', expect.any(String), expect.any(Array));
   });
 
   it('stops at the wall-clock budget and reports PARTIAL', async () => {
-    const { client, svc } = setup();
-    client.listTransactions.mockResolvedValue({ items: [], totalPages: 5 });
+    const { payrep, svc } = setup();
+    payrep.fetchCredits.mockResolvedValue({ items: [], next: { createdAt: 'c', id: 'x' } });
     const nowSpy = jest.spyOn(Date, 'now');
     let callCount = 0;
-    nowSpy.mockImplementation(() => {
-      callCount++;
-      if (callCount === 1) return 0; // start
-      return 21 * MINUTE; // 21 minutes later
-    });
+    nowSpy.mockImplementation(() => (++callCount === 1 ? 0 : 21 * MINUTE));
     try {
       const result = await svc.sweep();
       expect(result.status).toBe('PARTIAL');
@@ -108,7 +104,7 @@ describe('SweepService.recheck', () => {
       ['f', 'CREDITED', ago(60), ago(30)], //          skipped: settled
     ];
     for (const [id, outcome, firstSeenAt, lastCheckedAt] of rows) {
-      await db.flutterwaveCollection.create({ data: { flwTransactionId: id, firstSource: 'WEBHOOK', outcome, firstSeenAt, lastCheckedAt } });
+      await db.nairaCollection.create({ data: { providerTransactionId: id, firstSource: 'WEBHOOK', outcome, firstSeenAt, lastCheckedAt } });
     }
     await expect(svc.recheck(now)).resolves.toEqual({ queued: 2 });
     expect(payIn.enqueue.mock.calls).toEqual([
@@ -120,67 +116,36 @@ describe('SweepService.recheck', () => {
 
 describe('SweepService crons', () => {
   it('skips the sweep until the rail is in use, and runs every job under its lease', async () => {
-    const { db, client, accounts, leases, svc } = setup();
-    client.listTransactions.mockResolvedValue({ items: [], totalPages: 0 });
+    const { db, payrep, leases, svc } = setup();
+    payrep.fetchCredits.mockResolvedValue({ items: [], next: null });
     await svc.sweepCron();
-    expect(client.listTransactions).not.toHaveBeenCalled();
+    expect(payrep.fetchCredits).not.toHaveBeenCalled();
 
     await db.virtualAccountRequest.create({ data: { userId: 'u1', state: 'IDLE' } });
     await svc.sweepCron();
     await svc.recheckCron();
-    await svc.syncCron();
-    expect(client.listTransactions).toHaveBeenCalledTimes(1);
-    expect(accounts.syncStatuses).toHaveBeenCalledTimes(1);
-    expect(leases.run.mock.calls.map((c) => c[0])).toEqual(['flutterwave-sweep', 'flutterwave-recheck', 'virtual-account-sync']);
+    expect(payrep.fetchCredits).toHaveBeenCalledTimes(1);
+    expect(leases.run.mock.calls.map((c) => c[0])).toEqual(['naira-sweep', 'naira-recheck']);
   });
 
   it('alerts after two consecutive partial sweeps, not after one', async () => {
-    const { db, client, leases, alerts, svc } = setup();
-    const plainError = new Error('connection reset');
-    client.listTransactions.mockRejectedValue(plainError);
-
-    // Make rail in use
+    const { db, payrep, alerts, svc } = setup();
+    payrep.fetchCredits.mockRejectedValue(new Error('connection reset'));
     await db.virtualAccountRequest.create({ data: { userId: 'u1', state: 'IDLE' } });
-
-    // Make leases.run call through
-    leases.run.mockImplementation(async (_name: string, _ttl: number, fn: () => Promise<unknown>) => ({
-      ran: true,
-      result: await fn(),
-    }));
-
-    // First partial sweep: no alert
     await svc.sweepCron();
     expect(alerts.raise).not.toHaveBeenCalled();
-
-    // Second partial sweep: alert should be raised
     await svc.sweepCron();
-    expect(alerts.raise).toHaveBeenCalledWith('NGN_RECONCILIATION', 'flutterwave-sweep-partial', expect.any(String), expect.any(Array));
+    expect(alerts.raise).toHaveBeenCalledWith('NGN_RECONCILIATION', 'naira-sweep-partial', expect.any(String), expect.any(Array));
   });
 
   it('a complete sweep resets the partial count', async () => {
-    const { db, client, leases, alerts, svc } = setup();
-
-    // Make rail in use
+    const { db, payrep, alerts, svc } = setup();
     await db.virtualAccountRequest.create({ data: { userId: 'u1', state: 'IDLE' } });
-
-    // Make leases.run call through
-    leases.run.mockImplementation(async (_name: string, _ttl: number, fn: () => Promise<unknown>) => ({
-      ran: true,
-      result: await fn(),
-    }));
-
-    // First: partial (counts as 1)
-    client.listTransactions.mockRejectedValueOnce(new Error('fail'));
+    payrep.fetchCredits.mockRejectedValueOnce(new Error('fail'));
     await svc.sweepCron();
-    expect(alerts.raise).not.toHaveBeenCalled();
-
-    // Second: OK (resets counter to 0)
-    client.listTransactions.mockResolvedValueOnce({ items: [], totalPages: 0 });
+    payrep.fetchCredits.mockResolvedValueOnce({ items: [], next: null });
     await svc.sweepCron();
-    expect(alerts.raise).not.toHaveBeenCalled();
-
-    // Third: partial (counter back to 1, no alert yet)
-    client.listTransactions.mockRejectedValueOnce(new Error('fail'));
+    payrep.fetchCredits.mockRejectedValueOnce(new Error('fail'));
     await svc.sweepCron();
     expect(alerts.raise).not.toHaveBeenCalled();
   });

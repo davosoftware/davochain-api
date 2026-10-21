@@ -187,7 +187,7 @@ export class AdminController {
     private readonly templates: EmailTemplateService,
     private readonly socials: SocialLinksService,
     private readonly ngnSwitch: NgnWithdrawalsService,
-    private readonly flwReadiness: ReadinessService,
+    private readonly railReadiness: ReadinessService,
     private readonly virtualAccounts: VirtualAccountsService,
     private readonly flutterwave: FlutterwaveClient,
     private readonly flwConfig: FlutterwaveConfig,
@@ -1115,13 +1115,13 @@ export class AdminController {
     await this.admin.audit(adminId, 'saved_destination.remove', 'SavedCryptoAddress', destId, before, { ...after, reason }, req.ip);
     return { removed: true };
   }
-  // ── naira deposit accounts (Flutterwave) ──────────────────
+  // ── naira deposit accounts (Payrep) ───────────────────────
 
-  /** System → Flutterwave: is the naira rail safe to open accounts on? Cached a minute unless refresh=true. */
-  @Get('flutterwave/readiness')
+  /** System → naira rail: is it safe to open deposit accounts on? Cached a minute unless refresh=true. */
+  @Get('naira-rail/readiness')
   @RequirePermissions('settings.manage')
-  flutterwaveReadiness(@Query('refresh') refresh?: string) {
-    return this.flwReadiness.report(refresh === 'true');
+  nairaRailReadiness(@Query('refresh') refresh?: string) {
+    return this.railReadiness.report(refresh === 'true');
   }
 
   @Get('users/:id/virtual-accounts')

@@ -1,4 +1,4 @@
-import { FlutterwaveError } from '../flutterwave/flutterwave.errors';
+import { PayrepError } from '../payrep/payrep.errors';
 import { FakePrisma } from './testing/fake-prisma';
 import { ReadinessService } from './readiness.service';
 
@@ -7,8 +7,11 @@ interface Opts {
   env?: string;
   enabled?: boolean;
   key?: { present: boolean; problem: string | null };
-  hash?: string | null;
-  balanceError?: Error;
+  secret?: string | null;
+  main?: string | null;
+  account?: { status: string; balance?: string };
+  accountError?: Error;
+  slowMs?: number;
 }
 
 function setup(o: Opts = {}) {
@@ -16,46 +19,62 @@ function setup(o: Opts = {}) {
   const cfg = {
     useMock: o.mock ?? false,
     nodeEnv: o.env ?? 'development',
+    mainAccount: o.main === undefined ? '7801234567' : o.main,
     keyStatus: async () => o.key ?? { present: true, problem: null },
-    secretHash: async () => (o.hash === undefined ? 'hash' : o.hash),
+    webhookSecret: async () => (o.secret === undefined ? 'a'.repeat(64) : o.secret),
   };
-  const client = {
-    getBalance: jest.fn(async () => {
-      if (o.balanceError) throw o.balanceError;
-      return { currency: 'NGN', available_balance: '5000.25', ledger_balance: '6000' };
+  const payrep = {
+    account: jest.fn(async (accountNumber: string) => {
+      if (o.slowMs) await new Promise((r) => setTimeout(r, o.slowMs));
+      if (o.accountError) throw o.accountError;
+      return { accountNumber, accountName: 'DAVOCHAIN', status: o.account?.status ?? 'active', balance: o.account?.balance ?? '5000.25' };
     }),
   };
   const config = { get: (k: string) => (k === 'NGN_DEPOSITS_ENABLED' ? (o.enabled ?? true) : undefined) };
   const alerts = { raise: jest.fn(async () => true) };
-  const svc = new ReadinessService(cfg as never, client as never, db as never, config as never, alerts as never);
-  return { db, client, alerts, svc };
+  const svc = new ReadinessService(cfg as never, payrep as never, db as never, config as never, alerts as never);
+  return { db, payrep, alerts, svc };
 }
 
-const ok = (r: { checks: Array<{ key: string; ok: boolean }> }, key: string) => r.checks.find((c) => c.key === key)?.ok;
+const check = (r: { checks: Array<{ key: string; ok: boolean }> }, key: string) => r.checks.find((c) => c.key === key);
 
-describe('ReadinessService', () => {
-  it('is green with a usable key, a hash, and Flutterwave answering', async () => {
+describe('ReadinessService (Payrep)', () => {
+  it('is green with usable keys, a webhook secret, a main account and Payrep answering', async () => {
     const r = await setup().svc.report();
     expect(r).toMatchObject({
       mode: 'TEST',
       depositsEnabled: true,
       canCreateAccounts: true,
-      webhookPath: '/webhooks/flutterwave',
-      balance: { currency: 'NGN', available: '5000.25', ledger: '6000' },
+      webhookPath: '/webhooks/payrep',
+      balance: { currency: 'NGN', available: '5000.25', ledger: '5000.25' },
     });
+    expect(r.checks.map((c) => c.key)).toEqual(['mockOff', 'credentials', 'webhookSecret', 'mainAccount', 'reachable', 'lastWebhook']);
     expect(r.checks.filter((c) => c.required).every((c) => c.ok)).toBe(true);
   });
 
-  it('probes the balance once, without retries, so a slow Flutterwave cannot stall the screen', async () => {
-    const { svc, client } = setup();
+  it('reads our main account balance', async () => {
+    const { svc, payrep } = setup();
     await svc.report();
-    expect(client.getBalance).toHaveBeenCalledWith('NGN', { probe: true });
+    expect(payrep.account).toHaveBeenCalledWith('7801234567');
+  });
+
+  it('a slow Payrep cannot stall the screen: the probe gives up after a few seconds', async () => {
+    jest.useFakeTimers();
+    try {
+      const { svc } = setup({ slowMs: 60_000 });
+      const p = svc.report();
+      await jest.advanceTimersByTimeAsync(6_000);
+      const r = await p;
+      expect(check(r, 'reachable')).toMatchObject({ ok: false, detail: expect.stringMatching(/did not answer/) });
+    } finally {
+      jest.useRealTimers();
+    }
   });
 
   it('shares one check between concurrent requests', async () => {
-    const { svc, client } = setup();
+    const { svc, payrep } = setup();
     const reports = await Promise.all([svc.report(), svc.report(), svc.report(true)]);
-    expect(client.getBalance).toHaveBeenCalledTimes(1);
+    expect(payrep.account).toHaveBeenCalledTimes(1);
     expect(reports[0]).toBe(reports[1]);
     expect(reports[1]).toBe(reports[2]);
   });
@@ -67,7 +86,7 @@ describe('ReadinessService', () => {
   it('lets the development mock open accounts, though "mock is off" is red', async () => {
     const r = await setup({ mock: true }).svc.report();
     expect(r.mode).toBe('MOCK');
-    expect(ok(r, 'mockOff')).toBe(false);
+    expect(check(r, 'mockOff')?.ok).toBe(false);
     expect(r.canCreateAccounts).toBe(true);
   });
 
@@ -75,50 +94,56 @@ describe('ReadinessService', () => {
     expect((await setup({ enabled: false }).svc.report()).canCreateAccounts).toBe(false);
   });
 
-  it('turns red, without calling Flutterwave, on a key in the wrong mode, and raises an alert', async () => {
-    const { svc, client, alerts } = setup({
-      key: { present: true, problem: 'A Flutterwave LIVE key can only be used in production (NODE_ENV is development)' },
-    });
+  it('turns red, without calling Payrep, on keys in the wrong mode, and raises an alert', async () => {
+    const { svc, payrep, alerts } = setup({ key: { present: true, problem: 'Payrep LIVE keys can only be used in production (NODE_ENV is development)' } });
     const r = await svc.report();
-    expect(ok(r, 'secretKey')).toBe(false);
-    expect(ok(r, 'reachable')).toBe(false);
+    expect(check(r, 'credentials')?.ok).toBe(false);
+    expect(check(r, 'reachable')?.ok).toBe(false);
     expect(r.canCreateAccounts).toBe(false);
-    expect(client.getBalance).not.toHaveBeenCalled();
+    expect(payrep.account).not.toHaveBeenCalled();
     expect(alerts.raise).toHaveBeenCalledWith('NAIRA_RAIL_CONFIG', 'config', expect.any(String), expect.any(Array));
   });
 
-  it('turns red when the key or the hash is missing', async () => {
+  it('turns red when the keys, the webhook secret or the main account are missing', async () => {
     expect((await setup({ key: { present: false, problem: null } }).svc.report()).canCreateAccounts).toBe(false);
-    const noHash = await setup({ hash: null }).svc.report();
-    expect(ok(noHash, 'secretHash')).toBe(false);
-    expect(noHash.canCreateAccounts).toBe(false);
+    const noSecret = await setup({ secret: null }).svc.report();
+    expect(check(noSecret, 'webhookSecret')?.ok).toBe(false);
+    expect(noSecret.canCreateAccounts).toBe(false);
+    const noMain = await setup({ main: null }).svc.report();
+    expect(check(noMain, 'mainAccount')?.ok).toBe(false);
+    expect(check(noMain, 'reachable')?.ok).toBe(false);
+    expect(noMain.canCreateAccounts).toBe(false);
   });
 
-  it('turns red and alerts when Flutterwave refuses our credentials', async () => {
-    const { svc, alerts } = setup({
-      balanceError: new FlutterwaveError('CONFIG', 'Please enable IP Whitelisting to access this service', 400),
-    });
-    const r = await svc.report();
-    expect(ok(r, 'reachable')).toBe(false);
+  it('a main account that is not active fails "reachable"', async () => {
+    const r = await setup({ account: { status: 'blocked' } }).svc.report();
+    expect(check(r, 'reachable')).toMatchObject({ ok: false, detail: expect.stringMatching(/blocked/) });
     expect(r.canCreateAccounts).toBe(false);
-    expect(alerts.raise).toHaveBeenCalled();
+  });
+
+  it('turns red and alerts when Payrep refuses our keys', async () => {
+    const { svc, alerts } = setup({ accountError: new PayrepError('CONFIG', 'Unauthorized - invalid API credentials', 200, '41') });
+    const r = await svc.report();
+    expect(check(r, 'reachable')?.ok).toBe(false);
+    expect(r.canCreateAccounts).toBe(false);
+    expect(alerts.raise).toHaveBeenCalledWith('NAIRA_RAIL_CONFIG', 'config', expect.any(String), expect.any(Array));
   });
 
   it('caches for a minute unless forced', async () => {
-    const { svc, client } = setup();
+    const { svc, payrep } = setup();
     await svc.report();
     await svc.report();
-    expect(client.getBalance).toHaveBeenCalledTimes(1);
+    expect(payrep.account).toHaveBeenCalledTimes(1);
     await svc.report(true);
-    expect(client.getBalance).toHaveBeenCalledTimes(2);
+    expect(payrep.account).toHaveBeenCalledTimes(2);
   });
 
-  it('reports the last authenticated Flutterwave webhook, for information only', async () => {
+  it('reports the last authenticated Payrep webhook, for information only', async () => {
     const { db, svc } = setup();
     const event = (eventName: string, signatureValid: boolean, at: string) =>
       db.webhookEvent.create({ data: { eventName, dedupHash: at, payload: {}, signatureValid, receivedAt: new Date(at) } });
-    await event('flutterwave.charge', true, '2026-10-07T10:00:00.000Z');
-    await event('flutterwave.unauthenticated', false, '2026-10-07T11:00:00.000Z');
+    await event('payrep.deposit.success', true, '2026-10-07T10:00:00.000Z');
+    await event('payrep.unauthenticated', false, '2026-10-07T11:00:00.000Z');
     await event('quidax.deposit', true, '2026-10-07T12:00:00.000Z');
     expect((await svc.report()).lastWebhookAt).toBe('2026-10-07T10:00:00.000Z');
   });
