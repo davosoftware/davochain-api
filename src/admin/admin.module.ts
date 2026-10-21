@@ -1,5 +1,6 @@
 import { AlertRecipientsController } from './alert-recipients.controller';
 import { KycBasicReviewController } from './kyc-basic-review.controller';
+import { KycAdvancedReviewController } from './kyc-advanced-review.controller';
 import { ComplianceController } from './compliance.controller';
 import { DojahAdminController } from './dojah-admin.controller';
 import { KycModule } from '../kyc/kyc.module';
@@ -59,7 +60,7 @@ import { WithdrawalsModule } from '../withdrawals/withdrawals.module';
     // Admins view and remove customers' saved withdrawal destinations (Part 2).
     WithdrawalsModule,
   ],
-  controllers: [AdminController, AdminAuthController, AlertRecipientsController, KycBasicReviewController, ComplianceController, DojahAdminController, TreasuryAdminController, KycDocumentsAdminController],
+  controllers: [AdminController, AdminAuthController, AlertRecipientsController, KycBasicReviewController, KycAdvancedReviewController, ComplianceController, DojahAdminController, TreasuryAdminController, KycDocumentsAdminController],
   providers: [AdminService, UsersAdminService, AdminsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService, AdminSessionsService, AdminOtpService, NgnWithdrawalsService, AdminGuard, LevelAdminService, DojahSettingsService, TwoStepService],
   exports: [AdminService, UsersAdminService, AdminsService, AdminSessionsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService],
 })
