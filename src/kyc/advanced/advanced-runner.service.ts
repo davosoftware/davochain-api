@@ -9,10 +9,11 @@ import { KycHashService } from '../kyc-hash';
 import { lagosDate } from '../../common/dates';
 import { runEffects } from '../../compliance/aml.service';
 import { OpsAlertsService } from '../../common/ops-alerts/ops-alerts.service';
+import { SYSTEM_ACTOR_ID } from '../../common/system-actor';
 import { READINESS, type Readiness } from '../basic-verification.service';
 import { AdvancedApprover } from './advanced-approver';
 import { AdvancedVerificationService } from './advanced-verification.service';
-import { decideIdentity } from './rules';
+import { decideAddress, decideIdentity, summariseBill, summariseText } from './rules';
 import {
   MSG_FAILED_SYSTEM,
   MSG_IN_REVIEW,
@@ -268,8 +269,54 @@ export class AdvancedRunner {
     await runEffects(effects, this.log);
   }
 
-  /** Step B: built in Task 9. */
-  protected async runAddress(_v: AdvancedVerification, _s: DojahSettings): Promise<void> {
-    throw new Error('The Advanced address step is not built yet');
+  /** Step B (spec §4.2, §7.2, §9): one proof-of-address document of the customer's choice. */
+  protected async runAddress(v: AdvancedVerification, s: DojahSettings): Promise<void> {
+    const verified = await this.verified(v.userId);
+    const today = lagosDate(new Date());
+    const kind = v.addressKind!;
+    const doc = await this.prisma.kycDocument.findUniqueOrThrow({ where: { id: v.addressDocumentId! }, select: { id: true, storageKey: true, mimeType: true } });
+    const f: Findings = { ...(v.findings as Findings) };
+    const pdf = doc.mimeType === 'application/pdf';
+    const decide = () => decideAddress({ kind, pdf, evidence: f.address, recencyMonths: s.addressRecencyMonths, today });
+
+    // A PDF: the readers take pictures only, so a person reads it.
+    if (pdf) return this.finish(v.id, decide(), f, s);
+
+    if (v.addressOutcome === 'SUCCEEDED' && !f.address) {
+      // A crash lost what a paid call found: a person decides rather than paying again.
+      return this.finish(v.id, { outcome: 'REVIEW', reasons: ['SYSTEM'] }, f, s);
+    }
+
+    if (v.addressOutcome !== 'SUCCEEDED') {
+      try {
+        if (kind === 'UTILITY_BILL') {
+          // Dojah's bill reader takes a link only: one file, 300 seconds, recorded, never stored.
+          const link = await this.files.temporaryLink(doc.storageKey, 300);
+          await this.prisma.adminAuditLog.create({
+            data: {
+              adminUserId: SYSTEM_ACTOR_ID,
+              action: 'kyc.document.shared_with_provider',
+              entity: 'KycDocument',
+              entityId: doc.id,
+              after: { provider: 'dojah', purpose: 'utility_bill', expiresInSeconds: 300 },
+            },
+          });
+          f.linkShared = true;
+          const r = await this.paid(v.id, 'address', () => this.dojah.utilityBill(link), false);
+          f.address = summariseBill(r.read, verified);
+        } else {
+          const image = await this.base64(doc.id);
+          const r = await this.paid(v.id, 'address', () => this.dojah.ocr(image), false);
+          f.address = summariseText(r.lines, kind, verified, today); // the text itself is dropped here
+        }
+      } catch (err) {
+        if (err instanceof DojahError && err.kind === 'UNPROCESSABLE') {
+          return this.finish(v.id, { outcome: 'REJECT', code: 'DOC_UNREADABLE', reasons: [] }, f, s);
+        }
+        throw err;
+      }
+      await this.saveFindings(v.id, f);
+    }
+    return this.finish(v.id, decide(), f, s);
   }
 }
