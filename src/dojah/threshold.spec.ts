@@ -30,3 +30,10 @@ describe('dojahThresholds (plan §R2)', () => {
     expect(r.workings.join('\n')).toContain('C = 100 + 2 × 150 = 400');
   });
 });
+
+describe('dojahThresholds with Advanced (spec §12)', () => {
+  it('adds four Advanced calls per verification when an Advanced price is given', () => {
+    const r = dojahThresholds({ lookupPrice: 100, amlPrice: 50, advancedPrice: 25, peakHour: 1, peakDay: 1, leadDays: 3 });
+    expect(r.perVerification).toBe(300); // 100 + 2×50 + 4×25
+  });
+});

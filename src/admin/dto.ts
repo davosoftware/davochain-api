@@ -97,11 +97,25 @@ export class DojahBasicSwitchDto {
   @IsString() @MinLength(1) @MaxLength(128) password!: string;
 }
 
+/** PUT /v1/admin/dojah/advanced-settings. null = back to the default. The service checks ranges and says why. */
+export class DojahAdvancedSettingsDto {
+  @IsOptional() @IsNumber() advancedDailyAttempts?: number | null;
+  @IsOptional() @IsNumber() advancedTotalAttempts?: number | null;
+  @IsOptional() @IsNumber() livenessMin?: number | null;
+  @IsOptional() @IsNumber() faceMatchPass?: number | null;
+  @IsOptional() @IsNumber() faceMatchReview?: number | null;
+  @IsOptional() @IsNumber() addressRecencyMonths?: number | null;
+  /** Checked, never stored or audited. */
+  @IsString() @MinLength(1) @MaxLength(128) password!: string;
+}
+
 /** POST /v1/admin/dojah/thresholds: Dojah's prices in naira. */
 export class DojahThresholdsDto {
   @IsNumber({}, { message: 'Enter the price per check and per screening in naira.' }) lookupPrice!: number;
   @IsNumber({}, { message: 'Enter the price per check and per screening in naira.' }) amlPrice!: number;
   @IsOptional() @IsNumber() leadDays?: number;
+  /** Naira per Advanced Dojah call. */
+  @IsOptional() @IsNumber() advancedPrice?: number;
 }
 
 /** PUT /v1/admin/treasury/settings. The service checks every rule and says why in plain words. */

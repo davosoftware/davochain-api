@@ -210,6 +210,8 @@ export const envSchema = z
     KYC_BASIC_ENABLED: bool(false),
     KYC_BASIC_DAILY_ATTEMPTS: int(3),
     KYC_BASIC_TOTAL_ATTEMPTS: int(10),
+    /** Advanced checks (spec 2026-10-21). Off until an owner switches them on and readiness is green. */
+    KYC_ADVANCED_ENABLED: bool(false),
     // No longer read (level policy, 15 Oct 2026): set on System -> Verification levels.
     // Still accepted so existing .env files keep starting.
     MAX_TRADE_USD: num(2000),

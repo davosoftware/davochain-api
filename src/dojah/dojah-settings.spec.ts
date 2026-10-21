@@ -37,3 +37,31 @@ describe('Dojah settings: the screen first, then the server default', () => {
     expect(prisma.systemFlag.findUnique).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('Advanced settings (spec §5.3)', () => {
+  it('has the spec defaults when nothing is saved', async () => {
+    const s = await cfg(ENV, {}).c.effective();
+    expect(s).toMatchObject({
+      advancedEnabled: false,
+      advancedDailyAttempts: 3,
+      advancedTotalAttempts: 10,
+      livenessMin: 90,
+      faceMatchPass: 75,
+      faceMatchReview: 60,
+      addressRecencyMonths: 3,
+    });
+    expect(s.source.faceMatchPass).toBe('server');
+  });
+
+  it('uses valid screen values and ignores invalid ones field by field', async () => {
+    const s = await cfg(ENV, { faceMatchPass: 80, livenessMin: 101, addressRecencyMonths: 6, faceMatchReview: 59, advancedEnabled: true }).c.effective();
+    expect(s).toMatchObject({ faceMatchPass: 80, livenessMin: 90, addressRecencyMonths: 6, faceMatchReview: 60, advancedEnabled: true });
+    expect(s.source).toMatchObject({ faceMatchPass: 'screen', livenessMin: 'server', faceMatchReview: 'server' });
+  });
+
+  it('falls back to the default review floor when a stored one is above the pass mark', async () => {
+    const s = await cfg(ENV, { faceMatchPass: 70, faceMatchReview: 72 }).c.effective();
+    expect(s).toMatchObject({ faceMatchPass: 70, faceMatchReview: 60 });
+    expect(s.source.faceMatchReview).toBe('server');
+  });
+});

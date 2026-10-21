@@ -11,7 +11,7 @@ import { DojahSettingsService } from './dojah-settings.service';
 import { AdminService } from './admin.service';
 import { CurrentAdmin } from './current-admin.decorator';
 import type { AdminJwtPayload } from './admin.service';
-import { DojahBasicSwitchDto, DojahSettingsDto, DojahThresholdsDto } from './dto';
+import { DojahAdvancedSettingsDto, DojahBasicSwitchDto, DojahSettingsDto, DojahThresholdsDto } from './dto';
 
 /** Whether Basic can run, and the calls to reconcile against Dojah's bill (spec §12.2, §14.5). */
 @Public() // opts out of the USER guard; AdminGuard takes over
@@ -50,6 +50,25 @@ export class DojahAdminController {
   async basicSwitch(@CurrentAdmin() actor: AdminJwtPayload, @Body() dto: DojahBasicSwitchDto, @Req() req: Request) {
     const { before, after } = await this.settings.setBasicSwitch({ id: actor.sub, role: actor.role }, dto);
     await this.admin.audit(actor.sub, 'dojah.basic_switch', 'SystemFlag', 'dojah_settings', before, after, req.ip);
+    return this.readiness.report(true);
+  }
+
+  /** The Advanced checks' numbers (spec 2026-10-21 §5.3). Owners only, with their password; audited. */
+  @Put('advanced-settings')
+  @RequirePermissions('settings.manage')
+  async saveAdvanced(@CurrentAdmin() actor: AdminJwtPayload, @Body() dto: DojahAdvancedSettingsDto, @Req() req: Request) {
+    const { before, after } = await this.settings.saveAdvancedSettings({ id: actor.sub, role: actor.role }, dto);
+    await this.admin.audit(actor.sub, 'dojah.advanced_settings', 'SystemFlag', 'dojah_settings', before, after, req.ip);
+    return this.readiness.report(true);
+  }
+
+  /** Advanced verification on or off (null = server default). Owners only, with their password; "on" only when ready. */
+  @Post('advanced-switch')
+  @HttpCode(200)
+  @RequirePermissions('settings.manage')
+  async advancedSwitch(@CurrentAdmin() actor: AdminJwtPayload, @Body() dto: DojahBasicSwitchDto, @Req() req: Request) {
+    const { before, after } = await this.settings.setAdvancedSwitch({ id: actor.sub, role: actor.role }, dto);
+    await this.admin.audit(actor.sub, 'dojah.advanced_switch', 'SystemFlag', 'dojah_settings', before, after, req.ip);
     return this.readiness.report(true);
   }
 

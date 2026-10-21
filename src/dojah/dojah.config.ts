@@ -8,24 +8,64 @@ export const DOJAH_SANDBOX_URL = 'https://sandbox.dojah.io';
 /** The system_flags row the Dojah screen saves to (same table as the naira payouts switch). */
 export const DOJAH_SETTINGS_FLAG = 'dojah_settings';
 
-export type DojahSettingKey = 'minBalance' | 'lowBalanceWarn' | 'dailyAttempts' | 'totalAttempts' | 'basicEnabled';
+export type DojahSettingKey =
+  | 'minBalance'
+  | 'lowBalanceWarn'
+  | 'dailyAttempts'
+  | 'totalAttempts'
+  | 'basicEnabled'
+  | 'advancedEnabled'
+  | 'advancedDailyAttempts'
+  | 'advancedTotalAttempts'
+  | 'livenessMin'
+  | 'faceMatchPass'
+  | 'faceMatchReview'
+  | 'addressRecencyMonths';
 export interface DojahSettings {
   minBalance: number;
   lowBalanceWarn: number | null;
   dailyAttempts: number;
   totalAttempts: number;
   basicEnabled: boolean;
+  advancedEnabled: boolean;
+  advancedDailyAttempts: number;
+  advancedTotalAttempts: number;
+  /** Dojah liveness_probability at or above this, with liveness_check true, passes. */
+  livenessMin: number;
+  /** Face match confidence at or above this passes; from faceMatchReview up to it goes to a person. */
+  faceMatchPass: number;
+  faceMatchReview: number;
+  /** A proof-of-address document must be issued within this many months. */
+  addressRecencyMonths: number;
   /** Where each value came from: set on the Dojah screen, or the server default in api/.env. */
   source: Record<DojahSettingKey, 'screen' | 'server'>;
 }
 
 const wholeAtLeast = (min: number) => (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v) && v >= min;
+const wholeBetween = (min: number, max: number) => (v: unknown): v is number =>
+  typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max;
+/** Spec 2026-10-21 §5.3 defaults. Changed only from the Dojah screen (owners). */
+export const ADVANCED_DEFAULTS = {
+  advancedDailyAttempts: 3,
+  advancedTotalAttempts: 10,
+  livenessMin: 90,
+  faceMatchPass: 75,
+  faceMatchReview: 60,
+  addressRecencyMonths: 3,
+} as const;
 const VALID: Record<DojahSettingKey, (v: unknown) => boolean> = {
   minBalance: wholeAtLeast(0),
   lowBalanceWarn: wholeAtLeast(0),
   dailyAttempts: wholeAtLeast(1),
   totalAttempts: wholeAtLeast(1),
   basicEnabled: (v) => typeof v === 'boolean',
+  advancedEnabled: (v) => typeof v === 'boolean',
+  advancedDailyAttempts: wholeBetween(1, 20),
+  advancedTotalAttempts: wholeBetween(1, 20),
+  livenessMin: wholeBetween(50, 100),
+  faceMatchPass: wholeBetween(60, 100),
+  faceMatchReview: wholeBetween(60, 100),
+  addressRecencyMonths: wholeBetween(1, 12),
 };
 /** A paid call claimed longer ago than this, still IN_FLIGHT, is UNKNOWN (spec §14.5). */
 export const LEASE_MS = 5 * 60_000;
@@ -62,6 +102,8 @@ export class DojahConfig {
       dailyAttempts: this.dailyAttempts,
       totalAttempts: this.totalAttempts,
       basicEnabled: this.basicEnabled,
+      advancedEnabled: this.advancedEnabled,
+      ...ADVANCED_DEFAULTS,
     };
     const out = { ...server, source: {} as DojahSettings['source'] };
     for (const key of Object.keys(VALID) as DojahSettingKey[]) {
@@ -71,6 +113,11 @@ export class DojahConfig {
       } else {
         out.source[key] = 'server';
       }
+    }
+    // A stored review floor above the pass mark would make "review" unreachable: fall back.
+    if (out.faceMatchReview > out.faceMatchPass) {
+      out.faceMatchReview = ADVANCED_DEFAULTS.faceMatchReview;
+      out.source.faceMatchReview = 'server';
     }
     return out;
   }
@@ -89,6 +136,10 @@ export class DojahConfig {
 
   get basicEnabled(): boolean {
     return this.config.get<boolean>('KYC_BASIC_ENABLED') === true;
+  }
+
+  get advancedEnabled(): boolean {
+    return this.config.get<boolean>('KYC_ADVANCED_ENABLED') === true;
   }
 
   get dailyAttempts(): number {

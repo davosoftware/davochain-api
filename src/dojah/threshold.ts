@@ -13,6 +13,8 @@ export interface ThresholdInput {
   peakHour: number;
   peakDay: number;
   leadDays: number;
+  /** Naira per Advanced Dojah call (read ID, liveness, face match, bill/text reader). Optional. */
+  advancedPrice?: number;
 }
 
 export interface ThresholdResult {
@@ -42,7 +44,9 @@ export function dojahThresholds(input: ThresholdInput): ThresholdResult {
   const peakDay = positive('peakDay', input.peakDay);
   const leadDays = positive('leadDays', input.leadDays);
 
-  const perVerification = Math.round((lookup + 2 * aml) * 100) / 100;
+  const advanced = input.advancedPrice === undefined ? 0 : positive('advancedPrice', input.advancedPrice);
+  // Spec 2026-10-21 §12: an Advanced Step A attempt is up to 4 paid calls (read, liveness, match, one re-read after a crash).
+  const perVerification = Math.round((lookup + 2 * aml + 4 * advanced) * 100) / 100;
   const buffer = Math.max(peakHour, MIN_HOURLY_BUFFER);
   const minBalance = roundUp100(perVerification * buffer);
   const cover = roundUp100(perVerification * peakDay * leadDays);
@@ -53,7 +57,7 @@ export function dojahThresholds(input: ThresholdInput): ThresholdResult {
     minBalance,
     lowBalanceWarn,
     workings: [
-      `C = ${lookup} + 2 × ${aml} = ${perVerification}`,
+      advanced ? `C = ${lookup} + 2 × ${aml} + 4 × ${advanced} = ${perVerification}` : `C = ${lookup} + 2 × ${aml} = ${perVerification}`,
       `MIN = roundUp100(${perVerification} × max(${peakHour}, ${MIN_HOURLY_BUFFER})) = roundUp100(${perVerification} × ${buffer}) = ${minBalance}`,
       `WARN = ${minBalance} + roundUp100(${perVerification} × ${peakDay} × ${leadDays}) = ${minBalance} + ${cover} = ${lowBalanceWarn}`,
     ],

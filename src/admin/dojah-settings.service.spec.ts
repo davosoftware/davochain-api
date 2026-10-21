@@ -115,3 +115,52 @@ describe('The calculator', () => {
     );
   });
 });
+
+describe('Advanced settings: owners only, with their password (spec §5.3)', () => {
+  it('refuses a sub-admin', async () => {
+    const { svc } = build();
+    await expect(svc.saveAdvancedSettings(SUB, { faceMatchPass: 80, password: 'pw' })).rejects.toThrow(ForbiddenException);
+    await expect(svc.saveAdvancedSettings(SUB, { faceMatchPass: 80, password: 'pw' })).rejects.toThrow(/Only an owner/);
+  });
+
+  it('refuses a wrong password, saving nothing', async () => {
+    const { svc, upserts } = build({ passwordOk: false });
+    await expect(svc.saveAdvancedSettings(OWNER, { faceMatchPass: 80, password: 'nope' })).rejects.toThrow(/password/i);
+    expect(upserts).toHaveLength(0);
+  });
+
+  it.each([
+    [{ faceMatchPass: 70, faceMatchReview: 72 }, 'The face-match review floor must be between 60 and the pass mark.'],
+    [{ faceMatchReview: 55 }, 'The face-match review floor must be between 60 and the pass mark.'],
+    [{ faceMatchReview: 80 }, 'The face-match review floor must be between 60 and the pass mark.'],
+    [{ livenessMin: 49 }, 'The liveness score must be a whole number from 50 to 100.'],
+    [{ addressRecencyMonths: 13 }, 'Months must be a whole number from 1 to 12.'],
+    [{ advancedDailyAttempts: 5, advancedTotalAttempts: 4 }, "Tries must be whole numbers from 1 to 20, and the daily number can't be more than the total."],
+  ])('refuses %o', async (patch, message) => {
+    const { svc, upserts } = build();
+    await expect(svc.saveAdvancedSettings(OWNER, { ...patch, password: 'pw' })).rejects.toThrow(new BadRequestException(message));
+    expect(upserts).toHaveLength(0);
+  });
+
+  it('saves valid numbers, keeps other settings, never stores the password', async () => {
+    const { svc, current } = build({ stored: { minBalance: 9000 } });
+    const r = await svc.saveAdvancedSettings(OWNER, { faceMatchPass: 80, addressRecencyMonths: 6, password: 'pw' });
+    expect(r.after).toEqual({ minBalance: 9000, faceMatchPass: 80, addressRecencyMonths: 6 });
+    expect(current()).not.toHaveProperty('password');
+  });
+
+  it('the Advanced switch turns on only when readiness is green', async () => {
+    const { svc } = build({ ready: false, failing: ['wallet'] });
+    await expect(svc.setAdvancedSwitch(OWNER, { enabled: true, password: 'pw' })).rejects.toThrow(ConflictException);
+    await expect(svc.setAdvancedSwitch(OWNER, { enabled: true, password: 'pw' })).rejects.toThrow("Advanced can't be switched on yet: wallet failing.");
+  });
+
+  it('the Advanced switch: owners only; off and back-to-default work', async () => {
+    const { svc, current } = build({ stored: { advancedEnabled: true } });
+    await expect(svc.setAdvancedSwitch(SUB, { enabled: false, password: 'pw' })).rejects.toThrow(/Only an owner/);
+    await svc.setAdvancedSwitch(OWNER, { enabled: false, password: 'pw' });
+    expect(current()).toEqual({ advancedEnabled: false });
+    await svc.setAdvancedSwitch(OWNER, { enabled: null, password: 'pw' });
+    expect(current()).toEqual({});
+  });
+});
