@@ -2,14 +2,14 @@ import { Prisma } from '@prisma/client';
 import { FakePrisma, p2002 } from './fake-prisma';
 
 const va = (extra: Record<string, unknown> = {}) => ({
-  data: { userId: 'u', accountNumber: '1', accountName: 'A B', bankName: 'X', txRef: 't', source: 'CREATED', ...extra },
+  data: { userId: 'u', accountNumber: '1', accountName: 'A B', bankName: 'X', source: 'CREATED', ...extra },
 });
 
 describe('FakePrisma', () => {
   it('creates rows with defaults and an id, and hands back copies', async () => {
     const db = new FakePrisma();
     const row = await db.virtualAccount.create(va());
-    expect(row).toMatchObject({ isPrimary: false, desiredStatus: 'ACTIVE', syncFailures: 0, orderRef: null });
+    expect(row).toMatchObject({ isPrimary: false, desiredStatus: 'ACTIVE', providerRef: null });
     expect(typeof row.id).toBe('string');
     row.isPrimary = true;
     expect(db.rows('virtualAccount')[0].isPrimary).toBe(false);
@@ -42,38 +42,38 @@ describe('FakePrisma', () => {
 
   it('compares dates, and stores decimal columns as exact Decimals', async () => {
     const db = new FakePrisma();
-    await db.flutterwaveCollection.create({
-      data: { flwTransactionId: '1', firstSource: 'SWEEP', lastCheckedAt: new Date('2026-10-01T00:00:00Z'), amount: '1500.50' },
+    await db.nairaCollection.create({
+      data: { providerTransactionId: '1', firstSource: 'SWEEP', lastCheckedAt: new Date('2026-10-01T00:00:00Z'), amount: '1500.50' },
     });
-    await db.flutterwaveCollection.create({
-      data: { flwTransactionId: '2', firstSource: 'SWEEP', lastCheckedAt: new Date('2026-10-07T00:00:00Z') },
+    await db.nairaCollection.create({
+      data: { providerTransactionId: '2', firstSource: 'SWEEP', lastCheckedAt: new Date('2026-10-07T00:00:00Z') },
     });
-    const stale = await db.flutterwaveCollection.findMany({ where: { lastCheckedAt: { lt: new Date('2026-10-05T00:00:00Z') } } });
-    expect(stale.map((r) => r.flwTransactionId)).toEqual(['1']);
+    const stale = await db.nairaCollection.findMany({ where: { lastCheckedAt: { lt: new Date('2026-10-05T00:00:00Z') } } });
+    expect(stale.map((r) => r.providerTransactionId)).toEqual(['1']);
     expect(stale[0].amount).toBeInstanceOf(Prisma.Decimal);
     expect((stale[0].amount as Prisma.Decimal).toFixed()).toBe('1500.5');
   });
 
   it('increments, and refuses to update a row that is not there', async () => {
     const db = new FakePrisma();
-    await db.flutterwaveCollection.create({ data: { flwTransactionId: '1', firstSource: 'WEBHOOK' } });
-    await db.flutterwaveCollection.update({ where: { flwTransactionId: '1' }, data: { checkCount: { increment: 1 } } });
-    await db.flutterwaveCollection.update({ where: { flwTransactionId: '1' }, data: { checkCount: { increment: 2 } } });
-    expect(db.rows('flutterwaveCollection')[0].checkCount).toBe(3);
-    await expect(db.flutterwaveCollection.update({ where: { flwTransactionId: 'nope' }, data: {} })).rejects.toMatchObject({ code: 'P2025' });
+    await db.nairaCollection.create({ data: { providerTransactionId: '1', firstSource: 'WEBHOOK' } });
+    await db.nairaCollection.update({ where: { providerTransactionId: '1' }, data: { checkCount: { increment: 1 } } });
+    await db.nairaCollection.update({ where: { providerTransactionId: '1' }, data: { checkCount: { increment: 2 } } });
+    expect(db.rows('nairaCollection')[0].checkCount).toBe(3);
+    await expect(db.nairaCollection.update({ where: { providerTransactionId: 'nope' }, data: {} })).rejects.toMatchObject({ code: 'P2025' });
   });
 
   it('upserts: creates once, then updates', async () => {
     const db = new FakePrisma();
     const args = {
-      where: { flwTransactionId: '9' },
-      create: { flwTransactionId: '9', firstSource: 'SWEEP' },
+      where: { providerTransactionId: '9' },
+      create: { providerTransactionId: '9', firstSource: 'SWEEP' },
       update: { checkCount: { increment: 1 } },
     };
-    await db.flutterwaveCollection.upsert(args);
-    await db.flutterwaveCollection.upsert(args);
-    expect(db.rows('flutterwaveCollection')).toHaveLength(1);
-    expect(db.rows('flutterwaveCollection')[0].checkCount).toBe(1);
+    await db.nairaCollection.upsert(args);
+    await db.nairaCollection.upsert(args);
+    expect(db.rows('nairaCollection')).toHaveLength(1);
+    expect(db.rows('nairaCollection')[0].checkCount).toBe(1);
   });
 
   it('rolls every table back when a serializable callback throws', async () => {
@@ -98,10 +98,10 @@ describe('FakePrisma', () => {
   it('orders and limits', async () => {
     const db = new FakePrisma();
     for (const id of ['3', '1', '2']) {
-      await db.flutterwaveCollection.create({ data: { flwTransactionId: id, firstSource: 'SWEEP', firstSeenAt: new Date(Number(id) * 1000) } });
+      await db.nairaCollection.create({ data: { providerTransactionId: id, firstSource: 'SWEEP', firstSeenAt: new Date(Number(id) * 1000) } });
     }
-    const rows = await db.flutterwaveCollection.findMany({ orderBy: { firstSeenAt: 'asc' }, take: 2 });
-    expect(rows.map((r) => r.flwTransactionId)).toEqual(['1', '2']);
+    const rows = await db.nairaCollection.findMany({ orderBy: { firstSeenAt: 'asc' }, take: 2 });
+    expect(rows.map((r) => r.providerTransactionId)).toEqual(['1', '2']);
   });
 
   it('records every write payload, and refuses NOT', async () => {
@@ -114,16 +114,16 @@ describe('FakePrisma', () => {
 
   it('keeps decimal columns exact through increment, decrement and set', async () => {
     const db = new FakePrisma();
-    await db.flutterwaveCollection.create({ data: { flwTransactionId: '1', firstSource: 'SWEEP', amount: '1500.10' } });
-    await db.flutterwaveCollection.update({ where: { flwTransactionId: '1' }, data: { amount: { increment: '0.20' } } });
-    let row = db.rows('flutterwaveCollection')[0];
+    await db.nairaCollection.create({ data: { providerTransactionId: '1', firstSource: 'SWEEP', amount: '1500.10' } });
+    await db.nairaCollection.update({ where: { providerTransactionId: '1' }, data: { amount: { increment: '0.20' } } });
+    let row = db.rows('nairaCollection')[0];
     expect(row.amount).toBeInstanceOf(Prisma.Decimal);
     expect((row.amount as Prisma.Decimal).toFixed()).toBe('1500.3');
-    await db.flutterwaveCollection.update({ where: { flwTransactionId: '1' }, data: { amount: { decrement: '0.3' } } });
-    row = db.rows('flutterwaveCollection')[0];
+    await db.nairaCollection.update({ where: { providerTransactionId: '1' }, data: { amount: { decrement: '0.3' } } });
+    row = db.rows('nairaCollection')[0];
     expect((row.amount as Prisma.Decimal).toFixed()).toBe('1500');
-    await db.flutterwaveCollection.update({ where: { flwTransactionId: '1' }, data: { amount: { set: '7.25' } } });
-    row = db.rows('flutterwaveCollection')[0];
+    await db.nairaCollection.update({ where: { providerTransactionId: '1' }, data: { amount: { set: '7.25' } } });
+    row = db.rows('nairaCollection')[0];
     expect((row.amount as Prisma.Decimal).toFixed()).toBe('7.25');
   });
 });
