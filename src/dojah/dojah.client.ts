@@ -48,6 +48,8 @@ export class DojahClient extends DojahApi {
   constructor(
     private readonly cfg: Pick<DojahConfig, 'baseUrl' | 'credentials'>,
     private readonly deadlines: Partial<Record<DojahOp, number>> = DEADLINES,
+    /** For scripts/check-dojah-advanced.ts only: sees each 2xx answer. The app never sets it. */
+    private readonly onRaw?: (op: DojahOp, body: unknown) => void,
   ) {
     super();
   }
@@ -157,6 +159,7 @@ export class DojahClient extends DojahApi {
         }
         const verdict = classifyHttp(res.statusCode, parsed, op);
         this.log.log(`${method} ${shown} → ${res.statusCode} in ${Date.now() - started}ms`);
+        if (verdict.ok && !('notFound' in verdict)) this.onRaw?.(op, verdict.body);
         if (verdict.ok) return 'notFound' in verdict ? { notFound: true } : { body: verdict.body, status: res.statusCode };
         last = verdict.error;
       } catch (err) {

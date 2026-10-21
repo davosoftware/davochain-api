@@ -189,3 +189,13 @@ describe('DojahClient: the Advanced calls (spec 2026-10-21 §3)', () => {
     expect(seen).toHaveLength(1);
   });
 });
+
+describe('DojahClient onRaw hook (sandbox check script only)', () => {
+  it('hands each successful answer to the hook with its call name', async () => {
+    handler = (_q, res) => json(res, 200, { entity: { data: ['x'] } });
+    const seenRaw: Array<[string, unknown]> = [];
+    const c = new DojahClient({ baseUrl: base, credentials: async () => ({ appId: 'a', secretKey: 's' }) } as never, undefined, (op, body) => seenRaw.push([op, body]));
+    await c.ocr('IMG');
+    expect(seenRaw).toEqual([['ocr', { entity: { data: ['x'] } }]]);
+  });
+});
