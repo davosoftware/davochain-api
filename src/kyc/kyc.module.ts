@@ -11,6 +11,9 @@ import { DojahRecoveryService } from '../dojah/dojah-recovery.service';
 import { BasicReviewService } from './basic-review.service';
 import { APPROVER, ComplianceReviewService } from '../compliance/compliance-review.service';
 import { AdvancedVerificationService } from './advanced/advanced-verification.service';
+import { AdvancedApprover } from './advanced/advanced-approver';
+import { AdvancedRunner } from './advanced/advanced-runner.service';
+import { AdvancedProcessor } from './advanced/advanced.processor';
 
 @Module({
   imports: [DojahModule, ComplianceModule],
@@ -24,11 +27,14 @@ import { AdvancedVerificationService } from './advanced/advanced-verification.se
     BasicReviewService,
     ComplianceReviewService,
     AdvancedVerificationService,
+    AdvancedApprover,
+    AdvancedRunner,
+    AdvancedProcessor,
     // Compliance releases a person through Basic approval; this token keeps the module graph acyclic.
     { provide: APPROVER, useExisting: BasicVerificationService },
     DojahReadinessService,
     { provide: READINESS, useExisting: DojahReadinessService },
   ],
-  exports: [KycService, KycDocumentsService, KycHashService, BasicVerificationService, DojahRecoveryService, BasicReviewService, ComplianceReviewService, DojahReadinessService, AdvancedVerificationService],
+  exports: [KycService, KycDocumentsService, KycHashService, BasicVerificationService, DojahRecoveryService, BasicReviewService, ComplianceReviewService, DojahReadinessService, AdvancedVerificationService, AdvancedApprover, AdvancedRunner],
 })
 export class KycModule {}
