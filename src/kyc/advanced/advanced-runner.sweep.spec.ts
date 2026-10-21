@@ -18,7 +18,7 @@ function build(rows: Record<string, unknown>[]) {
 
 describe('AdvancedRunner.sweep (spec 2026-10-21 §6)', () => {
   it('re-queues a quiet CHECKING row, times out an hour-old one, leaves a busy one alone', async () => {
-    const { runner, submitter, get } = build([row('a', 3, 3), row('b', 61, 61, { readOutcome: 'UNKNOWN' }), row('c', 1, 1), row('d', 5, 5, { state: 'IN_REVIEW' })]);
+    const { runner, submitter, get } = build([row('a', 8, 7), row('b', 61, 61, { readOutcome: 'UNKNOWN' }), row('c', 1, 1), row('d', 9, 9, { state: 'IN_REVIEW' })]);
     expect(await runner.sweep()).toEqual({ requeued: 1, timedOut: 1 });
     expect(submitter.enqueue).toHaveBeenCalledTimes(1);
     expect(submitter.enqueue).toHaveBeenCalledWith('a', expect.stringMatching(/^r\d+$/));
@@ -34,9 +34,17 @@ describe('AdvancedRunner.sweep (spec 2026-10-21 §6)', () => {
   });
 
   it('one failed re-queue does not stop the sweep', async () => {
-    const { runner, submitter } = build([row('a', 3, 3), row('f', 4, 4)]);
+    const { runner, submitter } = build([row('a', 8, 7), row('f', 9, 8)]);
     submitter.enqueue.mockRejectedValueOnce(new Error('redis down'));
     expect(await runner.sweep()).toEqual({ requeued: 2, timedOut: 0 });
     expect(submitter.enqueue).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('final review I3: the sweep leaves rows that may only be waiting out a retry delay', () => {
+  it('a row quiet for 3 minutes is left; 7 minutes is re-queued', async () => {
+    const { runner, submitter } = build([row('a', 3, 3), row('b', 8, 7)]);
+    expect(await runner.sweep()).toEqual({ requeued: 1, timedOut: 0 });
+    expect(submitter.enqueue).toHaveBeenCalledWith('b', expect.any(String));
   });
 });

@@ -116,8 +116,8 @@ describe('address evidence and decision (spec §7.2)', () => {
     expect(evidence).toMatchObject({ source: 'BILL', name: 'FULL', date: '2026-10-01', address: 'MATCH', provider: 'Ikeja Electric' });
     expect(decideAddress({ kind: 'UTILITY_BILL', pdf: false, evidence, recencyMonths: 3, today }).outcome).toBe('APPROVE');
   });
-  it('a bill Dojah could not read is rejected', () => {
+  it('a bill Dojah answered but could not read goes to a person (only a 424 rejects; final review M1)', () => {
     const evidence = summariseBill({ ok: false, fullName: null, street: null, city: null, state: null, issueDate: null, isRecent: null, provider: null }, verified);
-    expect(decideAddress({ kind: 'UTILITY_BILL', pdf: false, evidence, recencyMonths: 3, today })).toMatchObject({ outcome: 'REJECT', code: 'DOC_UNREADABLE' });
+    expect(decideAddress({ kind: 'UTILITY_BILL', pdf: false, evidence, recencyMonths: 3, today })).toEqual({ outcome: 'REVIEW', reasons: ['TEXT_SPARSE'] });
   });
 });

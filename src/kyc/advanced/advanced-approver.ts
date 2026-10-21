@@ -23,17 +23,18 @@ export class AdvancedApprover {
     private readonly referrals: ReferralsService,
   ) {}
 
-  async approve(tx: Tx, id: string): Promise<Effect[]> {
+  /** `from`: CHECKING for the automatic path, IN_REVIEW for a person (spec §6, §8). */
+  async approve(tx: Tx, id: string, from: 'CHECKING' | 'IN_REVIEW'): Promise<Effect[]> {
     const v = await tx.advancedVerification.findUniqueOrThrow({ where: { id } });
-    const [from, to]: [KycTier, KycTier] = v.step === 'IDENTITY' ? ['TIER_1', 'TIER_2'] : ['TIER_2', 'TIER_3'];
+    const [fromTier, to]: [KycTier, KycTier] = v.step === 'IDENTITY' ? ['TIER_1', 'TIER_2'] : ['TIER_2', 'TIER_3'];
     const r = await tx.advancedVerification.updateMany({
-      where: { id, state: { in: ['CHECKING', 'IN_REVIEW'] } },
+      where: { id, state: from },
       data: { state: 'APPROVED', activeFor: null, customerMessage: null },
     });
     if (r.count !== 1) return [];
     // Only ever one level up, from the level this step starts at: never lowers a level set some other way.
-    await tx.kycProfile.updateMany({ where: { userId: v.userId, tier: from }, data: { tier: to, status: 'APPROVED', reviewedAt: new Date(), rejectionReason: null } });
-    await tx.user.updateMany({ where: { id: v.userId, kycTier: from }, data: { kycTier: to, kycStatus: 'APPROVED' } });
+    await tx.kycProfile.updateMany({ where: { userId: v.userId, tier: fromTier }, data: { tier: to, status: 'APPROVED', reviewedAt: new Date(), rejectionReason: null } });
+    await tx.user.updateMany({ where: { id: v.userId, kycTier: fromTier }, data: { kycTier: to, kycStatus: 'APPROVED' } });
     await tx.kycDocument.updateMany({ where: { id: { in: docIds(v) } }, data: { status: 'APPROVED', reviewedAt: new Date() } });
     // The tier rides in the JWT; revoking makes the new level apply now (as Basic approval does).
     await tx.refreshToken.updateMany({ where: { userId: v.userId, revokedAt: null }, data: { revokedAt: new Date() } });

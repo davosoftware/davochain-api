@@ -96,3 +96,19 @@ describe("Dojah's documented examples (fixtures)", () => {
   it('utility bill', () => expect(parseBill(fixture('utility-bill.json'))).toMatchObject({ ok: true, fullName: 'JOHN DOE MUSA', isRecent: true, issueDate: '2025-01-15' }));
   it('ocr', () => expect(parseOcr(fixture('ocr.json'))).toEqual(['Surname:', 'DOE', '70142123456']));
 });
+
+describe('final review I5: a date Dojah read but we cannot parse', () => {
+  it('counts as unreadable (a person decides), never as missing (a reject)', () => {
+    const r = parseIdAnalysis({
+      entity: {
+        status: { overall_status: 1 },
+        text_data: [
+          { field_key: 'dob', status: 1, value: '12 MAR /MARS 85' },
+          { field_key: 'expiry_date', status: 1, value: 'sometime' },
+        ],
+      },
+    });
+    expect(r.read.dateOfBirth).toBeNull();
+    expect(r.read.unreadable).toEqual(['dateOfBirth', 'expiry']);
+  });
+});

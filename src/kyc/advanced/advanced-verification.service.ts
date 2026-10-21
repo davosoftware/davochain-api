@@ -26,6 +26,7 @@ export const MSG_ADV_DAILY = "You've used today's attempts. Try again tomorrow."
 export const MSG_ADV_TOTAL = "You've used all your verification attempts. Contact support.";
 export const MSG_NEED_BASIC = 'Complete Basic verification first.';
 export const MSG_NEED_IDENTITY = 'Complete your ID and selfie check first.';
+export const MSG_NEED_RECORD = 'We need to check your Basic details before Advanced. Please contact support.';
 
 const FRONT_TYPE: Record<AdvancedIdTypeName, KycDocumentType> = {
   NATIONAL_ID: KycDocumentType.NATIONAL_ID,
@@ -115,6 +116,13 @@ export class AdvancedVerificationService {
           if (approved && user.kycTier === 'TIER_3') throw new ConflictException('You are already fully verified.');
           if (!approved || user.kycTier !== 'TIER_2') throw new ForbiddenException(MSG_NEED_IDENTITY);
         }
+
+        // Advanced compares against the verified Basic record: without one, a person must sort it out first.
+        const basic = await tx.kycVerification.findFirst({
+          where: { userId, state: 'APPROVED', recordFirstName: { not: null }, recordLastName: { not: null }, recordDateOfBirth: { not: null } },
+          select: { id: true },
+        });
+        if (!basic) throw new ForbiddenException(MSG_NEED_RECORD);
 
         // A check that failed on our side (FAILED_SYSTEM) is never counted against the customer.
         const counted = { userId, step, state: { not: 'FAILED_SYSTEM' as const } };

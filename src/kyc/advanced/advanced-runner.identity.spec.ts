@@ -162,3 +162,58 @@ describe('AdvancedRunner, Step A (spec 2026-10-21 §6, §7.1)', () => {
     expect(h.dojah.calls).toMatchObject({ readId: 1, faceMatch: 0 }); // no second paid read: the photo wasn't lost, there isn't one
   });
 });
+
+describe('final review fixes (Step A)', () => {
+  it('C1: a face match that keeps failing re-reads the ID at most once, then goes to a person', async () => {
+    const h = await harness({ selfie: 'match-server' });
+    await expect(h.runner.run('v1')).rejects.toThrow(/500/); // read, liveness, match fails
+    await expect(h.runner.run('v1')).rejects.toThrow(/500/); // one re-read, match fails again
+    await h.runner.run('v1'); // no third read: a person decides
+    expect(h.dojah.calls.readId).toBe(2);
+    expect(h.row()).toMatchObject({ state: 'IN_REVIEW', reviewReasons: ['SYSTEM'], readSends: 2 });
+  });
+
+  it('C1: a face match still in flight elsewhere does not trigger a re-read', async () => {
+    const h = await harness();
+    h.patch({
+      readOutcome: 'SUCCEEDED', readSends: 1, livenessOutcome: 'SUCCEEDED', livenessSends: 1, matchOutcome: 'IN_FLIGHT', matchStartedAt: new Date(), matchSends: 1,
+      findings: { id: cleanRead, liveness: { live: true, probability: 98, faceDetected: true, multiFace: false } },
+    });
+    await expect(h.runner.run('v1')).rejects.toBeInstanceOf(BusyError);
+    expect(h.dojah.calls.readId).toBe(0);
+  });
+
+  it('I1: a read recorded as done but whose findings were lost is read again once, not left stuck', async () => {
+    const h = await harness();
+    h.patch({ readOutcome: 'SUCCEEDED', readSends: 1, findings: {} });
+    await h.runner.run('v1');
+    expect(h.row()).toMatchObject({ state: 'APPROVED', readSends: 2 });
+  });
+
+  it('I1: a liveness recorded as done but whose finding was lost goes to a person with a reason', async () => {
+    const h = await harness();
+    h.patch({ readOutcome: 'SUCCEEDED', readSends: 1, livenessOutcome: 'SUCCEEDED', livenessSends: 1, findings: { id: cleanRead } });
+    await h.runner.run('v1');
+    expect(h.row()).toMatchObject({ state: 'IN_REVIEW', reviewReasons: ['SYSTEM'] });
+    expect(h.dojah.calls.liveness).toBe(0);
+  });
+
+  it('I2: a row moved on by someone else while the checks ran is not overwritten or approved', async () => {
+    const h = await harness();
+    const real = h.dojah.faceMatch.bind(h.dojah);
+    jest.spyOn(h.dojah, 'faceMatch').mockImplementation(async (a: string, b: string) => {
+      h.patch({ state: 'IN_REVIEW', reviewReasons: ['LIVENESS_LOW'] });
+      return real(a, b);
+    });
+    await h.runner.run('v1');
+    expect(h.row()).toMatchObject({ state: 'IN_REVIEW', reviewReasons: ['LIVENESS_LOW'] });
+    expect(h.user.kycTier).toBe('TIER_1');
+  });
+
+  it('I6: Dojah refusing our request (400) sends it to a person and alerts ops, without freeing endless paid retries', async () => {
+    const h = await harness({ front: 'id-badreq' });
+    await h.runner.run('v1');
+    expect(h.row()).toMatchObject({ state: 'IN_REVIEW', reviewReasons: ['SYSTEM'], activeFor: 'u1' });
+    expect(h.alerts.raise).toHaveBeenCalled();
+  });
+});

@@ -42,7 +42,8 @@ export class AdvancedReviewService {
       const [user, documents, verified] = await Promise.all([
         this.prisma.user.findUnique({ where: { id: r.userId }, select: { id: true, firstName: true, lastName: true, email: true } }),
         this.prisma.kycDocument.findMany({ where: { id: { in: ids } }, select: { id: true, type: true, mimeType: true } }),
-        this.runner.verified(r.userId),
+        // One customer's unreadable Basic record must not take down the whole list (final review I4).
+        this.runner.verified(r.userId).catch(() => null),
       ]);
       out.push({
         id: r.id,
@@ -72,7 +73,7 @@ export class AdvancedReviewService {
       const v = await tx.advancedVerification.findFirst({ where: { id, state: 'IN_REVIEW' } });
       if (!v) throw nothing();
       const message = d.approve ? null : d.reason === 'OTHER' ? note! : REVIEW_REJECT_MESSAGES[d.reason as keyof typeof REVIEW_REJECT_MESSAGES];
-      const effects = d.approve ? await this.approver.approve(tx, id) : await this.approver.reject(tx, id, 'BY_REVIEW', message!, 'IN_REVIEW');
+      const effects = d.approve ? await this.approver.approve(tx, id, 'IN_REVIEW') : await this.approver.reject(tx, id, 'BY_REVIEW', message!, 'IN_REVIEW');
       // Someone else decided it between our read and our write: nothing changed.
       if (!effects.length) throw nothing();
       const next = d.approve ? ('APPROVED' as const) : ('REJECTED' as const);

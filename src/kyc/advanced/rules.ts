@@ -130,7 +130,8 @@ export function summariseText(lines: string[], kind: AddressKindName, verified: 
 export function decideAddress(i: { kind: AddressKindName; pdf: boolean; evidence?: AddressEvidence; recencyMonths: number; today: string }): Decision {
   if (i.pdf || !i.evidence) return { outcome: 'REVIEW', reasons: ['PDF'] };
   const e = i.evidence;
-  if (e.source === 'BILL' && e.textLength === 0) return { outcome: 'REJECT', code: 'DOC_UNREADABLE', reasons: [] };
+  // Dojah answered but couldn't read the bill: a person looks (only a 424 is a reject, spec §7.2).
+  if (e.source === 'BILL' && e.textLength === 0) return { outcome: 'REVIEW', reasons: ['TEXT_SPARSE'] };
 
   const reasons: ReviewReason[] = [];
   let reject: RejectCode | null = null;

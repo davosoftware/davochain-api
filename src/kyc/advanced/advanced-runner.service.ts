@@ -40,7 +40,7 @@ class Stopped extends Error {}
 type Call = 'read' | 'liveness' | 'match' | 'address';
 const COL = (c: Call) => ({ outcome: `${c}Outcome`, started: `${c}StartedAt`, sends: `${c}Sends`, http: `${c}HttpStatus` }) as const;
 /** Configuration failures: retrying cannot help, and ops must know. */
-const STOP_KINDS = new Set(['WALLET', 'AUTH', 'IP', 'CONFIG', 'BAD_REQUEST']);
+const STOP_KINDS = new Set(['WALLET', 'AUTH', 'IP', 'CONFIG']);
 
 /** What is kept from an attempt (spec §5.2): never the portrait, a full document number, or document text. */
 export interface Findings {
@@ -116,6 +116,8 @@ export class AdvancedRunner {
       this.base64(v.selfieDocumentId!),
     ]);
     const f: Findings = { ...(v.findings as Findings) };
+    // A call recorded as done whose result never got saved (a crash in between): a person decides.
+    const system = () => this.finish(v.id, { outcome: 'REVIEW', reasons: ['SYSTEM'] }, f, s);
     let portrait: string | null = null;
     let readThisRun = false;
     const readId = async (again: boolean) => {
@@ -130,10 +132,14 @@ export class AdvancedRunner {
       }
     };
 
-    if (v.readOutcome !== 'SUCCEEDED') {
-      const r = await readId(false);
+    // Final review I1: the read is recorded as done but what it found was lost. Read once more, or a person decides.
+    const lostRead = v.readOutcome === 'SUCCEEDED' && !f.id;
+    if (lostRead && v.readSends >= 2) return system();
+    if (v.readOutcome !== 'SUCCEEDED' || lostRead) {
+      const r = await readId(lostRead);
       portrait = r.portrait;
       readThisRun = true;
+      if (lostRead) f.readAgain = true;
       await this.recordIdRead(v.id, idType, r.read, f);
     }
     const base = { idType, read: f.id!, verified, t, today };
@@ -141,6 +147,7 @@ export class AdvancedRunner {
     let d = decideIdentity(base);
     if (d.outcome === 'REJECT') return this.finish(v.id, d, f, s);
 
+    if (v.livenessOutcome === 'SUCCEEDED' && !f.liveness) return system();
     if (v.livenessOutcome !== 'SUCCEEDED') {
       f.liveness = (await this.paid(v.id, 'liveness', () => this.dojah.liveness(selfie), false)).read;
       await this.saveFindings(v.id, f);
@@ -148,9 +155,15 @@ export class AdvancedRunner {
     d = decideIdentity({ ...base, liveness: f.liveness });
     if (d.outcome === 'REJECT') return this.finish(v.id, d, f, s);
 
+    if (v.matchOutcome === 'SUCCEEDED' && !f.match && !f.noPortrait) return system();
     if (v.matchOutcome !== 'SUCCEEDED' && !f.noPortrait) {
       if (!portrait && !readThisRun) {
-        // The portrait is never stored (spec §6): after a crash, read the ID again, once, and say so.
+        // The portrait is never stored (spec §6): read the ID again, but at most ONCE per attempt
+        // (final review C1), and never while the face match is in flight on another worker.
+        const now = await this.prisma.advancedVerification.findUniqueOrThrow({ where: { id: v.id }, select: { matchOutcome: true, matchStartedAt: true, readSends: true } });
+        const matchBusy = now.matchOutcome === 'IN_FLIGHT' && !!now.matchStartedAt && now.matchStartedAt.getTime() >= Date.now() - LEASE_MS;
+        if (matchBusy) throw new BusyError(v.id);
+        if (now.readSends >= 2) return system();
         portrait = (await readId(true)).portrait;
         f.readAgain = true;
       }
@@ -168,8 +181,8 @@ export class AdvancedRunner {
   private async recordIdRead(id: string, idType: string, read: IdRead, f: Findings): Promise<void> {
     const number = read.documentNumber?.replace(/\s+/g, '').toUpperCase() || null;
     f.id = { ...read, documentNumber: null };
-    await this.prisma.advancedVerification.update({
-      where: { id },
+    await this.prisma.advancedVerification.updateMany({
+      where: { id, state: 'CHECKING' },
       data: {
         findings: f as Prisma.InputJsonValue,
         docHash: number ? this.hasher.hash(`${idType}:${number}`) : null,
@@ -197,7 +210,7 @@ export class AdvancedRunner {
   }
 
   protected async saveFindings(id: string, f: Findings): Promise<void> {
-    await this.prisma.advancedVerification.update({ where: { id }, data: { findings: f as Prisma.InputJsonValue } });
+    await this.prisma.advancedVerification.updateMany({ where: { id, state: 'CHECKING' }, data: { findings: f as Prisma.InputJsonValue } });
   }
 
   /**
@@ -235,6 +248,16 @@ export class AdvancedRunner {
         where: { id },
         data: { [c.outcome]: e.definitelyFailed ? 'DEFINITELY_FAILED' : 'UNKNOWN', [c.http]: e.httpStatus || null } as Prisma.AdvancedVerificationUpdateInput,
       });
+      if (e.kind === 'BAD_REQUEST') {
+        // Dojah refused this request (e.g. one customer's image): retrying would only pay again.
+        // A person looks at the files; ops are told in case it's every request (final review I6).
+        await this.alerts.raise(AlertType.DOJAH_CONFIG, 'dojah:BAD_REQUEST', 'Dojah refused an Advanced check request', [e.message]);
+        await this.prisma.advancedVerification.updateMany({
+          where: { id, state: 'CHECKING' },
+          data: { state: 'IN_REVIEW', reviewReasons: ['SYSTEM'], customerMessage: MSG_IN_REVIEW, failureReason: 'BAD_REQUEST' },
+        });
+        throw new Stopped();
+      }
       if (STOP_KINDS.has(e.kind)) {
         if (e.kind === 'WALLET') this.readiness?.markNotReady('wallet');
         if (e.kind === 'AUTH' || e.kind === 'IP') this.readiness?.markNotReady('keys');
@@ -247,12 +270,13 @@ export class AdvancedRunner {
   }
 
   /**
-   * Spec §6: queue again any CHECKING row nobody has touched for 2 minutes (a
-   * lost job, a Redis restart); end any still CHECKING after an hour. Ending is
-   * FAILED_SYSTEM, which never counts against the customer.
+   * Spec §6: queue again any CHECKING row nobody has touched for 6 minutes (a
+   * lost job, a Redis restart): longer than BullMQ's longest retry delay (320 s),
+   * so a job that is only waiting is not doubled. End any still CHECKING after an
+   * hour. Ending is FAILED_SYSTEM, which never counts against the customer.
    */
   async sweep(now = new Date()): Promise<{ requeued: number; timedOut: number }> {
-    const quiet = new Date(now.getTime() - 2 * 60_000);
+    const quiet = new Date(now.getTime() - 6 * 60_000);
     const old = new Date(now.getTime() - 60 * 60_000);
     let timedOut = 0;
     for (const v of await this.prisma.advancedVerification.findMany({ where: { state: 'CHECKING', createdAt: { lt: old } }, take: 100 })) {
@@ -285,9 +309,13 @@ export class AdvancedRunner {
 
   /** The decision, with a compare-and-set from CHECKING; approval raises the level in the same transaction. */
   protected async finish(id: string, d: Decision, f: Findings, s: DojahSettings): Promise<void> {
+    // A review with no reason would leave the admin guessing: name it.
+    const reasons = d.outcome === 'REVIEW' && d.reasons.length === 0 ? ['SYSTEM' as const] : d.reasons;
     const effects = await this.prisma.$transaction(async (tx) => {
-      await tx.advancedVerification.update({ where: { id }, data: { findings: f as Prisma.InputJsonValue, reviewReasons: d.reasons } });
-      if (d.outcome === 'APPROVE') return this.approver.approve(tx, id);
+      // Someone (a person, a sweep, another worker) moved it on: leave their result alone.
+      const still = await tx.advancedVerification.updateMany({ where: { id, state: 'CHECKING' }, data: { findings: f as Prisma.InputJsonValue, reviewReasons: reasons } });
+      if (still.count !== 1) return [];
+      if (d.outcome === 'APPROVE') return this.approver.approve(tx, id, 'CHECKING');
       if (d.outcome === 'REJECT') {
         const message = d.code === 'DOC_TOO_OLD' ? tooOldMessage(s.addressRecencyMonths) : REJECT_MESSAGES[d.code as keyof typeof REJECT_MESSAGES];
         return this.approver.reject(tx, id, d.code, message, 'CHECKING');

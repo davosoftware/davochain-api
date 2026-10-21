@@ -8,6 +8,7 @@ import {
   MSG_ADV_TOTAL,
   MSG_NEED_BASIC,
   MSG_NEED_IDENTITY,
+  MSG_NEED_RECORD,
 } from './advanced-verification.service';
 import { MSG_FAILED_SYSTEM } from './advanced.types';
 
@@ -37,6 +38,7 @@ function build() {
     $transaction: jest.fn(async (fn: (tx: unknown) => unknown): Promise<unknown> => fn(prisma)),
     $executeRaw: jest.fn(async () => 1),
     user: { findUniqueOrThrow: jest.fn(async () => ({ ...user })) },
+    kycVerification: { findFirst: jest.fn(async (): Promise<unknown> => ({ id: 'basic' })) },
     kycDocument: {
       findFirst: jest.fn(async ({ where }: { where: { id: string; profile: { userId: string } } }) => {
         const d = docs.find((x) => x.id === where.id && x.userId === where.profile.userId);
@@ -200,5 +202,14 @@ describe('summary', () => {
     const { svc, seed } = build();
     seed('IDENTITY', 1, { state: 'APPROVED', customerMessage: 'stale' });
     expect((await svc.summary('u1')).identity).toMatchObject({ state: 'APPROVED', reason: null, attemptsLeft: { today: 2, total: 9 } });
+  });
+});
+
+describe('final review I4: no readable Basic record', () => {
+  it('is refused at submit (403, contact support) instead of an hour of failed retries', async () => {
+    const { svc, prisma, rows } = build();
+    prisma.kycVerification.findFirst.mockResolvedValueOnce(null);
+    await expect(svc.submitIdentity('u1', ok)).rejects.toMatchObject({ status: 403, message: MSG_NEED_RECORD });
+    expect(rows).toHaveLength(0);
   });
 });

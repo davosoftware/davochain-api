@@ -59,8 +59,11 @@ export function parseIdAnalysis(body: unknown): { read: IdRead; portrait: string
   }
   const out: IdRead['unreadable'] = [];
   if ((!firstName || !lastName) && (unreadable('first') || unreadable('last') || unreadable('full'))) out.push('name');
-  if (unreadable('dob')) out.push('dateOfBirth');
-  if (unreadable('expiry')) out.push('expiry');
+  // Read by Dojah but in a form we can't parse (e.g. "12 MAR /MARS 85"): a person decides, never a reject.
+  const dateOfBirth = toIsoDate(value('dob'));
+  const expiry = toIsoDate(value('expiry'));
+  if (unreadable('dob') || (value('dob') && !dateOfBirth)) out.push('dateOfBirth');
+  if (unreadable('expiry') || (value('expiry') && !expiry)) out.push('expiry');
   if (unreadable('number')) out.push('documentNumber');
 
   return {
@@ -70,8 +73,8 @@ export function parseIdAnalysis(body: unknown): { read: IdRead; portrait: string
       firstName,
       middleName,
       lastName,
-      dateOfBirth: toIsoDate(value('dob')),
-      expiry: toIsoDate(value('expiry')),
+      dateOfBirth,
+      expiry,
       documentNumber: value('number'),
       unreadable: out,
     },

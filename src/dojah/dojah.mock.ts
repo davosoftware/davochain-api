@@ -31,10 +31,11 @@ const FAIL: Record<string, () => DojahError> = {
   wallet: () => new DojahError('WALLET', 'mock 402', 402),
   '424': () => new DojahError('UNPROCESSABLE', 'mock 424', 424),
   server: () => new DojahError('SERVER', 'mock 500', 500),
+  badreq: () => new DojahError('BAD_REQUEST', 'mock 400', 400),
 };
-/** "<call>-timeout", "<call>-wallet", "<call>-424" and "<call>-server" fail that call. */
+/** "<call>-timeout", "-wallet", "-424", "-server" and "-badreq" fail that call. */
 const failFor = (s: string | null, call: 'id' | 'live' | 'match' | 'addr') => {
-  const m = s?.match(new RegExp(`^${call}-(timeout|wallet|424|server)$`));
+  const m = s?.match(new RegExp(`^${call}-(timeout|wallet|424|server|badreq)$`));
   if (m) throw FAIL[m[1]]();
 };
 

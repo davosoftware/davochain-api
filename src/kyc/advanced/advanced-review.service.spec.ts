@@ -97,3 +97,18 @@ describe('AdvancedReviewService.list', () => {
     expect(await h.svc.list()).toMatchObject({ waiting: 0, approvedToday: 1, rows: [] });
   });
 });
+
+describe('final review I2/I4', () => {
+  it('I4: one row whose Basic record cannot be read does not take down the whole list', async () => {
+    const h = build();
+    (h.svc as unknown as { runner: { verified: jest.Mock } }).runner.verified.mockRejectedValueOnce(new Error('No verified Basic record'));
+    const r = await h.svc.list();
+    expect(r.rows[0]).toMatchObject({ id: 'v1', verified: null });
+  });
+  it('I2: the automatic path cannot approve a row a person is reviewing', async () => {
+    const h = build('IN_REVIEW');
+    const approver = (h.svc as unknown as { approver: AdvancedApprover }).approver;
+    expect(await approver.approve(h.db as never, 'v1', 'CHECKING')).toEqual([]);
+    expect(h.row().state).toBe('IN_REVIEW');
+  });
+});
