@@ -20,6 +20,17 @@
    - **Integration notes:** UX rules and gotchas
 3. Use **Part 2, Appendices** for push notifications, enum values, ready-made Dart code, testing on the local backend, and known limitations.
 
+## What changed for the app (21 October 2026): Payrep is the naira provider
+
+DavoChain moved its naira deposits and payouts from Flutterwave to **Payrep MFB**. No request body changes; some values the app shows do.
+
+| Change | Where | What the app must do |
+| --- | --- | --- |
+| **Deposit accounts are Payrep accounts:** `bankName` is `"Payrep MFB"`, and the account name starts with DavoChain's business name | 6.4, 6.5 | Show `bankName` and `accountName` exactly as sent. The account is still permanent and the same flow opens it. |
+| **Bank codes in the bank list are 6-digit NIP codes** (Access Bank is `"000014"`, was `"044"`) | 8.5, 8.6, 8.8 | Always take `code` from 8.5. A bank account saved before 21 Oct with a 3-digit code answers `400 "Choose a supported Nigerian bank"` at withdrawal: ask the customer to save it again. |
+| **`provider` in deposit history is `PAYREP`** for a bank transfer into the naira account | 6.3 | Treat `PAYREP` (and the older `FLUTTERWAVE`) as "bank transfer". |
+| **A deposit into a switched-off account is held** | 6.4 | Nothing to send. It shows as `ON_HOLD` (push `deposit.on_hold`) until an admin reviews it. |
+
 ## What changed for the app (21 October 2026): Advanced verification
 
 | Change | Where | What the app must do |
@@ -33,8 +44,8 @@
 
 | Change | Where | What the app must do |
 | --- | --- | --- |
-| **Naira withdrawals are paid by Flutterwave** (our naira rail), not Quidax | 8.7 | Nothing in the request changes. |
-| **The bank list (8.5) and account-name check (8.6, 8.8) come from Flutterwave** | 8.5, 8.6, 8.8 | Always load banks from 8.5. A bank account saved before 19 Oct with a code Flutterwave doesn't know answers `400 "Choose a supported Nigerian bank"` at withdrawal: ask the customer to save it again. |
+| **Naira withdrawals are paid by the naira rail** (Flutterwave then; Payrep since 21 Oct), not Quidax | 8.7 | Nothing in the request changes. |
+| **The bank list (8.5) and account-name check (8.6, 8.8) come from the naira rail** | 8.5, 8.6, 8.8 | Always load banks from 8.5. A bank account saved before 19 Oct with a code the rail doesn't know answers `400 "Choose a supported Nigerian bank"` at withdrawal: ask the customer to save it again. |
 
 ## What changed for the app (16 October 2026): balance corrections
 
@@ -1352,8 +1363,8 @@ Authorization: Bearer eyJhbGciOi…
 ```json
 [
   { "id": "c1d2e3f4-…", "asset": "usdt", "amount": "150",    "status": "COMPLETED", "reason": null, "provider": "QUIDAX",      "counterpartyBank": null,          "createdAt": "2026-10-02T08:00:00.000Z", "completedAt": "2026-10-02T08:03:00.000Z" },
-  { "id": "c2e3f4a5-…", "asset": "ngn",  "amount": "1000",   "status": "COMPLETED", "reason": null, "provider": "FLUTTERWAVE", "counterpartyBank": "Access Bank", "createdAt": "2026-10-01T15:00:00.000Z", "completedAt": "2026-10-01T15:00:00.000Z" },
-  { "id": "c3f4a5b6-…", "asset": "ngn",  "amount": "750000", "status": "ON_HOLD",   "reason": "That would take you past your ₦500,000 daily deposit limit. You have ₦200,000 left today.", "provider": "FLUTTERWAVE", "counterpartyBank": "GTBank", "createdAt": "2026-10-01T14:00:00.000Z", "completedAt": null }
+  { "id": "c2e3f4a5-…", "asset": "ngn",  "amount": "1000",   "status": "COMPLETED", "reason": null, "provider": "PAYREP", "counterpartyBank": "Access Bank", "createdAt": "2026-10-01T15:00:00.000Z", "completedAt": "2026-10-01T15:00:00.000Z" },
+  { "id": "c3f4a5b6-…", "asset": "ngn",  "amount": "750000", "status": "ON_HOLD",   "reason": "That would take you past your ₦500,000 daily deposit limit. You have ₦200,000 left today.", "provider": "PAYREP", "counterpartyBank": "GTBank", "createdAt": "2026-10-01T14:00:00.000Z", "completedAt": null }
 ]
 ```
 
@@ -1364,7 +1375,7 @@ Authorization: Bearer eyJhbGciOi…
 | `amount` | string | Full precision; format with the coin's `displayScale` |
 | `status` | string | `PENDING` (confirming) / `ON_HOLD` / `COMPLETED` / `FAILED` |
 | `reason` | string \| null | Why it's on hold or failed |
-| `provider` | string | `FLUTTERWAVE` for a bank transfer into the naira account (6.4); `QUIDAX` otherwise |
+| `provider` | string | `PAYREP` for a bank transfer into the naira account (6.4); `FLUTTERWAVE` on deposits from before 21 Oct 2026; `QUIDAX` otherwise |
 | `counterpartyBank` | string \| null | The sending bank, for a naira bank transfer |
 | `createdAt` | string | |
 | `completedAt` | string \| null | When it was credited |
@@ -1392,7 +1403,7 @@ Authorization: Bearer eyJhbGciOi…
 
 **Response** `200`
 ```json
-{ "accountNumber": "0067100155", "accountName": "Ada Obi", "bankName": "Flutterwave MFB", "status": "ACTIVE" }
+{ "accountNumber": "2070174481", "accountName": "DAVOCHAIN/ADA OBI", "bankName": "Payrep MFB", "status": "ACTIVE" }
 ```
 
 | Field | Type | Description |
@@ -1400,7 +1411,7 @@ Authorization: Bearer eyJhbGciOi…
 | `accountNumber` | string | 10 digits. Show it with a copy button. |
 | `accountName` | string | The name the sender's banking app shows when they type the number |
 | `bankName` | string | The bank to pick in the sender's app |
-| `status` | string | `ACTIVE`, or `INACTIVE` while the account is switched off (for example during a suspension). Never show an `INACTIVE` number as something to pay into. |
+| `status` | string | `ACTIVE`, or `INACTIVE` while the account is switched off (for example during a suspension). Never show an `INACTIVE` number as something to pay into: money sent to it is held for an admin, not credited. |
 
 **Errors**
 
@@ -1424,7 +1435,7 @@ Possible `reason` values when `eligible` is `false`:
 
 **Integration notes**
 - Call it when the naira deposit screen opens. On 404 with `eligible: true`, offer "Get my account number" (6.5). With `eligible: false`, show `reason`.
-- A deposit shows up in 6.3 and as a `deposit.credited` push. A deposit over the user's KYC limit shows as `ON_HOLD` (push `deposit.on_hold`) until an admin reviews it.
+- A deposit shows up in 6.3 and as a `deposit.credited` push. A deposit over the user's limit, or into an account that is switched off, shows as `ON_HOLD` (push `deposit.on_hold`) until an admin reviews it.
 
 ---
 
@@ -1433,7 +1444,7 @@ Possible `reason` values when `eligible` is `false`:
 **Endpoint:** `POST /v1/deposits/ngn/account` · **Auth:** **Bearer** · **KYC:** Basic (`TIER_1`) approved **and** not under review (checked server-side) · **Success:** `201`, `200` or `202`
 
 **What it does**
-Creates the user's permanent naira account at Flutterwave, DavoChain's payment provider. The user re-enters the BVN or NIN they verified with in 4.2. It is checked against what DavoChain holds, sent once to Flutterwave, and never stored.
+Creates the user's permanent naira account at Payrep MFB, DavoChain's naira provider. The user re-enters the BVN or NIN they verified with in 4.2. It is checked against what DavoChain holds, sent once to Payrep, and never stored.
 
 **Request**
 
@@ -1458,7 +1469,7 @@ Content-Type: application/json
 | --- | --- | --- |
 | `201` | the 6.4 object | Created |
 | `200` | the 6.4 object | The user already had one; nothing new was created |
-| `202` | `{ "status": "PENDING", "message": "We're setting up your account. Try again in a few minutes." }` | Flutterwave didn't confirm in time. Poll 6.4 every 30 seconds for a few minutes. If it still answers 404, let the user try 6.5 again. |
+| `202` | `{ "status": "PENDING", "message": "We're setting up your account. Try again in a few minutes." }` | Payrep didn't confirm in time. Poll 6.4 every 30 seconds for a few minutes. If it still answers 404, let the user try 6.5 again. |
 
 **Errors**
 
@@ -1468,7 +1479,7 @@ Content-Type: application/json
 | 400 | `ONE_IDENTITY_NUMBER` | Both or neither were sent |
 | 400 | `IDENTITY_TYPE_MISMATCH` | The user verified with the other kind of number |
 | 400 | `IDENTITY_MISMATCH` | Not the number the user verified with |
-| 400 | `PROVIDER_REJECTED` | Flutterwave refused the number |
+| 400 | `PROVIDER_REJECTED` | Payrep refused the number (it could not verify it) |
 | 403 | `NOT_ELIGIBLE` | Show `message` (the same text as `reason` in 6.4) |
 | 409 | `ALREADY_CREATING` | A request is already in progress; wait a minute |
 | 429 | `TOO_MANY_ATTEMPTS` | Five attempts in 24 hours; try tomorrow |
@@ -2071,14 +2082,14 @@ Authorization: Bearer eyJhbGciOi…
 **Response** `200`
 ```json
 [
-  { "code": "044", "name": "Access Bank" },
-  { "code": "058", "name": "GTBank" }
+  { "code": "000014", "name": "Access Bank" },
+  { "code": "000013", "name": "GTBank" }
 ]
 ```
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `code` | string | Send as `bankCode` in 8.6 / 8.7 |
+| `code` | string | The bank's 6-digit NIP code. Send as `bankCode` in 8.6 / 8.8 |
 | `name` | string | Display name |
 
 **Errors**
@@ -2104,19 +2115,19 @@ Looks up the **account holder's name** for an account number and bank, so the us
 | Field | Type | Required | Rules | Example |
 | --- | --- | --- | --- | --- |
 | `accountNumber` | string | ✅ | Exactly 10 digits | `"0123456789"` |
-| `bankCode` | string | ✅ | `code` from 8.5, letters/numbers, 1–20 | `"044"` |
+| `bankCode` | string | ✅ | `code` from 8.5, letters/numbers, 1–20 | `"000014"` |
 
 ```http
 POST /v1/withdrawals/ngn/verify-account
 Authorization: Bearer eyJhbGciOi…
 Content-Type: application/json
 
-{ "accountNumber": "0123456789", "bankCode": "044" }
+{ "accountNumber": "0123456789", "bankCode": "000014" }
 ```
 
 **Response** `201`
 ```json
-{ "accountName": "ADA OBI", "accountNumberLast4": "6789", "bankCode": "044" }
+{ "accountName": "ADA OBI", "accountNumberLast4": "6789", "bankCode": "000014" }
 ```
 
 | Field | Type | Description |
@@ -2223,7 +2234,7 @@ Withdrawals go only to a saved account (since 15 Oct 2026). A customer may keep 
 
 | Field | Type | Required | Rules | Example |
 | --- | --- | --- | --- | --- |
-| `bankCode` | string | ✅ | From 8.5 | `"058"` |
+| `bankCode` | string | ✅ | From 8.5 | `"000013"` |
 | `accountNumber` | string | ✅ | Exactly 10 digits | `"0123451234"` |
 | `nickname` | string | — | Max 40 | `"Salary"` |
 | `password` | string | ✅ | The customer's password. Never stored. | |
@@ -2232,7 +2243,7 @@ Withdrawals go only to a saved account (since 15 Oct 2026). A customer may keep 
 ```json
 {
   "id": "b81d4f2a-6c3e-4a9b-8d1f-5e0c7a2b9d36",
-  "bankCode": "058",
+  "bankCode": "000013",
   "bankName": "GTBank",
   "accountNumberMasked": "******1234",
   "accountName": "ADA OKAFOR",
@@ -3387,7 +3398,8 @@ Locally the API uses a **fake ("mock") version of Quidax**, the crypto provider.
 | **Swap** | ⚠️ stays **`PROCESSING` forever**. Test the progress UI; ask the backend to simulate completion. |
 | **Crypto withdrawal** | ⚠️ stays **`PROCESSING` forever** (same reason) |
 | Incoming crypto deposit | ⚠️ can't happen; the backend can simulate one |
-| Naira withdrawal | ⚠️ off unless `NGN_WITHDRAWALS_ENABLED=true` in `api/.env`, or an owner switches it on in the admin dashboard (System → Withdrawals) |
+| Naira withdrawal | ⚠️ off unless `NGN_WITHDRAWALS_ENABLED=true` in `api/.env`, or an owner switches it on in the admin dashboard (System → Withdrawals). On the pretend Payrep, an amount ending in `.51` is refused (refunded at once), and `.99` or `.77` stays `RECONCILING` (money still locked) |
+| Naira deposit account + incoming naira | ⚠️ off unless `NGN_DEPOSITS_ENABLED=true`. Then 6.5 opens an account on the pretend Payrep, and a backend dev can send money into it with `POST /v1/admin/dev/payrep/simulate-deposit` (development only) |
 | Gift cards, referrals, in-app notifications | ✅ |
 | Push | ⚠️ only if the backend set up Firebase |
 
