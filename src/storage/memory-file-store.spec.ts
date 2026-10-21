@@ -67,3 +67,15 @@ describe('storageHttpError', () => {
     expect(storageHttpError(other)).toBe(other);
   });
 });
+
+describe('MemoryFileStore.temporaryLink', () => {
+  it('makes a memory link that names the key and its expiry', async () => {
+    const link = await new MemoryFileStore().temporaryLink('kyc/u 1/x', 300);
+    expect(link).toMatch(/^memory:\/\/kyc%2Fu%201%2Fx\?expires=\d+$/);
+  });
+  it('refuses a lifetime outside 1–600 seconds', async () => {
+    await expect(new MemoryFileStore().temporaryLink('k', 0)).rejects.toThrow(RangeError);
+    await expect(new MemoryFileStore().temporaryLink('k', 601)).rejects.toThrow(RangeError);
+    await expect(new MemoryFileStore().temporaryLink('k', 1.5)).rejects.toThrow(RangeError);
+  });
+});

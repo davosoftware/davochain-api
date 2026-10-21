@@ -5,7 +5,8 @@ import {
   PutObjectCommand,
   S3Client,
 } from '@aws-sdk/client-s3';
-import { FileStore, StorageUnavailableError, StoredObject } from './file-store';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { FileStore, StorageUnavailableError, StoredObject, assertLinkLifetime } from './file-store';
 
 export interface R2Settings {
   accountId: string;
@@ -17,6 +18,16 @@ export interface R2Settings {
 /** The part of S3Client this store uses, so tests can hand in a stand-in. */
 export interface S3Sender {
   send(command: unknown): Promise<unknown>;
+}
+
+/** Signs a GET for one object. Separate from S3Sender so tests can hand in a stand-in. */
+export interface Presigner {
+  presign(key: string, seconds: number): Promise<string>;
+}
+
+/** The real signer: a GET for one key, signed with the R2 token (spec 2026-10-21 §9). */
+export function r2Presigner(client: S3Client, bucket: string): Presigner {
+  return { presign: (key, seconds) => getSignedUrl(client, new GetObjectCommand({ Bucket: bucket, Key: key }), { expiresIn: seconds }) };
 }
 
 /** R2 speaks the S3 protocol; the region is always "auto". */
@@ -37,8 +48,10 @@ function isMissing(err: unknown): boolean {
 }
 
 /**
- * Cloudflare R2. The bucket is private: nothing here ever builds a public or
- * signed URL, so a file only leaves through the API's own checked routes.
+ * Cloudflare R2. The bucket is private: nothing here builds a public URL. The
+ * only link is temporaryLink: one file, minutes long, for a provider that
+ * requires a link (Dojah's bill reader). Everything else leaves through the
+ * API's own checked routes.
  */
 export class R2FileStore implements FileStore {
   readonly driver = 'r2' as const;
@@ -46,7 +59,18 @@ export class R2FileStore implements FileStore {
   constructor(
     private readonly client: S3Sender,
     readonly bucket: string,
+    private readonly signer?: Presigner,
   ) {}
+
+  async temporaryLink(key: string, seconds: number): Promise<string> {
+    assertLinkLifetime(seconds);
+    if (!this.signer) throw new StorageUnavailableError('R2 link signing is not configured');
+    try {
+      return await this.signer.presign(key, seconds);
+    } catch (err) {
+      throw this.unavailable('link', err);
+    }
+  }
 
   async put(key: string, bytes: Buffer, contentType: string): Promise<void> {
     await this.call('put', () =>

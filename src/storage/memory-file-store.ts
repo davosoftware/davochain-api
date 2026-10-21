@@ -1,4 +1,4 @@
-import { FileStore, StorageUnavailableError, StoredObject } from './file-store';
+import { FileStore, StorageUnavailableError, StoredObject, assertLinkLifetime } from './file-store';
 
 const DEFAULT_CAP_BYTES = 200 * 1024 * 1024;
 
@@ -51,6 +51,13 @@ export class MemoryFileStore implements FileStore {
     } catch {
       return false;
     }
+  }
+
+  /** Not a web link: the Dojah mock reads "memory://<key>" back from this store. */
+  async temporaryLink(key: string, seconds: number): Promise<string> {
+    assertLinkLifetime(seconds);
+    this.maybeFail('link');
+    return `memory://${encodeURIComponent(key)}?expires=${Date.now() + seconds * 1000}`;
   }
 
   private maybeFail(op: string): void {

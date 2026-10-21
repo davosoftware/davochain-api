@@ -24,6 +24,16 @@ export interface FileStore {
   delete(key: string): Promise<void>;
   /** Whether the store answers right now. Never throws. */
   ping(): Promise<boolean>;
+  /**
+   * A link that opens ONE file for `seconds` (1–600), for a provider that only
+   * accepts links (Dojah's bill reader, spec 2026-10-21 §9). Never logged or stored.
+   */
+  temporaryLink(key: string, seconds: number): Promise<string>;
+}
+
+/** A temporary link lives 1 to 600 seconds, whole seconds. */
+export function assertLinkLifetime(seconds: number): void {
+  if (!Number.isInteger(seconds) || seconds < 1 || seconds > 600) throw new RangeError('A temporary link lives 1 to 600 seconds');
 }
 
 /** The store could not be reached, timed out, or refused us. Never a missing object. */

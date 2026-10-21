@@ -84,7 +84,11 @@ describe('Advanced on the mock (markers choose the scenario)', () => {
     expect((await mock.faceMatch(b64('match-borderline'), 'x')).read.confidence).toBe(68);
     expect((await mock.readId({ idType: 'PASSPORT', front: b64('id-num-dup12345') })).read.documentNumber).toBe('DUP12345');
   });
-  it.todo('a utility bill link is read back from the memory store (turned on in Task 6)');
+  it('a utility bill link is read back from the memory store', async () => {
+    await files.put('kyc/u/bill', mockImage('addr-old'), 'image/png');
+    const link = await files.temporaryLink('kyc/u/bill', 300);
+    expect((await mock.utilityBill(link)).read.issueDate).toBe('2024-01-01');
+  });
   it('the text reader writes dates with month names (never ambiguous)', async () => {
     const r = await mock.ocr(b64());
     expect(r.lines.join(' ')).toMatch(/Statement date: \d{1,2} [A-Z][a-z]+ \d{4}/);

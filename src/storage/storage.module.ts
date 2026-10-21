@@ -2,7 +2,7 @@ import { Global, Inject, Injectable, Logger, Module, OnApplicationBootstrap } fr
 import { ConfigService } from '@nestjs/config';
 import { FILE_STORE, FileStore } from './file-store';
 import { MemoryFileStore } from './memory-file-store';
-import { R2FileStore, makeR2Client } from './r2-file-store';
+import { R2FileStore, makeR2Client, r2Presigner } from './r2-file-store';
 import { UploadIntents } from './upload-intents.service';
 
 /** Builds the store STORAGE_DRIVER names. env.validation.ts has already checked the settings. */
@@ -15,7 +15,7 @@ export function fileStoreFrom(config: ConfigService): FileStore {
     secretAccessKey: config.getOrThrow<string>('R2_SECRET_ACCESS_KEY'),
     bucket,
   });
-  return new R2FileStore(client, bucket);
+  return new R2FileStore(client, bucket, r2Presigner(client, bucket));
 }
 
 /** Says at startup which store is in use and whether it answers. Never stops the server. */
