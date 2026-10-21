@@ -2,6 +2,7 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { KycController } from './kyc.controller';
+import { AdvancedVerificationService } from './advanced/advanced-verification.service';
 import { KycService } from './kyc.service';
 import { BasicVerificationService } from './basic-verification.service';
 import { KycDocumentsService, MAX_DOCUMENT_BYTES } from './kyc-documents.service';
@@ -19,6 +20,7 @@ describe('POST /kyc/documents (multipart upload, H8)', () => {
       providers: [
         { provide: KycService, useValue: {} },
         { provide: BasicVerificationService, useValue: {} },
+        { provide: AdvancedVerificationService, useValue: {} },
         { provide: KycDocumentsService, useValue: { upload } },
       ],
     }).compile();

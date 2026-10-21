@@ -20,6 +20,8 @@ export const QUEUES = {
   SYNC: 'sync',
   /** Naira deposits through Flutterwave: verify each payment, then credit it exactly once. */
   FLUTTERWAVE: 'flutterwave',
+  /** Advanced KYC: the paid Dojah checks for one attempt, off the request. */
+  KYC_ADVANCED: 'kyc-advanced',
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
@@ -33,6 +35,7 @@ export const JOBS = {
   SEND_EMAIL: 'send-email',
   SYNC_NETWORKS: 'sync-networks',
   PROCESS_FLW_PAYIN: 'process-flw-payin',
+  RUN_ADVANCED: 'run-advanced',
 } as const;
 
 /** Retry with backoff. Anything touching money keeps trying rather than dropping. */

@@ -1,12 +1,13 @@
-import { Body, Controller, Get, Post, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Post, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
 import type { Response } from 'express';
 import { Type } from 'class-transformer';
-import { IsIn, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, ValidateNested } from 'class-validator';
+import { IsIn, IsNotEmpty, IsOptional, IsString, IsUUID, Matches, MaxLength, ValidateNested } from 'class-validator';
 import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from '@nestjs/swagger';
 import { KycService } from './kyc.service';
 import { BasicVerificationService } from './basic-verification.service';
 import { KycDocumentsService, UPLOADABLE_DOCUMENT_TYPES, type UploadableDocumentType } from './kyc-documents.service';
 import { DocumentUploadInterceptor } from './document-upload.interceptor';
+import { AdvancedVerificationService } from './advanced/advanced-verification.service';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { Public } from '../auth/public.decorator';
 import { RateLimit } from '../rate-limit/rate-limit.decorator';
@@ -46,6 +47,21 @@ export class AttachDocumentDto {
   type!: UploadableDocumentType;
 }
 
+/** POST /v1/kyc/advanced/identity (spec 2026-10-21 §4.1): the ids of documents already uploaded. */
+export class AdvancedIdentityDto {
+  @IsIn(['NATIONAL_ID', 'PASSPORT', 'DRIVERS_LICENSE']) idType!: 'NATIONAL_ID' | 'PASSPORT' | 'DRIVERS_LICENSE';
+  @IsUUID() frontDocumentId!: string;
+  @IsOptional() @IsUUID() backDocumentId?: string;
+  @IsUUID() selfieDocumentId!: string;
+}
+
+/** POST /v1/kyc/advanced/address (spec §4.2): ONE document, any of the four kinds. */
+export class AdvancedAddressDto {
+  @IsIn(['UTILITY_BILL', 'BANK_STATEMENT', 'GOVERNMENT_LETTER', 'TENANCY'])
+  kind!: 'UTILITY_BILL' | 'BANK_STATEMENT' | 'GOVERNMENT_LETTER' | 'TENANCY';
+  @IsUUID() documentId!: string;
+}
+
 @ApiTags('kyc')
 @ApiBearerAuth('user')
 @Controller('kyc')
@@ -54,6 +70,7 @@ export class KycController {
     private readonly kyc: KycService,
     private readonly basic: BasicVerificationService,
     private readonly documents: KycDocumentsService,
+    private readonly advanced: AdvancedVerificationService,
   ) {}
 
   @Get()
@@ -67,6 +84,24 @@ export class KycController {
   @RateLimit('kyc.basic')
   submitBasic(@CurrentUser('sub') userId: string, @Body() dto: SubmitBasicDto) {
     return this.basic.submit(userId, dto);
+  }
+
+  /** Advanced Step A (spec 2026-10-21 §4.1): ID + selfie. 202: the checks run in the background; poll GET /v1/kyc. */
+  @PausedDuringMaintenance()
+  @Post('advanced/identity')
+  @HttpCode(202)
+  @RateLimit('kyc.advanced')
+  submitAdvancedIdentity(@CurrentUser('sub') userId: string, @Body() dto: AdvancedIdentityDto) {
+    return this.advanced.submitIdentity(userId, dto);
+  }
+
+  /** Advanced Step B (spec §4.2): ONE proof-of-address document of the customer's choice. */
+  @PausedDuringMaintenance()
+  @Post('advanced/address')
+  @HttpCode(202)
+  @RateLimit('kyc.advanced')
+  submitAdvancedAddress(@CurrentUser('sub') userId: string, @Body() dto: AdvancedAddressDto) {
+    return this.advanced.submitAddress(userId, dto);
   }
 
   /** The 36 states plus the FCT, with their LGAs. */

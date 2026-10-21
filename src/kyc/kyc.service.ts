@@ -4,6 +4,15 @@ import { PrismaService } from '../prisma/prisma.service';
 import { KycLimitsService } from './kyc-limits.service';
 import { ZERO, type Decimal } from '../common/money';
 import { BasicVerificationService } from './basic-verification.service';
+import { AdvancedVerificationService } from './advanced/advanced-verification.service';
+
+/** The level as the app reads it. TIER_2 is "Advanced (in progress)": ID and selfie done, address not yet. */
+const LEVEL_KEYS: Record<KycTier, 'NONE' | 'BASIC' | 'ADVANCED_IN_PROGRESS' | 'ADVANCED'> = {
+  TIER_0: 'NONE',
+  TIER_1: 'BASIC',
+  TIER_2: 'ADVANCED_IN_PROGRESS',
+  TIER_3: 'ADVANCED',
+};
 
 /**
  * Raw BVN and NIN values are NEVER stored. Only a hash for matching plus the
@@ -16,6 +25,7 @@ export class KycService {
     private readonly prisma: PrismaService,
     private readonly limits: KycLimitsService,
     private readonly basic: BasicVerificationService,
+    private readonly advancedChecks: AdvancedVerificationService,
   ) {}
 
   /**
@@ -28,7 +38,7 @@ export class KycService {
    * limits that nothing honoured, which is worse than saying nothing.
    */
   async status(userId: string) {
-    const [profile, tiers, latest, attempts] = await Promise.all([
+    const [profile, tiers, latest, attempts, advanced] = await Promise.all([
       this.prisma.kycProfile.findUnique({
         where: { userId },
         include: { documents: { select: { type: true, status: true, uploadedAt: true } } },
@@ -36,6 +46,7 @@ export class KycService {
       this.prisma.kycTierLimit.findMany({ orderBy: { tier: 'asc' } }),
       this.prisma.kycVerification.findFirst({ where: { userId }, orderBy: { createdAt: 'desc' }, select: { state: true } }),
       this.basic.attemptsLeft(userId),
+      this.advancedChecks.summary(userId),
     ]);
 
     const tier = profile?.tier ?? KycTier.TIER_0;
@@ -65,12 +76,15 @@ export class KycService {
       documents: profile?.documents ?? [],
 
       /** Basic verification (spec §11). */
-      level: tier === KycTier.TIER_0 ? 'NONE' : 'BASIC',
+      level: LEVEL_KEYS[tier],
       basicState: latest?.state ?? null,
       /** Generic on purpose: never says why (no tipping off). */
       underReview: latest ? ['LOOKED_UP', 'IDENTITY_REVIEW', 'COMPLIANCE_REVIEW'].includes(latest.state) : false,
       attemptsLeftToday: attempts.today,
       attemptsLeftTotal: attempts.total,
+
+      /** Advanced (spec 2026-10-21 §4): each step's state, a reason the customer can act on, attempts left. */
+      advanced,
 
       /** Naira only. Nothing else is capped by tier. */
       limits: {
