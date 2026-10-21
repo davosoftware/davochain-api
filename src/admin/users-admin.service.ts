@@ -283,8 +283,8 @@ export class UsersAdminService {
       }),
     ]);
 
-    // Their naira deposit account stops taking money too. Flutterwave is told in
-    // the background, and the 10-minute sync retries, so it can't slow this down.
+    // Their naira deposit account is switched off too. Payrep has no way to
+    // refuse a transfer into it, so any deposit that still arrives is held for an admin.
     await this.virtualAccounts
       .setDesiredForUser(userId, VirtualAccountStatus.INACTIVE, { background: true })
       .catch(() => undefined);

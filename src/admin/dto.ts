@@ -390,8 +390,7 @@ export class SimulatePayInDto {
   @Matches(/^\d{1,9}(\.\d{1,2})?$/, { message: 'amount is naira as text, e.g. "1500" or "1500.50"' })
   amount!: string;
   @IsOptional() @IsString() @MaxLength(100) payerName?: string;
-  @IsOptional() @IsIn(['successful', 'pending', 'failed']) status?: 'successful' | 'pending' | 'failed';
-  @IsOptional() @IsIn(['legacy', 'v3']) format?: 'legacy' | 'v3';
+  @IsOptional() @IsIn(['success', 'pending', 'failed']) status?: 'success' | 'pending' | 'failed';
 }
 
 export class AddAlertRecipientDto {

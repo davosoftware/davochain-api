@@ -17,7 +17,7 @@ function setup(status: 'ACTIVE' | 'SUSPENDED') {
 }
 
 describe('UsersAdminService and naira deposit accounts', () => {
-  it('switches the accounts off on suspension and back on at reinstatement, telling Flutterwave in the background', async () => {
+  it('switches the accounts off on suspension and back on at reinstatement, so later deposits are held', async () => {
     const active = setup('ACTIVE');
     await active.svc.suspend('admin-1', 'u1', 'Fraud review');
     expect(active.virtualAccounts.setDesiredForUser).toHaveBeenCalledWith('u1', 'INACTIVE', { background: true });

@@ -27,7 +27,7 @@ import { RatesModule } from '../rates/rates.module';
 import { LedgerModule } from '../ledger/ledger.module';
 import { GiftCardsModule } from '../giftcards/giftcards.module';
 import { NgnDepositsModule } from '../ngn-deposits/ngn-deposits.module';
-import { FlutterwaveModule } from '../flutterwave/flutterwave.module';
+import { PayrepModule } from '../payrep/payrep.module';
 import { QUEUES } from '../common/queues';
 import { LevelAdminService } from '../levels/level-admin.service';
 import { DojahModule } from '../dojah/dojah.module';
@@ -51,7 +51,7 @@ import { WithdrawalsModule } from '../withdrawals/withdrawals.module';
     LedgerModule,
     GiftCardsModule,
     NgnDepositsModule,
-    FlutterwaveModule,
+    PayrepModule,
     KycModule,
     // The Dojah screen reads and saves its settings (DojahConfig).
     DojahModule,

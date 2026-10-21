@@ -119,10 +119,9 @@ import { SocialLinksService, KNOWN_NETWORKS, ICON_PIXELS } from '../cms/social-l
 import { NgnWithdrawalsService } from './ngn-withdrawals.service';
 import { ReadinessService } from '../ngn-deposits/readiness.service';
 import { VirtualAccountsService } from '../ngn-deposits/virtual-accounts.service';
-import { txRefForUser } from '../ngn-deposits/tx-ref';
-import { FlutterwaveClient } from '../flutterwave/flutterwave.client';
-import { FlutterwaveConfig } from '../flutterwave/flutterwave.config';
-import { FlutterwaveMockClient } from '../flutterwave/flutterwave.mock';
+import { PayrepApi } from '../payrep/payrep.api';
+import { PayrepConfig } from '../payrep/payrep.config';
+import { PayrepMock } from '../payrep/payrep.mock';
 import {
   CreateFaqDto,
   CreatePageDto,
@@ -189,8 +188,8 @@ export class AdminController {
     private readonly ngnSwitch: NgnWithdrawalsService,
     private readonly railReadiness: ReadinessService,
     private readonly virtualAccounts: VirtualAccountsService,
-    private readonly flutterwave: FlutterwaveClient,
-    private readonly flwConfig: FlutterwaveConfig,
+    private readonly payrep: PayrepApi,
+    private readonly payrepCfg: PayrepConfig,
     private readonly twoStep: TwoStepService,
   ) {}
 
@@ -1161,42 +1160,39 @@ export class AdminController {
   }
 
   /**
-   * Development only: a customer's bank transfer into a virtual account, made
-   * by the mock, which then sends its webhook to this API, so the real intake
-   * path runs. 404 anywhere else, so it cannot exist in production.
+   * Development and test only: a customer's bank transfer into their Payrep
+   * deposit account, made by the mock, which then sends its signed webhook to
+   * this API, so the real intake path runs. 404 anywhere else.
    */
-  @Post('dev/flutterwave/simulate-payin')
+  @Post('dev/payrep/simulate-deposit')
   @HttpCode(200)
   @RequirePermissions('settings.manage')
-  async simulateFlutterwavePayIn(@Body() dto: SimulatePayInDto) {
-    const mock = this.devFlutterwaveMock();
+  async simulatePayrepDeposit(@Body() dto: SimulatePayInDto) {
+    const mock = this.devPayrepMock();
     const primary = (await this.virtualAccounts.listForUser(dto.userId)).find((a) => a.isPrimary);
     if (!primary) throw new ConflictException('That user has no naira deposit account yet');
-    const result = await mock.simulatePayIn({
-      txRef: txRefForUser(dto.userId),
-      amount: dto.amount,
+    return mock.simulateDeposit({
       accountNumber: primary.accountNumber,
-      payerName: dto.payerName,
+      amount: dec(dto.amount).toFixed(2),
+      senderName: dto.payerName,
       status: dto.status,
-      format: dto.format,
     });
-    return { flwTransactionId: result.id, webhookStatus: result.webhookStatus };
   }
 
-  /** Development only: send a simulated payment's webhook again, as Flutterwave's retries do. */
-  @Post('dev/flutterwave/redeliver/:flwId')
+  /** Development and test only: send a simulated deposit's webhook again, as Payrep's retries do. */
+  @Post('dev/payrep/redeliver/:transactionId')
   @HttpCode(200)
   @RequirePermissions('settings.manage')
-  async redeliverFlutterwaveWebhook(@Param('flwId') flwId: string, @Query('format') format?: string) {
-    const webhookStatus = await this.devFlutterwaveMock().redeliverWebhook(flwId, format === 'v3' ? 'v3' : 'legacy');
-    return { flwTransactionId: flwId, webhookStatus };
+  async redeliverPayrepWebhook(@Param('transactionId') transactionId: string) {
+    const webhookStatus = await this.devPayrepMock().redeliver(transactionId);
+    return { transactionId, webhookStatus };
   }
 
-  private devFlutterwaveMock(): FlutterwaveMockClient {
-    if (!(this.flutterwave instanceof FlutterwaveMockClient) || this.flwConfig.nodeEnv !== 'development') {
+  private devPayrepMock(): PayrepMock {
+    if (!(this.payrep instanceof PayrepMock) || !['development', 'test'].includes(this.payrepCfg.nodeEnv)) {
       throw new NotFoundException();
     }
-    return this.flutterwave;
+    return this.payrep;
   }
 
   // ── broadcasts ────────────────────────────────────────────

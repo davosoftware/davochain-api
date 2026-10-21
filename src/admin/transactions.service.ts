@@ -248,6 +248,11 @@ export function isAwaitingApproval(t: { type: TxType; status: TxStatus; toAsset:
   return t.type === TxType.DEPOSIT && t.status === TxStatus.ON_HOLD && t.toAsset === 'ngn';
 }
 
+/** A naira deposit that came in by bank transfer through the rail. FLUTTERWAVE: old local test history only. */
+function isNairaRailDeposit(tx: { provider: PaymentProvider | null }): boolean {
+  return tx.provider === PaymentProvider.PAYREP || tx.provider === PaymentProvider.FLUTTERWAVE;
+}
+
 @Injectable()
 export class AdminTransactionsService {
   constructor(
@@ -552,8 +557,8 @@ export class AdminTransactionsService {
       throw new BadRequestException('That deposit has no amount to credit');
     }
 
-    // A Flutterwave deposit posts the same three entries crediting would have (A3).
-    const legs = tx.provider === PaymentProvider.FLUTTERWAVE ? this.flutterwaveLegs(tx, amount) : null;
+    // A naira bank deposit (Payrep) posts the same three entries crediting would have (A3).
+    const legs = isNairaRailDeposit(tx) ? this.nairaLegs(tx, amount) : null;
 
     await this.prisma.serializable(
       async (t) => {
@@ -567,7 +572,7 @@ export class AdminTransactionsService {
 
         if (legs) {
           // Released only from HELD: never while a refund to the sender is under way.
-          const collection = await t.flutterwaveCollection.findUnique({ where: { transactionId: id } });
+          const collection = await t.nairaCollection.findUnique({ where: { transactionId: id } });
           if (collection?.outcome !== CollectionOutcome.HELD) {
             throw new ConflictException(
               collection?.outcome === CollectionOutcome.REFUND_PENDING
@@ -576,7 +581,7 @@ export class AdminTransactionsService {
             );
           }
           await this.ledger.post(t, legs, tx.id);
-          await t.flutterwaveCollection.update({
+          await t.nairaCollection.update({
             where: { transactionId: id },
             data: { outcome: CollectionOutcome.CREDITED, previousOutcome: CollectionOutcome.HELD },
           });
@@ -622,8 +627,8 @@ export class AdminTransactionsService {
     return this.one(id);
   }
 
-  /** The entries for a held Flutterwave deposit, from the figures stored when it arrived. */
-  private flutterwaveLegs(
+  /** The entries for a held naira bank deposit, from the figures stored when it arrived. */
+  private nairaLegs(
     tx: {
       userId: string;
       reference: string;
@@ -634,7 +639,7 @@ export class AdminTransactionsService {
   ): LedgerLeg[] {
     if (tx.providerFee === null || tx.providerSettledAmount === null) {
       throw new ConflictException(
-        'This Flutterwave deposit has no recorded fee or settled amount, so it cannot be released here',
+        'This deposit has no recorded fee or settled amount, so it cannot be released here',
       );
     }
     try {
@@ -661,9 +666,9 @@ export class AdminTransactionsService {
    */
   async reject(id: string, reason: string): Promise<TxRow> {
     const tx = await this.held(id);
-    if (tx.provider === PaymentProvider.FLUTTERWAVE) {
+    if (isNairaRailDeposit(tx)) {
       throw new ConflictException(
-        'Use reject and refund: a Flutterwave deposit has to go back to its sender, not just be refused.',
+        'Use reject and refund: a Payrep deposit has to go back to its sender, not just be refused.',
       );
     }
     const trimmed = reason.trim();

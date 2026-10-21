@@ -7,13 +7,13 @@ async function setup(tx: Record<string, unknown> = {}, collection: Record<string
   await db.transaction.create({
     data: {
       id: 't1', userId: 'u1', type: 'DEPOSIT', status: 'ON_HOLD', toAsset: 'ngn', toAmount: '1500.50',
-      reference: 'flw:payin:42', failureReason: 'Over your daily limit', provider: 'FLUTTERWAVE',
+      reference: 'payrep:payin:42', failureReason: 'Deposit account switched off by an admin or compliance', provider: 'PAYREP',
       providerFee: '21.01', providerSettledAmount: '1479.49', ...tx,
     },
   });
   if (collection) {
-    await db.flutterwaveCollection.create({
-      data: { flwTransactionId: '42', firstSource: 'WEBHOOK', transactionId: 't1', userId: 'u1', ...collection },
+    await db.nairaCollection.create({
+      data: { providerTransactionId: '42', firstSource: 'WEBHOOK', transactionId: 't1', userId: 'u1', ...collection },
     });
   }
   const ledger = { post: jest.fn(async () => undefined), credit: jest.fn(async () => undefined) };
@@ -24,8 +24,8 @@ async function setup(tx: Record<string, unknown> = {}, collection: Record<string
   return { db, ledger, notifications, svc };
 }
 
-describe('AdminTransactionsService and Flutterwave deposits', () => {
-  it('releases a held Flutterwave deposit with the same three entries, and marks the payment credited', async () => {
+describe('AdminTransactionsService and held Payrep deposits', () => {
+  it('releases a held Payrep deposit with the same three entries, and marks the payment credited', async () => {
     const { db, ledger, notifications, svc } = await setup();
     await svc.release('t1');
     expect(ledger.credit).not.toHaveBeenCalled();
@@ -38,8 +38,15 @@ describe('AdminTransactionsService and Flutterwave deposits', () => {
       ['PROVIDER_FEE', '21.01'],
     ]);
     expect(db.rows('transaction')[0]).toMatchObject({ status: 'COMPLETED', failureReason: null });
-    expect(db.rows('flutterwaveCollection')[0]).toMatchObject({ outcome: 'CREDITED', previousOutcome: 'HELD' });
+    expect(db.rows('nairaCollection')[0]).toMatchObject({ outcome: 'CREDITED', previousOutcome: 'HELD' });
     expect(notifications.notify).toHaveBeenCalledWith(expect.objectContaining({ userId: 'u1', type: 'deposit.credited' }));
+  });
+
+  it('a second release is refused: the deposit is credited once', async () => {
+    const { ledger, svc } = await setup();
+    await svc.release('t1');
+    await expect(svc.release('t1')).rejects.toBeTruthy();
+    expect(ledger.post).toHaveBeenCalledTimes(1);
   });
 
   it('refuses to release while a refund to the sender is in progress', async () => {
@@ -54,14 +61,14 @@ describe('AdminTransactionsService and Flutterwave deposits', () => {
   it.each([
     ['without a recorded fee', { providerFee: null }],
     ['whose stored figures do not balance', { providerFee: '30' }],
-  ])('refuses to release a Flutterwave deposit %s', async (_name, tx) => {
+  ])('refuses to release a Payrep deposit %s', async (_name, tx) => {
     const { ledger, svc } = await setup(tx);
     await expect(svc.release('t1')).rejects.toBeInstanceOf(ConflictException);
     expect(ledger.post).not.toHaveBeenCalled();
   });
 
-  it('refuses a plain reject: a Flutterwave deposit must be refunded to its sender', async () => {
-    const { db, svc } = await setup();
+  it.each(['PAYREP', 'FLUTTERWAVE'])('refuses a plain reject of a %s deposit: it must be refunded to its sender', async (provider) => {
+    const { db, svc } = await setup({ provider });
     const err = await svc.reject('t1', 'Not allowed').catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ConflictException);
     expect((err as Error).message).toMatch(/reject and refund/i);
@@ -69,10 +76,7 @@ describe('AdminTransactionsService and Flutterwave deposits', () => {
   });
 
   it('still releases a Quidax deposit with the single credit it always used', async () => {
-    const { ledger, svc } = await setup(
-      { provider: 'QUIDAX', providerFee: null, providerSettledAmount: null, reference: 'quidax_deposit_1' },
-      null,
-    );
+    const { ledger, svc } = await setup({ provider: 'QUIDAX', providerFee: null, providerSettledAmount: null, reference: 'quidax_deposit_1' }, null);
     await svc.release('t1');
     expect(ledger.post).not.toHaveBeenCalled();
     expect(ledger.credit).toHaveBeenCalledWith(
