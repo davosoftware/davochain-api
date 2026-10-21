@@ -53,4 +53,27 @@ describeAdmin('naira withdrawals paid by the naira rail (H11)', () => {
     expect(Number(after.locked)).toBeGreaterThanOrEqual(1000);
     expect(Number(after.available)).toBeLessThan(Number(before.available));
   });
+
+  // The pretend Payrep picks its answer from the kobo (src/payrep/payrep.mock.ts).
+  it('a clear "no" from Payrep (insufficient balance) is refunded at once', async () => {
+    const before = await balance(user, 'ngn');
+    const r = await call('POST', '/withdrawals/ngn', { token: user.token, body: { amount: '500.51', savedBankAccountId: savedId }, headers: { 'Idempotency-Key': key() } });
+    expect(r.status).toBe(400);
+    expect(r.body.message).toMatch(/Nothing was deducted/);
+    const after = await balance(user, 'ngn');
+    expect(after.available).toBe(before.available);
+    expect(after.locked).toBe(before.locked);
+  });
+
+  it.each([
+    ['an unclear answer (the reply was lost)', '500.99'],
+    ['a transfer queued for approval (maker-checker)', '500.77'],
+  ])('%s is never refunded: it stays locked and is checked', async (_name, amount) => {
+    const before = await balance(user, 'ngn');
+    const r = await call('POST', '/withdrawals/ngn', { token: user.token, body: { amount, savedBankAccountId: savedId }, headers: { 'Idempotency-Key': key() } });
+    expect(r.status).toBe(201);
+    expect(r.body.status).toBe('RECONCILING');
+    const after = await balance(user, 'ngn');
+    expect(Number(after.locked)).toBeGreaterThan(Number(before.locked));
+  });
 });

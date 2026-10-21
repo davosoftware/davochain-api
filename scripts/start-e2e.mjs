@@ -30,6 +30,8 @@ const testSettings = {
   KYC_ADVANCED_ENABLED: 'true',
   QUIDAX_USE_MOCK: 'true',
   PAYREP_USE_MOCK: 'true',
+  // Naira deposit accounts on the pretend Payrep.
+  NGN_DEPOSITS_ENABLED: 'true',
   // Files go to the in-memory store, never the real R2 bucket.
   STORAGE_DRIVER: 'memory',
   ALERT_DEFAULT_RECIPIENTS: process.env.ALERT_DEFAULT_RECIPIENTS ?? 'ops@davochain.invalid',

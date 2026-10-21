@@ -83,9 +83,10 @@ describe('deposits', () => {
     expect(Array.isArray((await call('GET', '/withdrawals', { token: verified.token })).body)).toBe(true);
   });
 
-  it('with no naira account yet, GET /v1/deposits/ngn/account is 404 NO_VIRTUAL_ACCOUNT with a reason', async () => {
+  it('with no naira account yet, GET /v1/deposits/ngn/account is 404 NO_VIRTUAL_ACCOUNT, with a reason when not eligible', async () => {
     const r = await call('GET', '/deposits/ngn/account', { token: verified.token });
     expect(r.status).toBe(404);
-    expect(r.body).toMatchObject({ code: 'NO_VIRTUAL_ACCOUNT', eligible: expect.any(Boolean), reason: expect.anything() });
+    expect(r.body).toMatchObject({ code: 'NO_VIRTUAL_ACCOUNT', eligible: expect.any(Boolean) });
+    expect(r.body.reason === null).toBe(r.body.eligible);
   });
 });

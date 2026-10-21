@@ -3,7 +3,7 @@ import { adminToken, call, hasAdmin, key, newUser, requireServer, verifyBasic, t
 /**
  * Saved withdrawal destinations (Part 2, C6), over real HTTP: withdrawals go
  * only to an account or address the customer saved with their password.
- * The Quidax mock knows bank "0000" (Test Bank) and names every account
+ * The naira rail's mock (Payrep) knows bank "000014" (Access Bank) and names every account
  * "MOCK ACCOUNT <last 4>".
  */
 let user: TestUser;
@@ -19,15 +19,15 @@ describe('saved bank accounts', () => {
   let savedId: string;
 
   it('a wrong password saves nothing (401)', async () => {
-    const r = await addBank({ bankCode: '0000', accountNumber: '0123456789', password: 'Not-my-password-1' });
+    const r = await addBank({ bankCode: '000014', accountNumber: '0123456789', password: 'Not-my-password-1' });
     expect(r.status).toBe(401);
     expect(r.body.message).toBe('Incorrect password');
   });
 
   it('saves with the bank\'s name, masked, and lists it', async () => {
-    const r = await addBank({ bankCode: '0000', accountNumber: '0123456789', nickname: 'Main', password: user.password });
+    const r = await addBank({ bankCode: '000014', accountNumber: '0123456789', nickname: 'Main', password: user.password });
     expect(r.status).toBe(201);
-    expect(r.body).toMatchObject({ bankName: 'Test Bank', accountNumberMasked: '******6789', accountName: 'MOCK ACCOUNT 6789', nickname: 'Main', usableNow: true });
+    expect(r.body).toMatchObject({ bankName: 'Access Bank', accountNumberMasked: '******6789', accountName: 'MOCK ACCOUNT 6789', nickname: 'Main', usableNow: true });
     expect(r.body).not.toHaveProperty('accountNumber');
     savedId = r.body.id;
     const list = await call('GET', '/me/bank-accounts', { token: user.token });
@@ -37,7 +37,7 @@ describe('saved bank accounts', () => {
   });
 
   it('the same account twice is refused', async () => {
-    const r = await addBank({ bankCode: '0000', accountNumber: '0123456789', password: user.password });
+    const r = await addBank({ bankCode: '000014', accountNumber: '0123456789', password: user.password });
     expect(r.status).toBe(400);
     expect(r.body.message).toBe('This account is already saved.');
   });
@@ -45,7 +45,7 @@ describe('saved bank accounts', () => {
   it('typed bank details at withdrawal are refused: choose a saved account', async () => {
     const r = await call('POST', '/withdrawals/ngn', {
       token: user.token,
-      body: { amount: '1000', accountNumber: '0123456789', bankCode: '0000' },
+      body: { amount: '1000', accountNumber: '0123456789', bankCode: '000014' },
       headers: { 'Idempotency-Key': key() },
     });
     expect(r.status).toBe(400);

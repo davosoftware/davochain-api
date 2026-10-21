@@ -63,6 +63,8 @@ export interface TestUser {
   phone: string;
   token: string;
   refreshToken: string;
+  /** The BVN Basic verified with (set by verifyBasic), e.g. to open a naira deposit account. */
+  bvn?: string;
 }
 
 let counter = 0;
@@ -105,9 +107,10 @@ export function idNumber(family: '333' | '222' | '666' | '777'): string {
 
 /** Basic verification with the Dojah mock's clean identity, then a fresh login (approval ends sessions). */
 export async function verifyBasic(user: TestUser): Promise<TestUser> {
+  const bvn = idNumber('333');
   const r = await call('POST', '/kyc/basic', {
     token: user.token,
-    body: { idType: 'BVN', idNumber: idNumber('333'), firstName: 'Someone', lastName: 'Clean', dateOfBirth: '1995-03-03', address: ADDRESS, stateOfOrigin: 'Lagos', country: 'NG' },
+    body: { idType: 'BVN', idNumber: bvn, firstName: 'Someone', lastName: 'Clean', dateOfBirth: '1995-03-03', address: ADDRESS, stateOfOrigin: 'Lagos', country: 'NG' },
   });
   if (r.status !== 201 || r.body.state !== 'APPROVED') {
     throw new Error(
@@ -115,7 +118,7 @@ export async function verifyBasic(user: TestUser): Promise<TestUser> {
         'The server is not in test mode: stop it and start it with `npm run start:e2e` (test/e2e/README.md).',
     );
   }
-  return login(user);
+  return { ...(await login(user)), bvn };
 }
 
 /** Test money, through the development-only ledger script (refuses in production). */

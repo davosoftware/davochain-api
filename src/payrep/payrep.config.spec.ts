@@ -1,4 +1,4 @@
-import { MOCK_WEBHOOK_SECRET, PayrepConfig } from './payrep.config';
+import { MOCK_MAIN_ACCOUNT, MOCK_WEBHOOK_SECRET, PayrepConfig } from './payrep.config';
 
 const cfg = (env: Record<string, unknown>, creds: Record<string, string>) =>
   new PayrepConfig({ get: (k: string) => env[k] } as never, { get: async (n: string) => creds[n] ?? null } as never);
@@ -19,9 +19,13 @@ describe('PayrepConfig', () => {
     expect((err as Error).message).not.toContain('sk_live_y');
     await expect(cfg({}, { 'payrep.clientId': 'pk_test_x', 'payrep.clientSecret': 'sk_test_y' }).credentials()).resolves.toEqual({ clientId: 'pk_test_x', clientSecret: 'sk_test_y' });
   });
-  it('mainAccount is null when unset or empty', () => {
-    expect(cfg({ PAYREP_MAIN_ACCOUNT: '' }, {}).mainAccount).toBeNull();
-    expect(cfg({ PAYREP_MAIN_ACCOUNT: '7801234567' }, {}).mainAccount).toBe('7801234567');
+  it('mainAccount is null when unset or empty, with the mock off', () => {
+    expect(cfg({ PAYREP_USE_MOCK: false, PAYREP_MAIN_ACCOUNT: '' }, {}).mainAccount).toBeNull();
+    expect(cfg({ PAYREP_USE_MOCK: false, PAYREP_MAIN_ACCOUNT: '7801234567' }, {}).mainAccount).toBe('7801234567');
+  });
+  it('the mock stands in a main account when none is set, so local payouts and accounts work', () => {
+    expect(cfg({ PAYREP_USE_MOCK: true, PAYREP_MAIN_ACCOUNT: '' }, {}).mainAccount).toBe(MOCK_MAIN_ACCOUNT);
+    expect(cfg({ PAYREP_USE_MOCK: true, PAYREP_MAIN_ACCOUNT: '7801234567' }, {}).mainAccount).toBe('7801234567');
   });
   it('keyStatus reports presence and mode problems', async () => {
     expect(await cfg({}, {}).keyStatus()).toEqual({ present: false, problem: null });

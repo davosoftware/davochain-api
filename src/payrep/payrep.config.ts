@@ -8,6 +8,8 @@ export const PAYREP_SANDBOX_URL = 'https://shogun-dev.payrepmfb.com';
 export const PAYREP_LIVE_URL = 'https://baasapi.payrepmfb.com';
 /** Only ever used with the mock, so local development needs no Payrep setup. */
 export const MOCK_WEBHOOK_SECRET = '6d6f636b2d70617972657024776562686f6f6b2d7365637265742d6f6e6c7921';
+/** The pretend main account, used only with the mock when PAYREP_MAIN_ACCOUNT is empty. */
+export const MOCK_MAIN_ACCOUNT = '7800000000';
 const blank = (v: string | null | undefined) => (v && v.trim() ? v.trim() : null);
 
 /** Payrep settings. Secrets come from CredentialsService (System → API keys, then api/.env). */
@@ -35,9 +37,13 @@ export class PayrepConfig {
     return this.config.get<number>('PORT') ?? 3000;
   }
 
-  /** Our main (business wallet) account: the source of every transfer and the pool for customer accounts. */
+  /**
+   * Our main (business wallet) account: the source of every transfer and the
+   * pool for customer accounts. The mock stands one in, so local development
+   * works with an empty .env.
+   */
   get mainAccount(): string | null {
-    return blank(this.config.get<string>('PAYREP_MAIN_ACCOUNT'));
+    return blank(this.config.get<string>('PAYREP_MAIN_ACCOUNT')) ?? (this.useMock ? MOCK_MAIN_ACCOUNT : null);
   }
 
   /** The key pair in force. Refused if missing or the wrong mode for this environment; never names a key. */

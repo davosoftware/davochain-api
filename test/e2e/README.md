@@ -1,6 +1,6 @@
 # End-to-end tests
 
-These tests call a **running local API** over real HTTP, the way the mobile app does: real routing, guards, validation, rate limits, database and Redis. Only the outside providers (Quidax, Flutterwave, Dojah) are the built-in mocks.
+These tests call a **running local API** over real HTTP, the way the mobile app does: real routing, guards, validation, rate limits, database and Redis. Only the outside providers (Quidax, Payrep, Dojah) are the built-in mocks.
 
 They complement the **unit tests** (`npm test`, 1,084 tests in `src/**/*.spec.ts`), which need no server.
 
@@ -32,7 +32,7 @@ npm run start:e2e
 ```
 
 It works the same in PowerShell, cmd and Bash, and prints the settings it uses:
-- every provider mocked: `DOJAH_USE_MOCK`, `QUIDAX_USE_MOCK`, `FLW_USE_MOCK`;
+- every provider mocked: `DOJAH_USE_MOCK`, `QUIDAX_USE_MOCK`, `PAYREP_USE_MOCK` (with naira deposits on: `NGN_DEPOSITS_ENABLED`);
 - Basic verification on: `KYC_BASIC_ENABLED`, `ALERT_DEFAULT_RECIPIENTS`;
 - `RATE_LIMIT_AUTH_REGISTER_IP=1000/1h`, because one full run registers about 50 users and the real limit is 5 per hour per IP.
 
