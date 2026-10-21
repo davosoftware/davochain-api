@@ -45,11 +45,11 @@ const bad = (label: string, detail = '') => {
 const base = (env('PAYREP_BASE_URL') || PAYREP_SANDBOX_URL).replace(/\/+$/, '');
 let token = '';
 
-async function post(path: string, body: Obj, auth = true): Promise<{ status: number; body: Obj | undefined }> {
+async function post(path: string, body: Obj | null, auth = true): Promise<{ status: number; body: Obj | undefined }> {
   const res = await request(`${base}/api/v1${path}`, {
-    method: 'POST',
+    method: body === null ? 'GET' : 'POST',
     headers: { 'content-type': 'application/json', accept: 'application/json', ...(auth ? { authorization: `Bearer ${token}` } : {}) },
-    body: JSON.stringify(body),
+    ...(body === null ? {} : { body: JSON.stringify(body) }),
     headersTimeout: 30_000,
     bodyTimeout: 30_000,
   });
@@ -71,9 +71,9 @@ async function main(): Promise<void> {
   }
   const clientId = env('PAYREP_CLIENT_ID');
   const clientSecret = env('PAYREP_CLIENT_SECRET');
-  const main = env('PAYREP_MAIN_ACCOUNT');
-  if (!clientId || !clientSecret || !main) {
-    console.error('Refusing: PAYREP_CLIENT_ID, PAYREP_CLIENT_SECRET and PAYREP_MAIN_ACCOUNT must be set in api/.env.');
+  let main = env('PAYREP_MAIN_ACCOUNT');
+  if (!clientId || !clientSecret) {
+    console.error('Refusing: PAYREP_CLIENT_ID and PAYREP_CLIENT_SECRET must be set in api/.env.');
     process.exit(2);
   }
   const mode = payrepKeyModeProblem(clientId, clientSecret, 'development');
@@ -90,6 +90,14 @@ async function main(): Promise<void> {
     return;
   }
   ok('token', `${code(t)}, expires_in ${String((t.body?.data as Obj).expires_in ?? '?')}s`);
+
+  // Our main account, as Payrep knows it. Used for this run when PAYREP_MAIN_ACCOUNT is empty.
+  const primary = await post('/account/api/get_primary_account', null);
+  const primaryNo = String(((primary.body?.data as Obj | undefined)?.account_number as string | undefined) ?? '');
+  if (primaryNo) ok('Payrep main account', `${code(primary)}, ends ${last4(primaryNo)}${main ? (main === primaryNo ? ' (matches PAYREP_MAIN_ACCOUNT)' : ' — DIFFERENT from PAYREP_MAIN_ACCOUNT') : ' — put this number in PAYREP_MAIN_ACCOUNT'}`);
+  else bad('Payrep main account', `${code(primary)}; data keys ${keysOf(primary.body?.data)}`);
+  if (!main) main = primaryNo;
+  if (!main) return;
 
   // 2. Banks
   const banks = await post('/transaction/transfer/api/fetch_banks', {});
