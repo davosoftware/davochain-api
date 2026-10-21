@@ -30,7 +30,7 @@ describeAdmin('Treasury', () => {
     const r = await call('GET', '/admin/treasury', { token: ADMIN });
     expect(r.status).toBe(200);
     expect(['YES', 'SHORT', 'UNKNOWN']).toContain(r.body.covered);
-    expect(r.body.rail).toMatchObject({ name: 'Flutterwave' });
+    expect(r.body.rail).toMatchObject({ name: 'Payrep' });
     expect(r.body.rail.available).toBe('50000000');
   });
 

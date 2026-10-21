@@ -7,11 +7,11 @@ import { dec } from '../common/money';
 
 /**
  * H11 (decision 19 Oct): customer naira withdrawals are paid by the naira rail
- * (Flutterwave today), never Quidax. Quidax is for crypto only.
+ * (Payrep today), never Quidax. Quidax is for crypto only.
  */
 function build(o: { transfer?: () => Promise<unknown>; status?: unknown; resolve?: () => Promise<unknown> } = {}) {
   const rail = {
-    name: 'Flutterwave',
+    name: 'Payrep',
     banks: jest.fn(async () => [{ code: '044', name: 'Access Bank' }]),
     resolveAccount: jest.fn(o.resolve ?? (async () => ({ accountName: 'ADA OBI' }))),
     transfer: jest.fn(o.transfer ?? (async () => ({ id: 'flw-1', reference: 'dvc_ngnwd_1', status: 'PENDING', fee: dec('10.75'), reason: null }))),

@@ -7,7 +7,7 @@ const net = (legs: LedgerLeg[]) =>
   legs.reduce((sum, l) => (l.direction === 'DEBIT' ? sum.plus(dec(l.amount)) : sum.minus(dec(l.amount))), dec(0));
 
 describe('depositLegs', () => {
-  it('credits the user the full amount and books what Flutterwave kept as our fee', () => {
+  it('credits the user the full amount and books what Payrep kept as our fee', () => {
     const legs = depositLegs({ userId: 'u1', amount: dec('1500'), settled: dec('1479'), fee: dec('21'), memo: 'm' });
     expect(legs).toEqual([
       { account: 'USER', userId: 'u1', assetCode: 'ngn', direction: 'CREDIT', amount: '1500', memo: 'm' },

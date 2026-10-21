@@ -28,7 +28,7 @@ export function lagosWhen(date: Date): string {
   return formatLagos(date).replace(/^(\d+) (\w+) \d{4} at (\d{2}:\d{2}) WAT$/, '$3 on $1 $2');
 }
 
-/** The calendar date in Lagos as YYYY-MM-DD — the format Flutterwave's date filters take. */
+/** The calendar date in Lagos as YYYY-MM-DD — the format Payrep's date filters take. */
 export function lagosDate(date: Date): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone: LAGOS,

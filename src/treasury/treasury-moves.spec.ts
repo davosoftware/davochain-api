@@ -15,7 +15,7 @@ function build(o: { settings?: Record<string, unknown> | null; railBalance?: str
   const moves: Array<Record<string, unknown>> = o.moves ?? [];
   let settings: Record<string, unknown> | null = o.settings === undefined ? { ...FUNDING } : o.settings;
   const rail = {
-    name: 'Flutterwave',
+    name: 'Payrep',
     balance: jest.fn(async () => {
       if (o.railBalance instanceof Error) throw o.railBalance;
       return { available: dec(o.railBalance ?? '1000000'), ledger: dec('0') };
@@ -100,7 +100,7 @@ describe('Sending naira to Quidax (owners only, password, no second approval)', 
 
   it("refuses when the rail balance can't be read", async () => {
     await expect(build({ railBalance: new Error('timeout') }).svc.sendToQuidax(OWNER, { amount: 1000, password: 'pw' })).rejects.toThrow(
-      new ServiceUnavailableException("We couldn't read the Flutterwave balance. Try again shortly."),
+      new ServiceUnavailableException("We couldn't read the Payrep balance. Try again shortly."),
     );
   });
 
@@ -188,7 +188,7 @@ describe('A move the naira rail has no record of (19 Oct: an owner marks it fail
     const out = await svc.markFailed(OWNER, 'm1', 'pw');
     expect(rail.transferStatus).toHaveBeenCalledWith('trsy_a');
     expect(moves[0]).toMatchObject({ status: 'FAILED' });
-    expect(String(moves[0].failureReason)).toMatch(/Flutterwave had no record of it/);
+    expect(String(moves[0].failureReason)).toMatch(/Payrep had no record of it/);
     expect(out).toMatchObject({ before: { status: 'SENDING' }, after: { status: 'FAILED' } });
   });
 

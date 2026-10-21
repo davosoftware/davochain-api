@@ -11,7 +11,7 @@ export function railFromQuidax(quidax: {
   verifyBankAccount?: (i: { accountNumber: string; bankCode: string }) => Promise<{ account_name: string }>;
 }) {
   return {
-    name: 'Flutterwave',
+    name: 'Payrep',
     banks: async () =>
       ((await quidax.fetchBanks?.()) ?? [])
         .filter((b) => b.country.toLowerCase() === 'nigeria' && b.currency.toLowerCase() === 'ngn')

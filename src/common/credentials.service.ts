@@ -27,20 +27,6 @@ export const CREDENTIALS = [
     hint: 'Signs the events Quidax sends us. Wrong value means every webhook is rejected.',
   },
   {
-    group: 'Flutterwave',
-    name: 'flutterwave.secretKey',
-    label: 'Secret key',
-    env: 'FLW_SECRET_KEY',
-    hint: 'Authorises every Flutterwave call. Test keys start FLWSECK_TEST- and are refused in production; live keys are refused everywhere else.',
-  },
-  {
-    group: 'Flutterwave',
-    name: 'flutterwave.secretHash',
-    label: 'Webhook secret hash',
-    env: 'FLW_SECRET_HASH',
-    hint: 'Must equal Settings → Webhooks → Secret hash in the Flutterwave dashboard. A wrong value means every webhook is rejected.',
-  },
-  {
     group: 'Payrep',
     name: 'payrep.clientId',
     label: 'Client ID',

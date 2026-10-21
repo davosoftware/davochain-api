@@ -31,3 +31,18 @@ describe('The MAX_* trading settings are retired', () => {
     warn.mockRestore();
   });
 });
+
+/** Payrep replaced Flutterwave (21 Oct 2026): an old .env still starts, and says what to remove. */
+describe('The FLW_* settings are retired', () => {
+  it('an existing .env that still sets them keeps starting, and startup names each one', () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const env = { ...BASE, FLW_USE_MOCK: 'true', FLW_SECRET_KEY: 'FLWSECK_TEST-x', FLW_SECRET_HASH: 'h', FLW_BASE_URL: 'https://api.flutterwave.com/v3', FLW_RATE_LIMIT_PER_MINUTE: '120' };
+    expect(() => validateEnv(env)).not.toThrow();
+    const said = warn.mock.calls.map(([m]) => String(m));
+    for (const key of ['FLW_USE_MOCK', 'FLW_SECRET_KEY', 'FLW_SECRET_HASH', 'FLW_BASE_URL', 'FLW_RATE_LIMIT_PER_MINUTE']) {
+      expect(said).toContainEqual(expect.stringMatching(new RegExp(`^${key} is no longer used: .*Payrep`)));
+    }
+    expect(said.join(' ')).not.toContain('FLWSECK_TEST-x');
+    warn.mockRestore();
+  });
+});

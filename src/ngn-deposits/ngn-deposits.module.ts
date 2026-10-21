@@ -1,5 +1,4 @@
 import { Module } from '@nestjs/common';
-import { FlutterwaveModule } from '../flutterwave/flutterwave.module';
 import { KycModule } from '../kyc/kyc.module';
 import { LedgerModule } from '../ledger/ledger.module';
 import { RatesModule } from '../rates/rates.module';
@@ -9,17 +8,16 @@ import { ReadinessService } from './readiness.service';
 import { SweepService } from './sweep.service';
 import { VirtualAccountsController } from './virtual-accounts.controller';
 import { VirtualAccountsService } from './virtual-accounts.service';
-import { FlutterwaveWebhookController } from './flutterwave-webhook.controller';
 import { DepositIntake, PayrepWebhookController } from './payrep-webhook.controller';
 import { PayrepModule } from '../payrep/payrep.module';
 
 /**
- * Naira deposits through Flutterwave: virtual accounts, webhook intake,
+ * Naira deposits through Payrep: deposit accounts, webhook intake,
  * verification and crediting, the missed-webhook sweep, and readiness.
  */
 @Module({
-  imports: [FlutterwaveModule, PayrepModule, KycModule, LedgerModule, RatesModule],
-  controllers: [VirtualAccountsController, FlutterwaveWebhookController, PayrepWebhookController],
+  imports: [PayrepModule, KycModule, LedgerModule, RatesModule],
+  controllers: [VirtualAccountsController, PayrepWebhookController],
   providers: [
     ReadinessService,
     VirtualAccountsService,

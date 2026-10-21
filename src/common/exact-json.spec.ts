@@ -1,7 +1,7 @@
 import { assertExactJsonSupported, parseJsonExact } from './exact-json';
 
 /**
- * Flutterwave sends money as JSON numbers. A double cannot hold every decimal,
+ * Providers may send money as JSON numbers. A double cannot hold every decimal,
  * so every number must come back as the exact text it was written with.
  */
 describe('parseJsonExact', () => {

@@ -88,7 +88,7 @@ describe('The withdrawal records which saved destination it used', () => {
       { assertNgnWithdrawalsAllowed: jest.fn(), assertWithdrawalsAllowed: jest.fn(), assertNgnWithdrawalsAllowedIn: jest.fn(), ngnWithdrawalsEnabled: jest.fn(async () => true) } as never,
       { notify: jest.fn() } as never,
       { assertCooledOff: async () => undefined } as never,
-      { name: 'Flutterwave', banks: async () => [{ code: '044', name: 'Access Bank' }], resolveAccount: async () => ({ accountName: 'ADA' }) } as never,
+      { name: 'Payrep', banks: async () => [{ code: '044', name: 'Access Bank' }], resolveAccount: async () => ({ accountName: 'ADA' }) } as never,
     );
     await expect(svc.withdrawNgn('u1', { amount: '5000', accountNumber: '0123456789', bankCode: '044' }, 'b1')).rejects.toBe(stop);
     expect(created[0]).toMatchObject({ savedBankAccountId: 'b1', payoutAccountLast4: '6789' });

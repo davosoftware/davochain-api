@@ -268,7 +268,7 @@ export class DepositsService {
       amount: t.toAmount ? str(t.toAmount) : null,
       status: t.status,
       reason: t.failureReason,
-      /** FLUTTERWAVE for a bank transfer into the naira account; QUIDAX otherwise. */
+      /** PAYREP for a bank transfer into the naira account (FLUTTERWAVE on old test history); QUIDAX otherwise. */
       provider: t.provider,
       /** The sending bank, for a naira bank transfer. */
       counterpartyBank: t.counterpartyBank,

@@ -2,7 +2,7 @@ import { adminToken, balance, call, credit, hasAdmin, key, newUser, requireServe
 
 /**
  * H11 over real HTTP: a customer's naira withdrawal is paid by the naira rail
- * (the mock Flutterwave rail), not Quidax. Needs E2E_ADMIN_* (an OWNER) to
+ * (the mock Payrep rail), not Quidax. Needs E2E_ADMIN_* (an OWNER) to
  * switch naira payouts on for the test; they are put back to the server
  * default afterwards. Finishing a payout (settle or refund) is unit-tested.
  */

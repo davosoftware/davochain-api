@@ -24,7 +24,7 @@ export class VirtualAccountsController {
     return this.accounts.getForUser(userId);
   }
 
-  /** 201 created, 200 already had one, 202 Flutterwave has not confirmed yet. */
+  /** 201 created, 200 already had one, 202 Payrep has not confirmed yet. */
   @PausedDuringMaintenance()
   @Post('account')
   async open(

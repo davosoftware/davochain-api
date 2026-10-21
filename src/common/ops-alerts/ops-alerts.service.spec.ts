@@ -19,7 +19,7 @@ function setup(defaults: string[] = ['ops@davochain.test']) {
 describe('OpsAlertsService', () => {
   it('records the alert and emails the default recipients', async () => {
     const { db, sent, svc } = setup();
-    await expect(svc.raise(AlertType.NGN_DEPOSIT_UNMATCHED, 'unmatched:1', 'Unmatched deposit', ['Flutterwave id 1'])).resolves.toBe(true);
+    await expect(svc.raise(AlertType.NGN_DEPOSIT_UNMATCHED, 'unmatched:1', 'Unmatched deposit', ['Payrep id 1'])).resolves.toBe(true);
     expect(db.rows('alert')).toHaveLength(1);
     expect(db.rows('alert')[0]).toMatchObject({ type: 'NGN_DEPOSIT_UNMATCHED', assetCode: 'unmatched:1' });
     expect(sent).toEqual([expect.objectContaining({ to: 'ops@davochain.test', subject: '[DavoChain] Unmatched deposit' })]);

@@ -1,7 +1,7 @@
 /**
  * JSON.parse that never turns a number into a float.
  *
- * Flutterwave sends money as JSON numbers — `1500`, `1479`, and fees such as
+ * Providers may send money as JSON numbers — `1500`, `1479`, and fees such as
  * `26.875`. Plain JSON.parse hands those back as doubles, and a double cannot
  * hold every decimal exactly. Here every number comes back as the exact text it
  * was written with ("26.875", "10535993"), so money becomes a Decimal without

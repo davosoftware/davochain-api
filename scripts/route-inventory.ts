@@ -16,7 +16,7 @@ import { getMetadataStorage } from 'class-validator';
 const SRC = join(__dirname, '..', 'src');
 const PREFIX = '/v1';
 /** main.ts: setGlobalPrefix(..., { exclude: [...] }). Providers and load balancers call these without /v1. */
-const UNPREFIXED = new Set(['/health', '/webhooks/quidax', '/webhooks/flutterwave']);
+const UNPREFIXED = new Set(['/health', '/webhooks/quidax', '/webhooks/payrep']);
 
 function controllerFiles(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {

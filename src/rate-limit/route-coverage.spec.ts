@@ -77,7 +77,6 @@ describe('rate-limit route coverage', () => {
     expect(policyOf('auth/change-password')).toBe('auth.changePassword');
     expect(policyOf('admin/me/password')).toBe('auth.changePassword');
     expect(policyOf('webhooks/quidax')).toBe('webhooks');
-    expect(policyOf('webhooks/flutterwave')).toBe('webhooks');
     expect(policyOf('webhooks/payrep')).toBe('webhooks');
     expect(policyOf('health')).toBe('public');
     expect(policyOf('giftcards/catalogue')).toBe('public');

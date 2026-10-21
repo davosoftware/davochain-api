@@ -14,7 +14,7 @@ function build(o: {
   inFlight?: string;
 } = {}) {
   const rail = {
-    name: 'Flutterwave',
+    name: 'Payrep',
     balance: jest.fn(async () => {
       if (o.rail instanceof Error) throw o.rail;
       return { available: dec(o.rail ?? '1000000'), ledger: dec(o.rail ?? '1000000') };
@@ -45,7 +45,7 @@ describe('Treasury: what we hold against what customers are owed', () => {
 
   it('covered, with the spare amount', async () => {
     const s = await build({ rail: '1000000', quidax: '500000' }).svc.snapshot();
-    expect(s).toMatchObject({ covered: 'YES', spare: '500000', shortBy: null, rail: { name: 'Flutterwave', available: '1000000', error: null }, quidaxNgn: '500000' });
+    expect(s).toMatchObject({ covered: 'YES', spare: '500000', shortBy: null, rail: { name: 'Payrep', available: '1000000', error: null }, quidaxNgn: '500000' });
   });
 
   it('short, with how much', async () => {
@@ -56,7 +56,7 @@ describe('Treasury: what we hold against what customers are owed', () => {
   it("a figure that can't be read means can't tell, never short", async () => {
     const s = await build({ rail: new Error('timeout') }).svc.snapshot();
     expect(s).toMatchObject({ covered: 'UNKNOWN', rail: { available: null }, availableToMove: null, spare: null, shortBy: null });
-    expect(s.rail.error).toBe("We couldn't read the Flutterwave balance.");
+    expect(s.rail.error).toBe("We couldn't read the Payrep balance.");
     const q = await build({ quidax: new Error('down') }).svc.snapshot();
     expect(q).toMatchObject({ covered: 'UNKNOWN', quidaxNgn: null });
   });

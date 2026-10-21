@@ -9,7 +9,9 @@ const BASE = {
 /** Production needs these for other reasons; set them so only Dojah rules show. */
 const PROD = {
   NODE_ENV: 'production',
-  FLW_USE_MOCK: 'false',
+  PAYREP_USE_MOCK: 'false',
+  PAYREP_MAIN_ACCOUNT: '7801234567',
+  PAYREP_WEBHOOK_SECRET: 'a'.repeat(64),
   KYC_HASH_KEY: 'k'.repeat(32),
   TRUST_PROXY_ADDRESSES: '127.0.0.1',
   DOJAH_USE_MOCK: 'false',

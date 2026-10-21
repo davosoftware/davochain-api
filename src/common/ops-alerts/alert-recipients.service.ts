@@ -31,7 +31,7 @@ const CATALOGUE: Record<AlertType, { label: string; description: string }> = {
   NAIRA_WEBHOOK_REJECTED: { label: 'Naira webhook refused', description: 'Payrep webhooks arrived with a wrong signature or an old timestamp, 3 or more in an hour.' },
   NGN_DEPOSIT_UNMATCHED: { label: 'Unmatched naira deposit', description: 'Money arrived that could not be matched to a customer.' },
   NGN_RECONCILIATION: { label: 'Naira reconciliation', description: 'A naira deposit or sweep needs attention.' },
-  VIRTUAL_ACCOUNT_SYNC: { label: 'Virtual account sync', description: 'A customer deposit account could not be kept in step with Flutterwave.' },
+  VIRTUAL_ACCOUNT_SYNC: { label: 'Virtual account sync', description: 'A customer deposit account was opened at Payrep but could not be recorded here.' },
   ADMIN_LOCKOUT: { label: 'Admin account locked', description: 'An admin account was locked after repeated wrong passwords; someone may be guessing it.' },
   RATE_LIMIT_DEGRADED: { label: 'Rate limiting degraded', description: 'Redis is unreachable: sign-in is refusing requests and other routes run without limits.' },
   DOJAH_CONFIG: { label: 'Verification provider problem', description: 'Dojah refused our keys, IP or wallet, or stopped answering; Basic verification is paused.' },

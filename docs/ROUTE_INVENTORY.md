@@ -59,8 +59,8 @@
 | GET | `/v1/admin/credentials` | admin token |  | credentials.manage | default |  |
 | PUT | `/v1/admin/credentials` | admin token |  | credentials.manage | default |  |
 | DELETE | `/v1/admin/credentials/:name` | admin token |  | credentials.manage | default |  |
-| POST | `/v1/admin/dev/flutterwave/redeliver/:flwId` | admin token |  | settings.manage | default |  |
-| POST | `/v1/admin/dev/flutterwave/simulate-payin` | admin token |  | settings.manage | default |  |
+| POST | `/v1/admin/dev/payrep/redeliver/:transactionId` | admin token |  | settings.manage | default |  |
+| POST | `/v1/admin/dev/payrep/simulate-deposit` | admin token |  | settings.manage | default |  |
 | PUT | `/v1/admin/dojah/advanced-settings` | admin token |  | settings.manage | default |  |
 | POST | `/v1/admin/dojah/advanced-switch` | admin token |  | settings.manage | default |  |
 | POST | `/v1/admin/dojah/basic-switch` | admin token |  | settings.manage | default |  |
@@ -77,7 +77,6 @@
 | POST | `/v1/admin/fees/claim` | admin token |  | claims.manage | default |  |
 | GET | `/v1/admin/fees/claimable` | admin token |  | claims.view | default |  |
 | GET | `/v1/admin/fees/claims/:id` | admin token |  | claims.view | default |  |
-| GET | `/v1/admin/flutterwave/readiness` | admin token |  | settings.manage | default |  |
 | GET | `/v1/admin/giftcards/brands` | admin token |  | giftcards.view | default |  |
 | PUT | `/v1/admin/giftcards/brands` | admin token |  | giftcards.manage | default |  |
 | DELETE | `/v1/admin/giftcards/brands/:id` | admin token |  | giftcards.manage | default |  |
@@ -121,6 +120,7 @@
 | POST | `/v1/admin/me/two-step/code` | admin token |  |  | auth.changePassword |  |
 | POST | `/v1/admin/me/two-step/disable` | admin token |  |  | auth.changePassword |  |
 | POST | `/v1/admin/me/two-step/enable` | admin token |  |  | auth.changePassword |  |
+| GET | `/v1/admin/naira-rail/readiness` | admin token |  | settings.manage | default |  |
 | GET | `/v1/admin/overview` | admin token |  | overview.view | default |  |
 | POST | `/v1/admin/pause` | admin token |  | trading.halt | default |  |
 | GET | `/v1/admin/price-reference` | admin token |  | fees.view | default |  |
@@ -228,7 +228,7 @@
 | POST | `/v1/withdrawals/ngn/verify-account` | user token | level rule: NGN_WITHDRAW |  | default | yes |
 | GET | `/v1/withdrawals/quote` | user token |  |  | default |  |
 | GET | `/v1/withdrawals/quote/ngn` | user token |  |  | default |  |
-| POST | `/webhooks/flutterwave` | none (public) |  |  | webhooks |  |
+| POST | `/webhooks/payrep` | none (public) |  |  | webhooks |  |
 | POST | `/webhooks/quidax` | none (public) |  |  | webhooks |  |
 
 ### Request bodies and query parameters, by route
@@ -377,15 +377,11 @@
 - `name` (required): maxLength(120), isString
 - `value` (required): maxLength(8000), isString
 
-**POST `/v1/admin/dev/flutterwave/redeliver/:flwId`** (src/admin/admin.controller.ts)
-- Query: `format`
-
-**POST `/v1/admin/dev/flutterwave/simulate-payin`** (src/admin/admin.controller.ts)
+**POST `/v1/admin/dev/payrep/simulate-deposit`** (src/admin/admin.controller.ts)
 - `userId` (required): isUuid(undefined)
 - `amount` (required): matches(^\d{1,9}(\.\d{1,2})?$, undefined)
 - `payerName` (optional): maxLength(100), isString
-- `status` (optional): isIn(successful|pending|failed)
-- `format` (optional): isIn(legacy|v3)
+- `status` (optional): isIn(success|pending|failed)
 
 **PUT `/v1/admin/dojah/advanced-settings`** (src/admin/dojah-admin.controller.ts)
 - `advancedDailyAttempts` (optional): isNumber
@@ -440,9 +436,6 @@
 
 **POST `/v1/admin/fees/claim`** (src/admin/admin.controller.ts)
 - `assets` (required): isString
-
-**GET `/v1/admin/flutterwave/readiness`** (src/admin/admin.controller.ts)
-- Query: `refresh`
 
 **PUT `/v1/admin/giftcards/brands`** (src/admin/admin.controller.ts)
 - `id` (optional): isUuid(undefined)
@@ -548,6 +541,9 @@
 
 **POST `/v1/admin/me/two-step/enable`** (src/admin/admin.controller.ts)
 - `code` (required): matches(^\d{6}$, undefined), isString
+
+**GET `/v1/admin/naira-rail/readiness`** (src/admin/admin.controller.ts)
+- Query: `refresh`
 
 **GET `/v1/admin/overview`** (src/admin/admin.controller.ts)
 - Query: `to`, `from`

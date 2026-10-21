@@ -1,6 +1,5 @@
 import { Logger } from '@nestjs/common';
 import { z } from 'zod';
-import { keyModeProblem } from '../flutterwave/key-mode';
 import { payrepKeyModeProblem } from '../payrep/key-mode';
 import { rateLimitEnvProblems } from '../rate-limit/policies';
 import { isProxyAddress } from '../rate-limit/trust-proxy';
@@ -192,12 +191,6 @@ export const envSchema = z
 
     TRADING_ENABLED: bool(true),
     NGN_WITHDRAWALS_ENABLED: bool(false),
-    // ── Flutterwave (the naira rail) ──
-    FLW_USE_MOCK: bool(true),
-    FLW_BASE_URL: z.string().url().default('https://api.flutterwave.com/v3'),
-    FLW_SECRET_KEY: z.string().optional(),
-    FLW_SECRET_HASH: z.string().optional(),
-    FLW_RATE_LIMIT_PER_MINUTE: int(120),
     // ── Payrep MFB (the naira rail, spec 2026-10-20 §8). An empty value counts as unset. ──
     PAYREP_USE_MOCK: bool(true),
     PAYREP_BASE_URL: z.preprocess(emptyToUndefined, z.string().url().default('https://shogun-dev.payrepmfb.com')),
@@ -321,21 +314,6 @@ export const envSchema = z
         });
       }
     }
-    // The Flutterwave mock accepts any deposit; it must never run where real people are.
-    if (env.FLW_USE_MOCK && !['development', 'test'].includes(env.NODE_ENV)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['FLW_USE_MOCK'],
-        message: 'FLW_USE_MOCK=true is only allowed in development and test',
-      });
-    }
-    // Live keys only in production; test keys everywhere else.
-    if (!env.FLW_USE_MOCK && env.FLW_SECRET_KEY) {
-      const problem = keyModeProblem(env.FLW_SECRET_KEY, env.NODE_ENV);
-      if (problem) {
-        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['FLW_SECRET_KEY'], message: problem });
-      }
-    }
     if (env.KYC_HASH_KEY && env.KYC_HASH_KEY.length < 32) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -356,14 +334,6 @@ export const envSchema = z
         code: z.ZodIssueCode.custom,
         path: ['KYC_HASH_KEY'],
         message: 'KYC_HASH_KEY is required in staging and production',
-      });
-    }
-    // The secret key rides in every request's Authorization header (spec §12.9).
-    if ((env.NODE_ENV === 'staging' || env.NODE_ENV === 'production') && !env.FLW_BASE_URL.startsWith('https://')) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['FLW_BASE_URL'],
-        message: 'FLW_BASE_URL must use https in staging and production',
       });
     }
     // ── Payrep (spec 2026-10-20 §8) ──
@@ -483,6 +453,7 @@ export type Env = z.infer<typeof envSchema>;
 
 /** Settings an old .env may still carry; accepted, never read. */
 const RETIRED = ['MAX_TRADE_USD', 'MAX_USER_DAILY_USD', 'MAX_PLATFORM_DAILY_USD'];
+const RETIRED_FLUTTERWAVE = ['FLW_USE_MOCK', 'FLW_BASE_URL', 'FLW_SECRET_KEY', 'FLW_SECRET_HASH', 'FLW_RATE_LIMIT_PER_MINUTE'];
 
 export function validateEnv(raw: Record<string, unknown>): Env {
   const parsed = envSchema.safeParse(raw);
@@ -497,6 +468,9 @@ export function validateEnv(raw: Record<string, unknown>): Env {
   if (lines.length > 0) throw refuse();
   for (const key of RETIRED) {
     if (raw[key] !== undefined) new Logger('Env').warn(`${key} is no longer used: trading limits are set on System -> Verification levels.`);
+  }
+  for (const key of RETIRED_FLUTTERWAVE) {
+    if (raw[key] !== undefined) new Logger('Env').warn(`${key} is no longer used: Flutterwave was replaced by Payrep (PAYREP_* settings). You can delete the line.`);
   }
   return parsed.data;
 }

@@ -3,7 +3,7 @@
  * (treasury spec §3.4): two "send to Quidax" requests at the same moment →
  * exactly one move is written and sent; the other is refused.
  *
- * The rail is stubbed (no Flutterwave call; it answers "pending"). Uses the
+ * The rail is stubbed (no Payrep call; it answers "pending"). Uses the
  * local e2e owner for the password check (stubbed to pass). Restores the
  * settings and deletes the moves it made. Local development database only.
  *
