@@ -80,7 +80,7 @@ export class ReadinessService {
     const keyUsable = mock || (key.present && !key.problem);
 
     if (!mock && key.problem) {
-      await this.alerts.raise(AlertType.FLUTTERWAVE_CONFIG, 'config', 'Flutterwave key refused by the key-mode guard', [key.problem]);
+      await this.alerts.raise(AlertType.NAIRA_RAIL_CONFIG, 'config', 'Flutterwave key refused by the key-mode guard', [key.problem]);
     }
 
     let balance: ReadinessReport['balance'] = null;
@@ -94,7 +94,7 @@ export class ReadinessService {
       } catch (err) {
         reachableDetail = redactIds((err as Error).message);
         if (err instanceof FlutterwaveError && err.kind === 'CONFIG') {
-          await this.alerts.raise(AlertType.FLUTTERWAVE_CONFIG, 'config', 'Flutterwave refused our credentials', [reachableDetail]);
+          await this.alerts.raise(AlertType.NAIRA_RAIL_CONFIG, 'config', 'Flutterwave refused our credentials', [reachableDetail]);
         }
       }
     } else {

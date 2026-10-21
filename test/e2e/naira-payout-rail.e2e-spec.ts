@@ -26,8 +26,8 @@ beforeAll(async () => {
   expect(on.status).toBe(200);
   user = await verifyBasic(await newUser());
   credit(user, 'ngn', '20000');
-  // The bank and its name come from the naira rail (mock): Access Bank 044.
-  const saved = await call('POST', '/me/bank-accounts', { token: user.token, body: { bankCode: '044', accountNumber: '0123456789', password: user.password } });
+  // The bank and its name come from the naira rail (mock): Access Bank 000014.
+  const saved = await call('POST', '/me/bank-accounts', { token: user.token, body: { bankCode: '000014', accountNumber: '0123456789', password: user.password } });
   expect(saved.status).toBe(201);
   savedId = saved.body.id;
 });
@@ -41,7 +41,7 @@ describeAdmin('naira withdrawals paid by the naira rail (H11)', () => {
   it('the bank list comes from the rail', async () => {
     const r = await call('GET', '/withdrawals/ngn/banks', { token: user.token });
     expect(r.status).toBe(200);
-    expect(r.body).toEqual(expect.arrayContaining([{ code: '044', name: 'Access Bank' }]));
+    expect(r.body).toEqual(expect.arrayContaining([{ code: '000014', name: 'Access Bank' }]));
   });
 
   it('a withdrawal is sent through the rail and the money is locked while it goes', async () => {

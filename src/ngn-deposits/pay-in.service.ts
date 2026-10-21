@@ -386,7 +386,7 @@ export class PayInService {
       return { outcome: row.outcome, changed: row.outcome === CollectionOutcome.NOT_FOUND && row.checkCount === 1 };
     }
     if (err instanceof FlutterwaveError && err.kind === 'CONFIG') {
-      await this.alerts.raise(AlertType.FLUTTERWAVE_CONFIG, 'config', 'Flutterwave refused to verify a payment', [
+      await this.alerts.raise(AlertType.NAIRA_RAIL_CONFIG, 'config', 'Flutterwave refused to verify a payment', [
         redactIds(err.message),
       ]);
     }

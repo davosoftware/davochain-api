@@ -10,14 +10,16 @@ import { SweepService } from './sweep.service';
 import { VirtualAccountsController } from './virtual-accounts.controller';
 import { VirtualAccountsService } from './virtual-accounts.service';
 import { FlutterwaveWebhookController } from './flutterwave-webhook.controller';
+import { PayrepWebhookController } from './payrep-webhook.controller';
+import { PayrepModule } from '../payrep/payrep.module';
 
 /**
  * Naira deposits through Flutterwave: virtual accounts, webhook intake,
  * verification and crediting, the missed-webhook sweep, and readiness.
  */
 @Module({
-  imports: [FlutterwaveModule, KycModule, LedgerModule, RatesModule],
-  controllers: [VirtualAccountsController, FlutterwaveWebhookController],
+  imports: [FlutterwaveModule, PayrepModule, KycModule, LedgerModule, RatesModule],
+  controllers: [VirtualAccountsController, FlutterwaveWebhookController, PayrepWebhookController],
   providers: [ReadinessService, VirtualAccountsService, PayInService, PayInProcessor, SweepService],
   exports: [ReadinessService, VirtualAccountsService, PayInService],
 })

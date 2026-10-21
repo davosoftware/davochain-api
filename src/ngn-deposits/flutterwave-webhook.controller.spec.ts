@@ -73,7 +73,7 @@ describe('POST /webhooks/flutterwave', () => {
     expect(db.rows('flutterwaveCollection')).toHaveLength(0);
     expect(payIn.enqueue).not.toHaveBeenCalled();
     expect(alerts.raise).toHaveBeenCalledWith(
-      'FLUTTERWAVE_WEBHOOK_REJECTED', 'webhook-rejected', expect.any(String), expect.any(Array), expect.any(Number),
+      'NAIRA_WEBHOOK_REJECTED', 'webhook-rejected', expect.any(String), expect.any(Array), expect.any(Number),
     );
   });
 

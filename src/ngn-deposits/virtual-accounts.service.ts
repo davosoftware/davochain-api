@@ -180,7 +180,7 @@ export class VirtualAccountsService {
       } catch (err) {
         lastError = redactIds((err as Error).message).slice(0, 500);
         if (err instanceof FlutterwaveError && err.kind === 'CONFIG') {
-          await this.alerts.raise(AlertType.FLUTTERWAVE_CONFIG, 'config', 'Flutterwave refused to open a virtual account', [lastError]);
+          await this.alerts.raise(AlertType.NAIRA_RAIL_CONFIG, 'config', 'Flutterwave refused to open a virtual account', [lastError]);
           throw new ServiceUnavailableException({
             statusCode: 503,
             code: 'DEPOSITS_UNAVAILABLE',

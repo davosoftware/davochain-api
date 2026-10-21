@@ -41,16 +41,16 @@ describeAdmin('Treasury', () => {
   });
 
   it('an owner sets the reserve and the funding account (name from the bank)', async () => {
-    const name = await call('POST', '/admin/treasury/check-name', { token: ADMIN, body: { bankCode: '044', accountNumber: '0123456789' } });
+    const name = await call('POST', '/admin/treasury/check-name', { token: ADMIN, body: { bankCode: '000014', accountNumber: '0123456789' } });
     expect(name.status).toBe(200);
     expect(name.body).toMatchObject({ bankName: 'Access Bank', accountName: 'MOCK ACCOUNT 6789' });
 
     const r = await call('PUT', '/admin/treasury/settings', {
       token: ADMIN,
-      body: { payoutReserveNgn: 1000000, fundingBankCode: '044', fundingAccountNumber: '0123456789', password: PASSWORD },
+      body: { payoutReserveNgn: 1000000, fundingBankCode: '000014', fundingAccountNumber: '0123456789', password: PASSWORD },
     });
     expect(r.status).toBe(200);
-    expect(r.body).toMatchObject({ reserve: '1000000', fundingAccount: { bankCode: '044', bankName: 'Access Bank', accountNumberMasked: '******6789', accountName: 'MOCK ACCOUNT 6789' } });
+    expect(r.body).toMatchObject({ reserve: '1000000', fundingAccount: { bankCode: '000014', bankName: 'Access Bank', accountNumberMasked: '******6789', accountName: 'MOCK ACCOUNT 6789' } });
   });
 
   it('never more than is available to move', async () => {

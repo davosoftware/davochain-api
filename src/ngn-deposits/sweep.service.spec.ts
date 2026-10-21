@@ -70,7 +70,7 @@ describe('SweepService.sweep', () => {
     const { client, alerts, svc } = setup();
     client.listTransactions.mockRejectedValue(new FlutterwaveError('CONFIG', 'Authorization required', 401));
     await expect(svc.sweep()).resolves.toMatchObject({ status: 'PARTIAL' });
-    expect(alerts.raise).toHaveBeenCalledWith('FLUTTERWAVE_CONFIG', 'config', expect.any(String), expect.any(Array));
+    expect(alerts.raise).toHaveBeenCalledWith('NAIRA_RAIL_CONFIG', 'config', expect.any(String), expect.any(Array));
   });
 
   it('stops at the wall-clock budget and reports PARTIAL', async () => {

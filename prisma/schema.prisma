@@ -248,8 +248,10 @@ enum AlertType {
   RECONCILIATION_DRIFT
   DAILY_DIGEST
   MONTHLY_REPORT
-  FLUTTERWAVE_CONFIG
-  FLUTTERWAVE_WEBHOOK_REJECTED
+  /// The naira rail (Payrep) refused our keys or setup, or queued a transfer for approval.
+  NAIRA_RAIL_CONFIG
+  /// Naira rail webhooks refused (wrong signature or too old), 3+ in an hour.
+  NAIRA_WEBHOOK_REJECTED
   NGN_DEPOSIT_UNMATCHED
   NGN_RECONCILIATION
   VIRTUAL_ACCOUNT_SYNC
@@ -262,6 +264,10 @@ enum AlertType {
   TREASURY_SHORT
   /// Treasury: the naira at the rail is below the payout reserve.
   TREASURY_RESERVE_LOW
+  /// Payrep reversed a transfer that had succeeded. Nothing changes automatically.
+  PAYOUT_REVERSED
+  /// Payrep reversed a deposit that had succeeded. Nothing is clawed back automatically.
+  DEPOSIT_REVERSED
 }
 
 // ─────────────────────────────────────────────── identity
@@ -2058,7 +2064,9 @@ model GiftCardTradeImage {
 
 enum PaymentProvider {
   QUIDAX
+  /// Old local test history only (Flutterwave was removed 21 Oct 2026).
   FLUTTERWAVE
+  PAYREP
 }
 
 enum VirtualAccountStatus {

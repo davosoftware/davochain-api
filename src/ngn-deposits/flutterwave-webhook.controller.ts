@@ -162,7 +162,7 @@ export class FlutterwaveWebhookController {
       }
     }
     await this.alerts.raise(
-      AlertType.FLUTTERWAVE_WEBHOOK_REJECTED,
+      AlertType.NAIRA_WEBHOOK_REJECTED,
       'webhook-rejected',
       `Flutterwave webhook rejected: ${reason} verif-hash`,
       [

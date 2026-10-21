@@ -27,8 +27,8 @@ const CATALOGUE: Record<AlertType, { label: string; description: string }> = {
   RECONCILIATION_DRIFT: { label: 'Reconciliation drift', description: 'Our ledger and the provider balances disagree beyond tolerance.' },
   DAILY_DIGEST: { label: 'Daily digest', description: 'The morning summary of the previous day.' },
   MONTHLY_REPORT: { label: 'Monthly report', description: 'The month-end summary report.' },
-  FLUTTERWAVE_CONFIG: { label: 'Flutterwave setup problem', description: 'Flutterwave refused our credentials or configuration; naira deposits may stop.' },
-  FLUTTERWAVE_WEBHOOK_REJECTED: { label: 'Flutterwave webhook rejected', description: 'A webhook arrived with a missing or wrong secret hash.' },
+  NAIRA_RAIL_CONFIG: { label: 'Naira rail setup problem', description: 'Payrep refused our keys or setup, or queued a transfer for approval; naira payouts or deposits may stop.' },
+  NAIRA_WEBHOOK_REJECTED: { label: 'Naira webhook refused', description: 'Payrep webhooks arrived with a wrong signature or an old timestamp, 3 or more in an hour.' },
   NGN_DEPOSIT_UNMATCHED: { label: 'Unmatched naira deposit', description: 'Money arrived that could not be matched to a customer.' },
   NGN_RECONCILIATION: { label: 'Naira reconciliation', description: 'A naira deposit or sweep needs attention.' },
   VIRTUAL_ACCOUNT_SYNC: { label: 'Virtual account sync', description: 'A customer deposit account could not be kept in step with Flutterwave.' },
@@ -39,6 +39,8 @@ const CATALOGUE: Record<AlertType, { label: string; description: string }> = {
   AML_SANCTIONS: { label: 'Sanctions match', description: 'A possible or confirmed sanctions match. Confirmed matches are blocked automatically and need an owner.' },
   TREASURY_SHORT: { label: 'Naira short', description: 'The daily Treasury check: customers are owed more naira than we hold at the naira rail and Quidax together.' },
   TREASURY_RESERVE_LOW: { label: 'Payout reserve low', description: 'The naira at the naira rail has dropped below the payout reserve, so customer withdrawals may run short. Top it up.' },
+  PAYOUT_REVERSED: { label: 'Payout reversed', description: 'Payrep reversed a transfer that had succeeded. Nothing is changed automatically: check where the money is.' },
+  DEPOSIT_REVERSED: { label: 'Deposit reversed', description: 'Payrep reversed a deposit that had succeeded. Nothing is clawed back automatically: review the customer balance.' },
 };
 
 /** Who made a change, for the audit row written in the same transaction. */

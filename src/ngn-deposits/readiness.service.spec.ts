@@ -84,7 +84,7 @@ describe('ReadinessService', () => {
     expect(ok(r, 'reachable')).toBe(false);
     expect(r.canCreateAccounts).toBe(false);
     expect(client.getBalance).not.toHaveBeenCalled();
-    expect(alerts.raise).toHaveBeenCalledWith('FLUTTERWAVE_CONFIG', 'config', expect.any(String), expect.any(Array));
+    expect(alerts.raise).toHaveBeenCalledWith('NAIRA_RAIL_CONFIG', 'config', expect.any(String), expect.any(Array));
   });
 
   it('turns red when the key or the hash is missing', async () => {

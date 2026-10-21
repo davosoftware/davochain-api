@@ -136,7 +136,7 @@ describe('VirtualAccountsService.openForUser', () => {
     client.failNext('createStaticVirtualAccount', new FlutterwaveError('CONFIG', 'Authorization required', 401));
     const err = await failure(svc.openForUser(USER, { bvn: BVN }));
     expect(err.getStatus()).toBe(503);
-    expect(alerts.raise).toHaveBeenCalledWith('FLUTTERWAVE_CONFIG', 'config', expect.any(String), expect.any(Array));
+    expect(alerts.raise).toHaveBeenCalledWith('NAIRA_RAIL_CONFIG', 'config', expect.any(String), expect.any(Array));
     expect(db.rows('virtualAccountRequest')[0].state).toBe('IDLE');
   });
 

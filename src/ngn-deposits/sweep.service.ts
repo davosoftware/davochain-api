@@ -136,7 +136,7 @@ export class SweepService {
       const error = redactIds((err as Error).message);
       this.log.warn(`Sweep stopped after ${pages} page(s): ${error}`);
       if (err instanceof FlutterwaveError && err.kind === 'CONFIG') {
-        await this.alerts.raise(AlertType.FLUTTERWAVE_CONFIG, 'config', 'Flutterwave refused the missed-webhook sweep', [error]);
+        await this.alerts.raise(AlertType.NAIRA_RAIL_CONFIG, 'config', 'Flutterwave refused the missed-webhook sweep', [error]);
       }
       return { status: 'PARTIAL', pages, seen, queued, error };
     }

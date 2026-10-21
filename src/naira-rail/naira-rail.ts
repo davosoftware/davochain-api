@@ -2,12 +2,12 @@ import type { Decimal } from '../common/money';
 
 /**
  * The naira rail: the company that holds our naira, gives customers account
- * numbers, and pays naira out to Nigerian banks (Flutterwave today). Everything
+ * numbers, and pays naira out to Nigerian banks (Payrep today). Everything
  * new that touches naira goes through this one plug, so changing provider means
  * writing a new plug, not changing the screens or the money code (decision 19 Oct).
  */
 export interface NairaRail {
-  /** Shown on screens, e.g. "Flutterwave". */
+  /** Shown on screens, e.g. "Payrep". */
   readonly name: string;
   /** Our naira at the rail. `available` can be spent now. */
   balance(): Promise<{ available: Decimal; ledger: Decimal }>;

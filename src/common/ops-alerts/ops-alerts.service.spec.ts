@@ -27,16 +27,16 @@ describe('OpsAlertsService', () => {
 
   it('prefers the recipients configured for the alert type', async () => {
     const { db, sent, svc } = setup();
-    await db.alertRecipient.create({ data: { type: 'FLUTTERWAVE_CONFIG', email: 'cto@davochain.test' } });
-    await svc.raise(AlertType.FLUTTERWAVE_CONFIG, 'config', 'Key refused', []);
+    await db.alertRecipient.create({ data: { type: 'NAIRA_RAIL_CONFIG', email: 'cto@davochain.test' } });
+    await svc.raise(AlertType.NAIRA_RAIL_CONFIG, 'config', 'Key refused', []);
     expect(sent.map((m) => m.to)).toEqual(['cto@davochain.test']);
   });
 
   it('stays quiet inside the cooldown for the same type and key', async () => {
     const { sent, svc } = setup();
-    await svc.raise(AlertType.FLUTTERWAVE_CONFIG, 'config', 'Key refused', []);
-    await expect(svc.raise(AlertType.FLUTTERWAVE_CONFIG, 'config', 'Key refused', [])).resolves.toBe(false);
-    await svc.raise(AlertType.FLUTTERWAVE_CONFIG, 'other-key', 'Something else', []);
+    await svc.raise(AlertType.NAIRA_RAIL_CONFIG, 'config', 'Key refused', []);
+    await expect(svc.raise(AlertType.NAIRA_RAIL_CONFIG, 'config', 'Key refused', [])).resolves.toBe(false);
+    await svc.raise(AlertType.NAIRA_RAIL_CONFIG, 'other-key', 'Something else', []);
     expect(sent).toHaveLength(2);
   });
 

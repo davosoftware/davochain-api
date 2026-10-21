@@ -221,7 +221,7 @@ describe('PayInService.processPayment', () => {
     const id = pay();
     client.failNext('verifyTransaction', new FlutterwaveError('CONFIG', 'Authorization required', 401));
     await expect(svc.processPayment(id)).rejects.toBeInstanceOf(FlutterwaveError);
-    expect(alerts.raise).toHaveBeenCalledWith('FLUTTERWAVE_CONFIG', 'config', expect.any(String), expect.any(Array));
+    expect(alerts.raise).toHaveBeenCalledWith('NAIRA_RAIL_CONFIG', 'config', expect.any(String), expect.any(Array));
   });
 
   it('refuses an answer about a different payment', async () => {
