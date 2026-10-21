@@ -115,6 +115,35 @@ enum KycDocumentType {
   VOTERS_CARD
   SELFIE
   PROOF_OF_ADDRESS
+  NATIONAL_ID
+  ID_BACK
+}
+
+/// Advanced verification (spec 2026-10-21). Step A = ID + selfie → TIER_2; Step B = proof of address → TIER_3.
+enum AdvancedStep {
+  IDENTITY
+  ADDRESS
+}
+
+enum AdvancedState {
+  CHECKING
+  APPROVED
+  IN_REVIEW
+  REJECTED
+  FAILED_SYSTEM
+}
+
+enum AdvancedIdType {
+  NATIONAL_ID
+  PASSPORT
+  DRIVERS_LICENSE
+}
+
+enum AddressKind {
+  UTILITY_BILL
+  BANK_STATEMENT
+  GOVERNMENT_LETTER
+  TENANCY
 }
 
 enum AddressStatus {
@@ -264,11 +293,12 @@ model User {
   savedCryptoAddresses SavedCryptoAddress[]
 
   /// Denormalised from KycProfile so a guard can check without a join.
-  kycTier          KycTier           @default(TIER_0)
-  kycStatus        KycStatus         @default(NOT_STARTED)
+  kycTier               KycTier                @default(TIER_0)
+  kycStatus             KycStatus              @default(NOT_STARTED)
   /// Separate from KYC on purpose: identity can be fine while AML is not (spec §7).
-  amlStatus        AmlStatus         @default(NOT_SCREENED)
-  kycVerifications KycVerification[]
+  amlStatus             AmlStatus              @default(NOT_SCREENED)
+  kycVerifications      KycVerification[]
+  advancedVerifications AdvancedVerification[]
 
   // ── referrals ─────────────────────────────────────────────
 
@@ -2408,4 +2438,68 @@ model PendingUpload {
 
   @@index([createdAt])
   @@map("pending_uploads")
+}
+
+/// One Advanced attempt (spec §5.1). Findings are a minimal summary: never Dojah's raw answer,
+/// never the ID portrait, never a full document number, never OCR text.
+model AdvancedVerification {
+  id        String        @id @default(uuid())
+  userId    String
+  step      AdvancedStep
+  /// = userId while CHECKING or IN_REVIEW; NULL once decided. UNIQUE: one open Advanced attempt per customer.
+  activeFor String?       @unique
+  /// Africa/Lagos calendar day of creation, for the daily limit.
+  lagosDay  String
+  state     AdvancedState @default(CHECKING)
+
+  idType            AdvancedIdType?
+  addressKind       AddressKind?
+  frontDocumentId   String?
+  backDocumentId    String?
+  selfieDocumentId  String?
+  addressDocumentId String?
+
+  /// KycHashService hash of "<idType>:<document number>". Never the number itself.
+  docHash        String?
+  docLast4       String?
+  docDateOfBirth String?
+
+  readOutcome        DojahCallOutcome?
+  readStartedAt      DateTime?
+  readSends          Int               @default(0)
+  readHttpStatus     Int?
+  livenessOutcome    DojahCallOutcome?
+  livenessStartedAt  DateTime?
+  livenessSends      Int               @default(0)
+  livenessHttpStatus Int?
+  matchOutcome       DojahCallOutcome?
+  matchStartedAt     DateTime?
+  matchSends         Int               @default(0)
+  matchHttpStatus    Int?
+  addressOutcome     DojahCallOutcome?
+  addressStartedAt   DateTime?
+  addressSends       Int               @default(0)
+  addressHttpStatus  Int?
+
+  findings        Json     @default("{}")
+  reviewReasons   String[] @default([])
+  rejectCode      String?
+  /// What the customer is shown for IN_REVIEW / REJECTED / FAILED_SYSTEM.
+  customerMessage String?
+  possiblyCharged Boolean  @default(false)
+  failureReason   String?
+
+  reviewedBy String?
+  reviewedAt DateTime?
+  reviewNote String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, step, state])
+  @@index([state, createdAt])
+  @@index([docHash])
+  @@map("advanced_verifications")
 }

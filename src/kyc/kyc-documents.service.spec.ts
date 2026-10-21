@@ -1,6 +1,6 @@
 import { BadRequestException, ConflictException, NotFoundException, PayloadTooLargeException, ServiceUnavailableException } from '@nestjs/common';
 import { createHash } from 'node:crypto';
-import { KycDocumentsService, MAX_DOCUMENT_BYTES, MAX_PENDING_DOCUMENTS } from './kyc-documents.service';
+import { KycDocumentsService, MAX_DOCUMENT_BYTES, MAX_PENDING_DOCUMENTS, UPLOADABLE_DOCUMENT_TYPES } from './kyc-documents.service';
 import { MemoryFileStore } from '../storage/memory-file-store';
 import { UploadIntents } from '../storage/upload-intents.service';
 
@@ -76,6 +76,12 @@ function setup() {
 }
 
 describe('KycDocumentsService.upload', () => {
+  it('accepts the national ID front and the back of a card as uploads (Advanced, spec §4.1)', () => {
+    expect(UPLOADABLE_DOCUMENT_TYPES).toEqual(
+      expect.arrayContaining(['NATIONAL_ID', 'ID_BACK', 'PASSPORT', 'DRIVERS_LICENSE', 'SELFIE', 'PROOF_OF_ADDRESS']),
+    );
+  });
+
   it('stores the file under a key the server chose and saves the record', async () => {
     const { db, store, svc } = setup();
     const out = await svc.upload('u1', 'PASSPORT', file(PNG));

@@ -15,8 +15,11 @@ import { DOCUMENT_TYPES, detectFileType } from '../storage/file-type';
 
 /** BVN and NIN are numbers checked with Dojah, never pictures; everything else is a file. */
 export const UPLOADABLE_DOCUMENT_TYPES = [
+  KycDocumentType.NATIONAL_ID,
+  KycDocumentType.ID_BACK,
   KycDocumentType.PASSPORT,
   KycDocumentType.DRIVERS_LICENSE,
+  // Kept for records uploaded before Advanced; not accepted by the Advanced checks (spec D2).
   KycDocumentType.VOTERS_CARD,
   KycDocumentType.SELFIE,
   KycDocumentType.PROOF_OF_ADDRESS,
