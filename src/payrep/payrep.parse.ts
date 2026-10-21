@@ -9,12 +9,25 @@ const money = (v: unknown): string | null => {
   return t && /^\d+(\.\d+)?$/.test(t) ? t : null;
 };
 
-/** Where a list hides in a reply whose shape Payrep doesn't document. */
-export function listOf(data: unknown): unknown[] {
+/**
+ * Where a list hides in a reply whose shape Payrep doesn't document. No data is
+ * an empty list; a shape we don't recognise is null ("unreadable"), so a caller
+ * can never mistake it for "nothing there".
+ */
+export function listOf(data: unknown): unknown[] | null {
+  if (data === null || data === undefined) return [];
   if (Array.isArray(data)) return data;
   const o = obj(data);
   for (const k of ['results', 'transactions', 'data', 'items']) if (o && Array.isArray(o[k])) return o[k] as unknown[];
-  return [];
+  return null;
+}
+
+/** Payrep's own next-page pointer, when the reply carries one. */
+export function nextCursorOf(data: unknown): { createdAt: string; id: string } | null {
+  const c = obj(obj(data)?.next_cursor);
+  const createdAt = s(c?.cursor_created_at, 40);
+  const id = s(c?.cursor_id);
+  return createdAt && id ? { createdAt, id } : null;
 }
 
 /** One credit, or null when it lacks an id or a readable amount (never guessed). */

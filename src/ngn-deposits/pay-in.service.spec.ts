@@ -134,6 +134,19 @@ describe('PayInService.processPayment (Payrep, spec §6)', () => {
     await db.nairaCollection.update({ where: { providerTransactionId: 'ghost' }, data: { firstSeenAt: new Date(Date.now() - 49 * HOUR) } });
     await expect(svc.processPayment('ghost')).resolves.toEqual({ outcome: 'NOT_FOUND', changed: true });
     expect(alerts.raise).toHaveBeenCalledWith('NGN_DEPOSIT_UNMATCHED', 'notfound:ghost', expect.any(String), expect.any(Array), expect.any(Number));
+    // A later look that still finds nothing changes nothing, alerts nobody again, and does not throw.
+    alerts.raise.mockClear();
+    await expect(svc.processPayment('ghost')).resolves.toEqual({ outcome: 'NOT_FOUND', changed: false });
+    expect(alerts.raise).not.toHaveBeenCalled();
+  });
+
+  it('NOT_FOUND is not final: if Payrep later shows the payment, it is credited (final review I3)', async () => {
+    const { svc, db, payrep, posts } = await setup();
+    const { transactionId } = await payrep.simulateDeposit({ accountNumber: ACC, amount: '800.00' });
+    await svc.intake({ transactionId, accountNumber: ACC, referenceNumber: null, createdAt: null, event: 'deposit.success' }, 'WEBHOOK');
+    await db.nairaCollection.update({ where: { providerTransactionId: transactionId }, data: { outcome: 'NOT_FOUND', firstSeenAt: new Date(Date.now() - 49 * HOUR) } });
+    await expect(svc.processPayment(transactionId)).resolves.toEqual({ outcome: 'CREDITED', changed: true });
+    expect(posts).toHaveLength(1);
   });
 
   it('an unclear Payrep answer throws so the job retries, leaving the payment untouched', async () => {
@@ -161,29 +174,48 @@ describe('PayInService.processPayment (Payrep, spec §6)', () => {
     expect(posts).toHaveLength(0);
   });
 
-  it('an unknown status is treated as pending', async () => {
-    const { svc, payrep, posts, deposit } = await setup();
-    const id = await deposit();
+  /** Payrep's record of the payment, with some fields changed. */
+  const reshape = (payrep: PayrepMock, over: Partial<PayrepCollection>) => {
     const real = payrep.fetchCredits.bind(payrep);
     jest.spyOn(payrep, 'fetchCredits').mockImplementation(async (f) => {
       const r = await real(f);
-      return { ...r, items: r.items.map((c: PayrepCollection) => ({ ...c, status: 'weird' })) };
+      return { ...r, items: r.items.map((c: PayrepCollection) => ({ ...c, ...over })) };
     });
+  };
+
+  it('an unknown status is treated as pending AND owners are told (final review I1)', async () => {
+    const { svc, payrep, posts, alerts, deposit } = await setup();
+    const id = await deposit();
+    reshape(payrep, { status: 'completed' });
     await expect(svc.processPayment(id)).resolves.toEqual({ outcome: 'PENDING_PROVIDER', changed: true });
     expect(posts).toHaveLength(0);
+    expect(alerts.raise).toHaveBeenCalledWith('NGN_RECONCILIATION', `unknown-status:${id}`, expect.stringMatching(/completed/), expect.any(Array), expect.any(Number));
   });
 
-  it('a debit is not a customer deposit: NON_CUSTOMER, no alert', async () => {
+  it.each(['debit', 'dr', 'DR'])('a "%s" is not a customer deposit: NON_CUSTOMER, no alert', async (transactionType) => {
     const { svc, payrep, alerts, posts, deposit } = await setup();
     const id = await deposit();
-    const real = payrep.fetchCredits.bind(payrep);
-    jest.spyOn(payrep, 'fetchCredits').mockImplementation(async (f) => {
-      const r = await real(f);
-      return { ...r, items: r.items.map((c: PayrepCollection) => ({ ...c, transactionType: 'debit' })) };
-    });
+    reshape(payrep, { transactionType: transactionType.toLowerCase() });
     await expect(svc.processPayment(id)).resolves.toEqual({ outcome: 'NON_CUSTOMER', changed: true });
     expect(posts).toHaveLength(0);
     expect(alerts.raise).not.toHaveBeenCalled();
+  });
+
+  it.each(['cr', null])('a credit written "%s" is credited', async (transactionType) => {
+    const { svc, payrep, deposit } = await setup();
+    const id = await deposit();
+    reshape(payrep, { transactionType });
+    await expect(svc.processPayment(id)).resolves.toMatchObject({ outcome: 'CREDITED' });
+  });
+
+  it('an unknown transaction type is never parked: it stays UNVERIFIED for the re-check, and owners are told (final review I1)', async () => {
+    const { svc, db, payrep, posts, alerts, deposit } = await setup();
+    const id = await deposit();
+    reshape(payrep, { transactionType: 'inflow' });
+    await expect(svc.processPayment(id)).resolves.toEqual({ outcome: 'UNVERIFIED', changed: false });
+    expect(db.rows('nairaCollection')[0].outcome).toBe('UNVERIFIED');
+    expect(posts).toHaveLength(0);
+    expect(alerts.raise).toHaveBeenCalledWith('NGN_RECONCILIATION', `unknown-type:${id}`, expect.stringMatching(/inflow/), expect.any(Array), expect.any(Number));
   });
 
   it('a deposit into an account that is switched off is HELD, not credited (Review Focus 4)', async () => {

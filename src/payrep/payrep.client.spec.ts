@@ -163,7 +163,28 @@ describe('PayrepClient', () => {
     expect(JSON.parse(seen[1].body)).toEqual({
       filters: { transaction_type: 'credit', start_date: '2026-10-20', end_date: '2026-10-22', account_number: '2012345678' },
       limit: 50,
+      page_size: 50,
     });
+  });
+
+  it('an unreadable list is UNCLEAR, never "nothing there" (final review I2)', async () => {
+    handler = (req, res) => (isToken(req) ? token(res) : json(res, 200, { status: true, response_code: '00', data: { records: [{ transaction_id: 't1' }] } }));
+    await expect(client().fetchCredits({ startDate: '2026-10-20', endDate: '2026-10-22' })).rejects.toMatchObject({ kind: 'UNCLEAR' });
+    handler = (req, res) => (isToken(req) ? token(res) : json(res, 200, { status: true, response_code: '00', data: 'oops' }));
+    await expect(client().banks()).rejects.toMatchObject({ kind: 'UNCLEAR' });
+  });
+
+  it("follows Payrep's next_cursor when it sends one, even on a short page", async () => {
+    handler = (req, res) =>
+      isToken(req)
+        ? token(res)
+        : json(res, 200, {
+            status: true,
+            response_code: '00',
+            data: { results: [{ transaction_id: 't1', amount: '5.00', created_at: '2026-10-21T10:00:00Z' }], next_cursor: { cursor_created_at: '2026-10-21T10:00:00Z', cursor_id: 't1' } },
+          });
+    const r = await client().fetchCredits({ startDate: '2026-10-20', endDate: '2026-10-22' });
+    expect(r.next).toEqual({ createdAt: '2026-10-21T10:00:00Z', id: 't1' });
   });
 
   it('never logs a body, an identity number, a key or a token', async () => {

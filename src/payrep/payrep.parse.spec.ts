@@ -5,10 +5,15 @@ describe('listOf: fetch_transactions has no documented response shape (Review Fo
     'finds the list in %j',
     (data) => expect(listOf(data)).toEqual([{ a: 1 }]),
   );
-  it('anything else is an empty list', () => {
-    expect(listOf({ nothing: true })).toEqual([]);
+  it('no data at all is an empty list', () => {
     expect(listOf(null)).toEqual([]);
-    expect(listOf('x')).toEqual([]);
+    expect(listOf(undefined)).toEqual([]);
+  });
+  it('a shape it does not recognise is null ("unreadable"), never an empty list (final review I2)', () => {
+    expect(listOf({ nothing: true })).toBeNull();
+    expect(listOf({ data: { results: [{ a: 1 }] } })).toBeNull();
+    expect(listOf({ records: [{ a: 1 }] })).toBeNull();
+    expect(listOf('x')).toBeNull();
   });
 });
 

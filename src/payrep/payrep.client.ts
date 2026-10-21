@@ -4,7 +4,7 @@ import { parseJsonExact } from '../common/exact-json';
 import { PayrepApi } from './payrep.api';
 import { classifyCreateAccount, classifyRead, classifyStatus, classifyTransfer, type StatusAnswer, type TransferAnswer } from './payrep.classify';
 import { PayrepError } from './payrep.errors';
-import { listOf, parseCollection } from './payrep.parse';
+import { listOf, nextCursorOf, parseCollection } from './payrep.parse';
 import type { PayrepAccount, PayrepBank, PayrepCollection, PayrepCursor, PayrepCustomerAccount, PayrepNameEnquiry, PayrepTransferInput } from './payrep.types';
 import type { PayrepConfig } from './payrep.config';
 
@@ -35,7 +35,9 @@ export class PayrepClient extends PayrepApi {
 
   async banks(): Promise<PayrepBank[]> {
     const data = await this.read<unknown>('/transaction/transfer/api/fetch_banks', {});
-    return listOf(data).flatMap((b) => {
+    const list = listOf(data);
+    if (!list) throw new PayrepError('UNCLEAR', 'Payrep answered the bank list in a shape we cannot read', 200, '00');
+    return list.flatMap((b) => {
       const o = (b ?? {}) as Obj;
       return str(o.code) && str(o.name) ? [{ name: str(o.name), code: str(o.code), cbnCode: str(o.cbn_code) || null }] : [];
     });
@@ -127,16 +129,21 @@ export class PayrepClient extends PayrepApi {
     const filters: Obj = { transaction_type: 'credit', start_date: f.startDate, end_date: f.endDate };
     if (f.accountNumber) filters.account_number = f.accountNumber;
     if (f.referenceNumber) filters.reference_number = f.referenceNumber;
+    // The docs list both limit and page_size; send both so a page is never silently 20.
     const data = await this.read<unknown>('/transaction/api/fetch_transactions', {
       filters,
       limit: PAGE,
+      page_size: PAGE,
       ...(cursor ? { cursor_created_at: cursor.createdAt, cursor_id: cursor.id } : {}),
     });
     const raw = listOf(data);
+    // An unreadable reply is UNCLEAR: the sweep reports PARTIAL and alerts, and nothing is credited.
+    if (!raw) throw new PayrepError('UNCLEAR', 'Payrep answered the transaction list in a shape we cannot read', 200, '00');
     const items = raw.map(parseCollection).filter((c): c is PayrepCollection => c !== null);
+    if (items.length < raw.length) this.log.warn(`fetch_transactions: ${raw.length - items.length} of ${raw.length} item(s) had no id or no readable amount and were skipped`);
     const last = (raw[raw.length - 1] ?? {}) as Obj;
     const lastId = str(last.transaction_id ?? last.id);
-    const next = raw.length >= PAGE && str(last.created_at) && lastId ? { createdAt: str(last.created_at), id: lastId } : null;
+    const next = nextCursorOf(data) ?? (raw.length >= PAGE && str(last.created_at) && lastId ? { createdAt: str(last.created_at), id: lastId } : null);
     return { items, next };
   }
 

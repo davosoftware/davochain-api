@@ -49,9 +49,16 @@ describe('SweepService.sweep', () => {
     expect(payrep.fetchCredits).toHaveBeenCalledWith({ startDate: '2026-10-05', endDate: '2026-10-08' }, null);
   });
 
+  it('a page that comes back with the same cursor ends the run as PARTIAL, not a loop (final review I2)', async () => {
+    const { payrep, svc } = setup();
+    payrep.fetchCredits.mockResolvedValue({ items: [], next: { createdAt: 'c', id: 'same' } });
+    await expect(svc.sweep()).resolves.toMatchObject({ status: 'PARTIAL', pages: 2, error: expect.stringMatching(/same page/) });
+  });
+
   it('stops at the page limit and says the run was partial', async () => {
     const { payrep, svc } = setup();
-    payrep.fetchCredits.mockResolvedValue({ items: [], next: { createdAt: 'c', id: 'x' } });
+    let n = 0;
+    payrep.fetchCredits.mockImplementation(async () => ({ items: [], next: { createdAt: 'c', id: String(++n) } }));
     await expect(svc.sweep()).resolves.toMatchObject({ status: 'PARTIAL', pages: 100 });
     expect(payrep.fetchCredits).toHaveBeenCalledTimes(100);
   });
@@ -111,6 +118,22 @@ describe('SweepService.recheck', () => {
       ['b', 'RECHECK'],
       ['a', 'RECHECK'],
     ]);
+  });
+
+  it('keeps looking for NOT_FOUND payments every 6 hours, up to eight days (final review I3)', async () => {
+    const { db, payIn, svc } = setup();
+    const now = new Date('2026-10-07T12:00:00Z');
+    const ago = (minutes: number) => new Date(now.getTime() - minutes * MINUTE);
+    const rows: Array<[string, Date, Date | null]> = [
+      ['nf-old-check', ago(3 * 24 * 60), ago(7 * 60)], //  queued: last looked 7 h ago
+      ['nf-recent', ago(3 * 24 * 60), ago(60)], //         skipped: looked an hour ago
+      ['nf-ancient', ago(9 * 24 * 60), ago(7 * 60)], //    skipped: older than 8 days
+    ];
+    for (const [id, firstSeenAt, lastCheckedAt] of rows) {
+      await db.nairaCollection.create({ data: { providerTransactionId: id, firstSource: 'WEBHOOK', outcome: 'NOT_FOUND', firstSeenAt, lastCheckedAt } });
+    }
+    await expect(svc.recheck(now)).resolves.toEqual({ queued: 1 });
+    expect(payIn.enqueue.mock.calls).toEqual([['nf-old-check', 'RECHECK']]);
   });
 });
 

@@ -1481,7 +1481,7 @@ Content-Type: application/json
 | 400 | `IDENTITY_MISMATCH` | Not the number the user verified with |
 | 400 | `PROVIDER_REJECTED` | Payrep refused the number (it could not verify it) |
 | 403 | `NOT_ELIGIBLE` | Show `message` (the same text as `reason` in 6.4) |
-| 409 | `ALREADY_CREATING` | A request is already in progress; wait a minute |
+| 409 | `ALREADY_CREATING` | A request is already in progress (wait a minute), or the last try got no clear answer from Payrep (202) and is being checked: the customer can try again after 30 minutes. Show `message`. |
 | 429 | `TOO_MANY_ATTEMPTS` | Five attempts in 24 hours; try tomorrow |
 | 503 | `DEPOSITS_UNAVAILABLE` | Temporarily unavailable; try later |
 

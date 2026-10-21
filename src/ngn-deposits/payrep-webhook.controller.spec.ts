@@ -109,6 +109,16 @@ describe('POST /webhooks/payrep (spec §6.1)', () => {
     expect(prisma.webhookEvent.create).toHaveBeenCalledTimes(2);
   });
 
+  it('never stores a BVN or NIN that an event might carry (final review I4)', async () => {
+    await send({
+      event: 'account.created',
+      data: { account_number: '2012345678', bvn: '22222222222', customer: { nin: '70123456789', identity_number: '1', id_number: '2' }, note: 'phone 08012345678' },
+    });
+    const stored = JSON.stringify(prisma.webhookEvent.create.mock.calls[0][0].data.payload);
+    expect(stored).not.toMatch(/22222222222|70123456789|08012345678|"bvn"|"nin"|identity_number|id_number/);
+    expect(stored).toContain('2012345678');
+  });
+
   it('bodies over 64 KB are refused before anything else', async () => {
     await expect(ctrl.receive({ rawBody: Buffer.alloc(65 * 1024) } as never, '1', 'x', 'w')).rejects.toBeInstanceOf(PayloadTooLargeException);
     expect(prisma.webhookEvent.create).not.toHaveBeenCalled();

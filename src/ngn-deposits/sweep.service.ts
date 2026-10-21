@@ -109,6 +109,12 @@ export class SweepService {
           await this.payIn.intake({ transactionId: c.transactionId, accountNumber: c.accountNumber, referenceNumber: c.referenceNumber, createdAt: c.createdAt, event: 'sweep' }, 'SWEEP');
           queued++;
         }
+        if (res.next && cursor && res.next.createdAt === cursor.createdAt && res.next.id === cursor.id) {
+          // Payrep ignored the cursor: reading on would loop over the same page.
+          const error = `Payrep returned the same page again after ${pages} page(s); the rest was not read`;
+          this.log.warn(error);
+          return { status: 'PARTIAL', pages, seen, queued, error };
+        }
         cursor = res.next;
       } while (cursor);
       if (queued > 0) this.log.log(`Sweep queued ${queued} payment(s) from ${pages} page(s)`);
@@ -125,11 +131,18 @@ export class SweepService {
 
   async recheck(now = new Date()): Promise<{ queued: number }> {
     const stale = new Date(now.getTime() - 10 * MINUTE);
+    const since = new Date(now.getTime() - 8 * DAY);
     const rows = await this.prisma.nairaCollection.findMany({
       where: {
-        outcome: { in: [CollectionOutcome.UNVERIFIED, CollectionOutcome.PENDING_PROVIDER] },
-        firstSeenAt: { gte: new Date(now.getTime() - 8 * DAY) },
-        OR: [{ lastCheckedAt: null, firstSeenAt: { lt: stale } }, { lastCheckedAt: { lt: stale } }],
+        firstSeenAt: { gte: since },
+        OR: [
+          {
+            outcome: { in: [CollectionOutcome.UNVERIFIED, CollectionOutcome.PENDING_PROVIDER] },
+            OR: [{ lastCheckedAt: null, firstSeenAt: { lt: stale } }, { lastCheckedAt: { lt: stale } }],
+          },
+          // Given up on after 48 hours, but not forever: Payrep's list may have been unreadable for a while.
+          { outcome: CollectionOutcome.NOT_FOUND, lastCheckedAt: { lt: new Date(now.getTime() - 6 * 60 * MINUTE) } },
+        ],
       },
       orderBy: { firstSeenAt: 'asc' },
       take: 200,

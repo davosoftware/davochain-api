@@ -204,6 +204,11 @@ export class PayInService extends DepositIntake {
       throw err;
     }
     if (!record) {
+      if (row.outcome === CollectionOutcome.NOT_FOUND) {
+        // Already given up on and owners told; the re-check looks again every few hours.
+        await this.touch(id);
+        return { outcome: row.outcome, changed: false };
+      }
       if (!MONEY_TAKEN.includes(row.outcome) && Date.now() - row.firstSeenAt.getTime() > GIVE_UP_AFTER) {
         await this.alerts.raise(AlertType.NGN_DEPOSIT_UNMATCHED, `notfound:${id}`, `Payrep has no record of reported deposit ${id} after 48 hours`, this.describeRow(row), DAY);
         return this.setOutcome(row, CollectionOutcome.NOT_FOUND);
@@ -220,11 +225,26 @@ export class PayInService extends DepositIntake {
     });
     if (MONEY_TAKEN.includes(updated.outcome)) return this.recheckTaken(updated, f);
 
-    // 3. A credit into one of our accounts, and final?
-    if (f.transactionType && f.transactionType !== 'credit') return this.setOutcome(updated, CollectionOutcome.NON_CUSTOMER);
+    // 3. A credit into one of our accounts, and final? Only values we know move it on;
+    //    anything else waits where the re-check sees it, and owners are told (final review I1).
+    const type = f.transactionType;
+    if (type === 'debit' || type === 'dr') return this.setOutcome(updated, CollectionOutcome.NON_CUSTOMER);
+    if (type && type !== 'credit' && type !== 'cr') {
+      await this.alerts.raise(AlertType.NGN_RECONCILIATION, `unknown-type:${id}`, `Naira payment ${id} has a type DavoChain doesn't know: "${type}"`, [
+        ...this.describe(id, f),
+        'Not credited. It is looked at again by the re-check; update the code once the meaning of this type is known.',
+      ], DAY);
+      return { outcome: updated.outcome, changed: false };
+    }
     if (f.status === 'failed' || f.status === 'reversed') return this.setOutcome(updated, CollectionOutcome.PROVIDER_FAILED);
     if (f.status !== 'success' && f.status !== 'successful') {
-      if (f.status !== 'pending' && f.status !== 'processing') this.log.warn(`Payrep payment ${id} has status "${f.status}"; treated as pending`);
+      if (f.status !== 'pending' && f.status !== 'processing') {
+        this.log.warn(`Payrep payment ${id} has status "${f.status}"; treated as pending`);
+        await this.alerts.raise(AlertType.NGN_RECONCILIATION, `unknown-status:${id}`, `Naira payment ${id} has a status DavoChain doesn't know: "${f.status}"`, [
+          ...this.describe(id, f),
+          'Treated as pending (not credited). It is looked at again for 8 days; update the code once the meaning of this status is known.',
+        ], DAY);
+      }
       return this.setOutcome(updated, CollectionOutcome.PENDING_PROVIDER);
     }
 
@@ -256,7 +276,8 @@ export class PayInService extends DepositIntake {
       const { items, next } = await this.payrep.fetchCredits(filters, cursor);
       const hit = items.find((c) => c.transactionId === row.providerTransactionId);
       if (hit) return hit;
-      if (!next) return null;
+      // No next page, or Payrep ignored the cursor (the same page again): not there yet.
+      if (!next || (cursor && next.createdAt === cursor.createdAt && next.id === cursor.id)) return null;
       cursor = next;
     }
     return null;

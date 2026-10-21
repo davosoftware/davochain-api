@@ -161,6 +161,22 @@ describe('VirtualAccountsService.openForUser (Payrep, spec §4)', () => {
     expect(db.rows('virtualAccountRequest')[0].state).toBe('UNKNOWN');
   });
 
+  it('after an unclear answer: ops are alerted, and the BVN is not sent again for 30 minutes (final review I5)', async () => {
+    const { svc, db, payrep, alerts } = await setup();
+    const create = jest.spyOn(payrep, 'createCustomerAccount').mockRejectedValueOnce(new PayrepError('UNCLEAR', 'timeout', 0, null));
+    await svc.openForUser(USER, { bvn: BVN });
+    expect(alerts.raise).toHaveBeenCalledWith('VIRTUAL_ACCOUNT_SYNC', `va-unknown:${USER}`, expect.any(String), expect.any(Array), expect.any(Number));
+    expect(JSON.stringify(alerts.raise.mock.calls)).not.toContain(BVN);
+
+    const again = await failure(svc.openForUser(USER, { bvn: BVN }));
+    expect(again.getStatus()).toBe(409);
+    expect(again.getResponse()).toMatchObject({ code: 'ALREADY_CREATING', message: expect.stringMatching(/setting up your account/) });
+    expect(create).toHaveBeenCalledTimes(1);
+
+    await db.virtualAccountRequest.update({ where: { userId: USER }, data: { stateSince: new Date(Date.now() - 31 * MINUTE) } });
+    await expect(svc.openForUser(USER, { bvn: BVN })).resolves.toMatchObject({ httpStatus: 201 });
+  });
+
   it('answers 202 and keeps the account number for ops when recording a created account fails', async () => {
     const { svc, db, alerts } = await setup();
     db.failNext('virtualAccount', 'create', new Error('database unavailable'));

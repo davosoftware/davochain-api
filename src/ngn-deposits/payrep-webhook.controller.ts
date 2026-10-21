@@ -34,7 +34,23 @@ const HOUR = 3_600_000;
 type Obj = Record<string, unknown>;
 const s = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : typeof v === 'number' ? String(v) : null);
 
-const TRANSFER_EVENTS = ['transfer.success', 'transfer.failed', 'transfer.pending'];
+/**
+ * A copy safe to store: any identity-number field is dropped, and any 11-digit
+ * number left in a text value is redacted. Account events may carry the
+ * customer's BVN or NIN, which DavoChain never keeps (final review I4).
+ */
+const IDENTITY_KEY = /(^|_)(bvn|nin)(_|$)|identity|id_number/i;
+function withoutIdentity(v: unknown, depth = 0): unknown {
+  if (depth > 8) return null;
+  if (typeof v === 'string') return redactIds(v);
+  if (Array.isArray(v)) return v.map((x) => withoutIdentity(x, depth + 1));
+  if (v && typeof v === 'object') {
+    return Object.fromEntries(Object.entries(v as Obj).filter(([k]) => !IDENTITY_KEY.test(k)).map(([k, x]) => [k, withoutIdentity(x, depth + 1)]));
+  }
+  return v;
+}
+
+const TRANSFER_EVENTS =['transfer.success', 'transfer.failed', 'transfer.pending'];
 const DEPOSIT_EVENTS = ['deposit.success', 'deposit.pending', 'collection.success', 'collection.pending'];
 
 /** What a webhook told us about a deposit: a hint to look up, never believed about money. */
@@ -160,7 +176,7 @@ export class PayrepWebhookController {
         data: {
           eventName: `payrep.${event}`,
           dedupHash,
-          payload: { ...body, _webhookId: webhookId ?? null } as Prisma.InputJsonValue,
+          payload: { ...(withoutIdentity(body) as Obj), _webhookId: webhookId ?? null } as Prisma.InputJsonValue,
           signatureValid: true,
           processedAt: new Date(),
         },

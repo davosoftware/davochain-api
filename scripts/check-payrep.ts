@@ -93,7 +93,7 @@ async function main(): Promise<void> {
 
   // 2. Banks
   const banks = await post('/transaction/transfer/api/fetch_banks', {});
-  const list = listOf(banks.body?.data) as Obj[];
+  const list = (listOf(banks.body?.data) ?? []) as Obj[];
   if (list.length) ok('bank list', `${code(banks)}, ${list.length} banks, Access 000014 ${list.some((b) => b.code === '000014') ? 'present' : 'MISSING'}`);
   else bad('bank list', code(banks));
 
@@ -145,11 +145,34 @@ async function main(): Promise<void> {
   // 5. The shape of fetch_transactions
   const today = new Date();
   const from = new Date(today.getTime() - 86_400_000).toISOString().slice(0, 10);
-  const tx = await post('/transaction/api/fetch_transactions', { filters: { start_date: from, end_date: today.toISOString().slice(0, 10) }, limit: 5 });
+  // The same filters and page size the sweep uses, over two pages.
+  const filters = { transaction_type: 'credit', start_date: from, end_date: today.toISOString().slice(0, 10) };
+  const tx = await post('/transaction/api/fetch_transactions', { filters, limit: 2, page_size: 2 });
   const items = listOf(tx.body?.data);
-  ok('fetch_transactions', `${code(tx)}; data is ${Array.isArray(tx.body?.data) ? 'a list' : `an object with keys: ${keysOf(tx.body?.data)}`}; ${items.length} item(s)`);
-  if (items.length) console.log(`  first item keys: ${keysOf(items[0])}`);
-  else console.log('  no items in the last day: make a test deposit first to see an item\'s keys');
+  if (!items) {
+    bad('fetch_transactions', `${code(tx)}; a shape DavoChain cannot read: data keys ${keysOf(tx.body?.data)}`);
+  } else {
+    ok('fetch_transactions', `${code(tx)}; data is ${Array.isArray(tx.body?.data) ? 'a list' : `an object with keys: ${keysOf(tx.body?.data)}`}; ${items.length} item(s)`);
+    if (items.length) {
+      console.log(`  first item keys: ${keysOf(items[0])}`);
+      // Values of these two fields only (never amounts, names or numbers): the deposit code acts on them.
+      const distinct = (k: string) => [...new Set(items.map((i) => String((i as Obj)[k] ?? '(missing)')))].join(', ');
+      console.log(`  status values: ${distinct('status')}; transaction_type values: ${distinct('transaction_type')}`);
+      const last = items[items.length - 1] as Obj;
+      const page2 = await post('/transaction/api/fetch_transactions', {
+        filters,
+        limit: 2,
+        page_size: 2,
+        cursor_created_at: String(last.created_at ?? ''),
+        cursor_id: String(last.transaction_id ?? last.id ?? ''),
+      });
+      const items2 = listOf(page2.body?.data) ?? [];
+      const repeated = items2.some((i) => String((i as Obj).transaction_id ?? (i as Obj).id) === String(last.transaction_id ?? last.id));
+      console.log(`  page 2 by cursor: ${code(page2)}, ${items2.length} item(s)${repeated ? ' — REPEATS page 1: the cursor is ignored' : ''}; next_cursor ${(page2.body?.data as Obj | undefined)?.next_cursor ? 'present' : 'absent'}`);
+    } else {
+      console.log('  no items in the last day: make a test deposit first to see an item\'s keys');
+    }
+  }
 
   // 6. C1: the webhook signature recipe, from deliveries this API recorded (local database only)
   const secret = env('PAYREP_WEBHOOK_SECRET');

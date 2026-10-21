@@ -22,6 +22,8 @@ import { ReadinessService } from './readiness.service';
 import { localNigerianPhone } from './phone';
 
 const CREATING_LOCK_MS = 2 * 60_000;
+/** After an unclear answer from Payrep, how long before the customer may try again. */
+const UNKNOWN_COOLDOWN_MS = 30 * 60_000;
 const ATTEMPT_WINDOW_MS = 24 * 3_600_000;
 const MAX_ATTEMPTS = 5;
 const SIX_HOURS = 6 * 3_600_000;
@@ -198,6 +200,17 @@ export class VirtualAccountsService {
         // Unclear: Payrep may have opened it. A deposit into a number we don't know is held as UNMATCHED and alerts ops.
         state = 'UNKNOWN';
         this.log.warn(`Deposit account for ${userId}: outcome unknown (${lastError})`);
+        await this.alerts.raise(
+          AlertType.VIRTUAL_ACCOUNT_SYNC,
+          `va-unknown:${userId}`,
+          'Payrep gave no clear answer to opening a deposit account',
+          [
+            `User: ${userId}`,
+            `Answer: ${lastError}`,
+            'Payrep may have opened it. Check the Payrep portal for a new account under our pool before the customer tries again (they can in 30 minutes).',
+          ],
+          SIX_HOURS,
+        );
         return { httpStatus: 202, body: { status: 'PENDING', message: PENDING_MESSAGE } };
       }
 
@@ -318,6 +331,11 @@ export class VirtualAccountsService {
         const row = await t.virtualAccountRequest.findUnique({ where: { userId } });
         if (row?.state === 'CREATING' && now.getTime() - row.stateSince.getTime() < CREATING_LOCK_MS) {
           throw new ConflictException({ statusCode: 409, code: 'ALREADY_CREATING', message: conflict });
+        }
+        // Payrep may have opened an account on the last, unclear try: don't send the BVN again
+        // straight away, so ops can look first (final review I5).
+        if (row?.state === 'UNKNOWN' && now.getTime() - row.stateSince.getTime() < UNKNOWN_COOLDOWN_MS) {
+          throw new ConflictException({ statusCode: 409, code: 'ALREADY_CREATING', message: PENDING_MESSAGE });
         }
         const windowStart =
           row?.windowStartedAt && now.getTime() - row.windowStartedAt.getTime() < ATTEMPT_WINDOW_MS
