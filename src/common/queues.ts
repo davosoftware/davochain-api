@@ -18,8 +18,8 @@ export const QUEUES = {
   EMAIL: 'email',
   /** Chain list + transfer limit sync from Quidax. */
   SYNC: 'sync',
-  /** Naira deposits through Flutterwave: verify each payment, then credit it exactly once. */
-  FLUTTERWAVE: 'flutterwave',
+  /** Naira deposits through Payrep: confirm each payment, then credit it exactly once. */
+  NAIRA_DEPOSITS: 'naira-deposits',
   /** Advanced KYC: the paid Dojah checks for one attempt, off the request. */
   KYC_ADVANCED: 'kyc-advanced',
 } as const;
@@ -34,7 +34,7 @@ export const JOBS = {
   SEND_NOTIFICATION: 'send-notification',
   SEND_EMAIL: 'send-email',
   SYNC_NETWORKS: 'sync-networks',
-  PROCESS_FLW_PAYIN: 'process-flw-payin',
+  PROCESS_NAIRA_PAYIN: 'process-naira-payin',
   RUN_ADVANCED: 'run-advanced',
 } as const;
 

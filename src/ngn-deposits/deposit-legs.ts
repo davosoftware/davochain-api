@@ -18,8 +18,8 @@ export function depositBalances(amount: Decimal | null, settled: Decimal | null,
  * The ledger entries for a naira deposit whose fee DavoChain absorbs (A3):
  *
  *   USER          CREDIT  amount   what the customer sent; all of it is theirs
- *   EXTERNAL      DEBIT   settled  what reaches DavoChain's Flutterwave balance
- *   PROVIDER_FEE  DEBIT   fee      what Flutterwave kept: a cost, not revenue
+ *   EXTERNAL      DEBIT   settled  what reaches DavoChain's Payrep main account
+ *   PROVIDER_FEE  DEBIT   fee      what Payrep kept: a cost, not revenue
  *
  * They balance only when amount = settled + fee; anything else is refused, so a
  * fee surprise can never post a lopsided deposit. Zero legs are left out.
