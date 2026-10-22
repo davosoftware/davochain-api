@@ -3,8 +3,8 @@ import { EMAIL_TEMPLATES, SAMPLE_VALUES } from './email-templates';
 import { PANEL_COLOURS } from './email-frame';
 
 /**
- * The email design (look C, receipt layout 1, approved 22 Oct 2026): a coloured
- * panel at the top of a white card, a receipt list for money emails, the logo
+ * The email design (22 Oct 2026, after the "classic receipt" samples): a coloured
+ * header at the top of a white card, the code in a dashed box, a receipt list for money emails, the logo
  * carried inside the email, and a button to the website.
  */
 const PNG = Buffer.from('89504e470d0a1a0a0000000d4948445200000001', 'hex');
@@ -55,10 +55,11 @@ describe('email design: every email', () => {
 });
 
 describe('email design: the parts', () => {
-  it('a code email shows the code big in the blue panel', async () => {
+  it('a code email has the blue header and the code big in a dashed box', async () => {
     const r = await service().render('user.email_verify', { firstName: 'Ada', code: '482913', expiresIn: '10 minutes' });
     expect(r!.html).toContain(`background-color:${PANEL_COLOURS.code}`);
     expect(r!.html).toMatch(/letter-spacing:[^;]+;[^>]*>482913</);
+    expect(r!.html).toContain('border:2px dashed #135CF7');
     expect(r!.text).toContain('482913');
   });
 
@@ -123,7 +124,13 @@ describe('email design: the parts', () => {
     expect(receipt!.html).not.toContain('Thanks,');
   });
 
+  it('every card ends with the "we never ask for your PIN" note; the footer carries the support address', async () => {
+    const r = await service().render('user.welcome', { firstName: 'Ada' });
+    expect(r!.html).toContain('will never ask for your PIN, password or code');
+    expect(r!.html).toContain('href="mailto:support@davochain.com"');
+  });
+
   it('panel colours by kind', () => {
-    expect(PANEL_COLOURS).toEqual({ done: '#1062d3', code: '#1062d3', progress: '#b7791f', problem: '#c0392b', security: '#102c58' });
+    expect(PANEL_COLOURS).toEqual({ done: '#135CF7', code: '#135CF7', progress: '#B7791F', problem: '#D92D20', security: '#0B1530' });
   });
 });

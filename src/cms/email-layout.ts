@@ -18,35 +18,36 @@
 import { PANEL_COLOURS, type Frame } from './email-frame';
 
 /**
- * Blue and white, taken from the dashboard's own brand token rather than picked
- * again by eye — `oklch(0.52 0.19 259)` converted to sRGB is `#1062d3`, and the
- * darker bands are the same hue at lower lightness. Email needs hex; oklch is
- * not supported anywhere that matters.
+ * The palette of the design approved 22 Oct 2026 (the "Davopay-style" samples):
+ * the logo's own bright blue #135CF7 for the header and footer, its light blue
+ * #66B3FF for accents, deep navy text, and a soft blue page.
  */
 export const BRAND = {
-  /** The header and footer bands. */
-  band: '#102c58',
-  /** The panel the picture sits on, one step deeper than the band. */
-  bandDeep: '#0b2142',
-  /** The dashboard's primary, for buttons and emphasis. */
-  primary: '#1062d3',
-  /** Links, a touch brighter so they hold up on white. */
-  link: '#1d6bde',
-  /** The soft blue page every email sits on (look C). */
-  ground: '#eaf1fc',
-  card: '#ffffff',
-  cardEdge: '#dbe6f7',
-  hairlineSoft: '#eef1f5',
-  footerText: '#5b6a85',
-  text: '#1c222b',
-  muted: '#5b6472',
-  /** Footer text on the dark band. */
-  onBandMuted: '#9aa5b8',
-  hairline: '#dadee3',
+  /** The logo's blue: card header, buttons, footer card. */
+  primary: '#135CF7',
+  /** The logo's light blue: the footer divider. */
+  accent: '#66B3FF',
+  /** Links and text on pale blue. */
+  link: '#0B45C2',
+  /** The soft blue page every email sits on. */
+  ground: '#F3F6FD',
+  /** Pale blue boxes: the code box, the safety note, secondary buttons. */
+  tint: '#F5F8FF',
+  tintStrong: '#EAF1FF',
+  card: '#FFFFFF',
+  /** Headings, amounts, values. */
+  ink: '#0B1530',
+  /** Body text. */
+  text: '#3B4565',
+  /** Row labels. */
+  muted: '#5B6585',
+  hairline: '#EDF0F7',
+  /** Text on the blue footer. */
+  onBlue: '#EEF3FF',
 } as const;
 
-const FONT =
-  "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+const FONT = "'Inter Tight',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif";
+const MONO = "'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,'Courier New',monospace";
 
 export interface EmailBrand {
   companyName: string;
@@ -94,25 +95,25 @@ export function escapeAttr(value: string): string {
  * so a deliberate choice always wins over the default.
  */
 const CONTENT_STYLES: Record<string, string> = {
-  h1: 'margin:0 0 12px;font-size:22px;font-weight:600;line-height:1.3;color:#0f172a;',
-  h2: 'margin:22px 0 8px;font-size:18px;font-weight:600;line-height:1.3;color:#0f172a;',
-  h3: 'margin:18px 0 6px;font-size:16px;font-weight:600;color:#0f172a;',
-  h4: 'margin:16px 0 6px;font-size:14px;font-weight:600;color:#334155;',
-  h5: 'margin:14px 0 4px;font-size:13px;font-weight:600;color:#334155;',
-  h6: 'margin:14px 0 4px;font-size:12px;font-weight:600;color:#334155;',
+  h1: `margin:0 0 12px;font-size:22px;font-weight:600;line-height:1.3;color:${BRAND.ink};`,
+  h2: `margin:22px 0 8px;font-size:18px;font-weight:600;line-height:1.3;color:${BRAND.ink};`,
+  h3: `margin:18px 0 6px;font-size:16px;font-weight:600;color:${BRAND.ink};`,
+  h4: `margin:16px 0 6px;font-size:14px;font-weight:600;color:${BRAND.ink};`,
+  h5: `margin:14px 0 4px;font-size:13px;font-weight:600;color:${BRAND.ink};`,
+  h6: `margin:14px 0 4px;font-size:12px;font-weight:600;color:${BRAND.ink};`,
   p: 'margin:0 0 14px;',
   ul: 'margin:0 0 14px;padding-left:20px;',
   ol: 'margin:0 0 14px;padding-left:20px;',
   li: 'margin:0 0 6px;',
-  blockquote: `margin:0 0 14px;padding:10px 14px;background:${BRAND.ground};border-left:3px solid ${BRAND.primary};color:${BRAND.muted};`,
-  code: `font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;background:${BRAND.ground};padding:2px 5px;border-radius:4px;word-break:break-all;`,
-  pre: `font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;background:${BRAND.ground};padding:12px;border-radius:6px;overflow-x:auto;`,
-  a: `color:${BRAND.link};text-decoration:underline;`,
+  blockquote: `margin:0 0 14px;padding:10px 14px;background:${BRAND.tint};border-left:3px solid ${BRAND.primary};color:${BRAND.muted};`,
+  code: `font-family:${MONO};font-size:13px;background:${BRAND.tint};padding:2px 5px;border-radius:4px;word-break:break-all;`,
+  pre: `font-family:${MONO};font-size:13px;background:${BRAND.tint};padding:12px;border-radius:6px;overflow-x:auto;`,
+  a: `color:${BRAND.primary};font-weight:600;text-decoration:underline;`,
   hr: `border:0;border-top:1px solid ${BRAND.hairline};margin:22px 0;`,
-  strong: 'font-weight:600;',
+  strong: `font-weight:700;color:${BRAND.ink};`,
   b: 'font-weight:600;',
   table: 'border-collapse:collapse;width:100%;margin:0 0 14px;',
-  th: `border:1px solid ${BRAND.hairline};padding:8px 10px;text-align:left;background:${BRAND.ground};font-weight:600;`,
+  th: `border:1px solid ${BRAND.hairline};padding:8px 10px;text-align:left;background:${BRAND.tint};font-weight:600;`,
   td: `border:1px solid ${BRAND.hairline};padding:8px 10px;`,
   img: 'max-width:100%;height:auto;border-radius:8px;',
 };
@@ -137,20 +138,16 @@ export function styleContent(html: string): string {
   );
 }
 
-/** The size an icon is drawn at. Upload at 128px so a 3× screen stays crisp. */
-const ICON_POINTS = 32;
+/** The size a social icon is drawn at. Upload at 128px so a 3× screen stays crisp. */
+const ICON_POINTS = 40;
 
 /**
- * The social row.
+ * The social row, on the blue footer.
  *
- * An uploaded icon is used when there is one, and a letterform in an outlined
+ * An uploaded icon is used when there is one, and a letterform in a white
  * circle when there is not — so a network added at four in the afternoon still
- * appears in the five o'clock email, icon or no icon.
- *
- * The fallback is not a placeholder for something better: SVG does not render
- * in Gmail or Outlook, and a blocked or broken image in a footer looks worse
- * than a letter. The letterform arrives intact everywhere, including in a
- * client with images switched off entirely — which is a lot of them.
+ * appears in the five o'clock email. SVG does not render in Gmail or Outlook,
+ * and the letterform arrives intact everywhere, images on or off.
  */
 function socialRow(social: EmailBrand['social']): string {
   if (social.length === 0) return '';
@@ -162,63 +159,82 @@ function socialRow(social: EmailBrand['social']): string {
 
       const inner = s.iconUrl
         ? `<img src="${escapeAttr(s.iconUrl)}" alt="${label}" width="${ICON_POINTS}" height="${ICON_POINTS}" style="display:block;width:${ICON_POINTS}px;height:${ICON_POINTS}px;border:0;border-radius:50%;" />`
-        : `<span style="display:inline-block;width:${ICON_POINTS}px;height:${ICON_POINTS}px;line-height:${ICON_POINTS - 2}px;text-align:center;border:1px solid ${BRAND.cardEdge};background-color:#ffffff;border-radius:50%;color:${BRAND.band};font-family:${FONT};font-size:13px;font-weight:600;">${s.glyph}</span>`;
+        : `<span style="display:inline-block;width:${ICON_POINTS}px;height:${ICON_POINTS}px;line-height:${ICON_POINTS}px;text-align:center;background-color:#FFFFFF;border-radius:50%;color:${BRAND.primary};font-family:${FONT};font-size:15px;font-weight:800;">${s.glyph}</span>`;
 
-      return `<td style="padding:0 5px;">
-        <a href="${url}" title="${label}" style="display:inline-block;text-decoration:none;color:${BRAND.band};">${inner}</a>
-      </td>`;
+      return `<td style="padding:0 6px;"><a href="${url}" title="${label}" style="display:inline-block;text-decoration:none;">${inner}</a></td>`;
     })
     .join('');
 
-  return `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 18px;"><tr>${cells}</tr></table>`;
+  return `<table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:24px auto 0;"><tr>${cells}</tr></table>`;
 }
 
+/** The small word in the pill at the top right: what kind of email this is. */
+function kindPill(frame: Frame | null | undefined): string | null {
+  if (!frame) return null;
+  if (frame.kind === 'code') return 'SECURITY CODE';
+  if (frame.details.length > 0) return 'RECEIPT';
+  if (frame.kind === 'security') return 'SECURITY';
+  return null;
+}
+
+/** The mark in the white circle on the header: a tick, a key, an hourglass, a shield, or "!". */
+const HEADER_GLYPH: Record<Frame['kind'], string> = {
+  done: '&#10003;',
+  code: '&#128273;',
+  progress: '&#8987;',
+  problem: '!',
+  security: '&#128737;',
+};
+
 /**
- * The whole message ("look C", approved 22 Oct 2026).
+ * The whole message (design of 22 Oct 2026, after the "classic receipt" and
+ * "token" samples).
  *
- * A soft blue page; the logo and name centred above a white rounded card; in
- * the card, a coloured panel with the one thing that matters (an amount, a
- * code or a headline), then the words, the receipt list, one button; the
- * footer sits quietly under the card.
+ * A soft blue page. Above the card: the logo and name on the left, a pill
+ * saying what kind of email it is on the right. In the white card: a coloured
+ * header with the one thing that matters (an amount or a headline), the code
+ * in a dashed box when there is one, the words, the receipt list, one
+ * full-width button, and a "we never ask for your PIN" note. Under the card,
+ * a big blue footer with the logo, social icons, contact details and the
+ * legal lines.
  */
 export function wrapHtml(contentHtml: string, brand: EmailBrand, frame?: Frame | null): string {
   const company = escapeAttr(brand.companyName);
   const support = escapeAttr(brand.supportEmail);
+  const website = escapeAttr(brand.websiteUrl);
   const year = new Date().getFullYear();
 
-  const name = `<span style="font-family:${FONT};font-size:19px;font-weight:700;letter-spacing:-0.01em;color:${BRAND.band};vertical-align:middle;">${company}</span>`;
-  const header = brand.logoSrc
-    ? `<img src="${escapeAttr(brand.logoSrc)}" alt="${company}" height="36" style="height:36px;width:auto;display:inline-block;border:0;vertical-align:middle;" />
-       <span style="display:inline-block;width:8px;"></span>${name}`
-    : `<span style="display:inline-block;width:22px;height:22px;border-radius:6px;background-color:${BRAND.primary};vertical-align:middle;"></span>
-       <span style="display:inline-block;width:8px;"></span>${name}`;
+  const name = (colour: string, size: number) =>
+    `<span style="font-family:${FONT};font-size:${size}px;line-height:${size + 6}px;font-weight:800;letter-spacing:-0.3px;color:${colour};vertical-align:middle;">${company}</span>`;
+  const logo = (size: number) =>
+    brand.logoSrc
+      ? `<img src="${escapeAttr(brand.logoSrc)}" alt="${company}" height="${size}" style="display:inline-block;height:${size}px;width:auto;border:0;vertical-align:middle;" />`
+      : `<span style="display:inline-block;width:${size - 8}px;height:${size - 8}px;border-radius:8px;background-color:${BRAND.primary};vertical-align:middle;"></span>`;
 
-  const panel = frame ? panelRow(frame) : '';
+  const pill = kindPill(frame);
+  const topBar = `<tr><td style="padding:0 8px 20px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+      <td align="left" valign="middle">${logo(32)}<span style="display:inline-block;width:10px;"></span>${name(BRAND.ink, 20)}</td>
+      ${pill ? `<td align="right" valign="middle"><span style="display:inline-block;background-color:${BRAND.tintStrong};color:${BRAND.link};font-family:${FONT};font-size:12px;line-height:16px;font-weight:700;letter-spacing:1px;padding:6px 12px;border-radius:999px;">${pill}</span></td>` : ''}
+    </tr></table>
+  </td></tr>`;
 
-  // The picture an admin set for this email, inside the card under the panel.
+  // The picture an admin set for this email, inside the card under the header.
   const hero = brand.imageUrl
-    ? `<tr><td style="padding:22px 28px 0;">
-        <img src="${escapeAttr(brand.imageUrl)}" alt="${escapeAttr(brand.imageAlt ?? company)}" width="100%" style="display:block;width:100%;max-width:100%;height:auto;border:0;border-radius:10px;" />
+    ? `<tr><td class="px" style="padding:28px 40px 0;">
+        <img src="${escapeAttr(brand.imageUrl)}" alt="${escapeAttr(brand.imageAlt ?? company)}" width="100%" style="display:block;width:100%;max-width:100%;height:auto;border:0;border-radius:14px;" />
       </td></tr>`
     : '';
 
-  const details = frame && frame.details.length > 0 ? detailsRow(frame) : '';
-  const button = frame?.button ? buttonRow(frame.button) : '';
-
-  const footerLines: string[] = [
-    `<div style="margin-bottom:8px;">&copy; ${year} ${escapeAttr(brand.footer.legalName)}. All rights reserved.</div>`,
-  ];
-  if (brand.footer.addressLine) {
-    footerLines.push(`<div style="margin-bottom:8px;">${escapeAttr(brand.footer.addressLine)}</div>`);
-  }
+  const footerLegal: string[] = [];
   if (brand.footer.optInNote) {
-    footerLines.push(`<div style="margin-bottom:8px;">${escapeAttr(brand.footer.optInNote)}</div>`);
+    footerLegal.push(`<p style="margin:20px 0 0;font-size:13px;line-height:21px;color:#FFFFFF;">${escapeAttr(brand.footer.optInNote)}</p>`);
   }
   if (brand.footer.unsubscribeNote) {
     // Only rendered with somewhere to go: an "unsubscribe" that does nothing is worse than none.
     const target = brand.footer.unsubscribeUrl ?? `mailto:${brand.supportEmail}?subject=Unsubscribe`;
-    footerLines.push(
-      `<div>${escapeAttr(brand.footer.unsubscribeNote)} <a href="${escapeAttr(target)}" style="color:${BRAND.band};text-decoration:underline;">unsubscribe</a>.</div>`,
+    footerLegal.push(
+      `<p style="margin:14px 0 0;font-size:12px;line-height:19px;color:${BRAND.onBlue};">${escapeAttr(brand.footer.unsubscribeNote)} <a href="${escapeAttr(target)}" style="color:#FFFFFF;font-weight:700;text-decoration:underline;">Unsubscribe</a>.</p>`,
     );
   }
 
@@ -227,41 +243,65 @@ export function wrapHtml(contentHtml: string, brand: EmailBrand, frame?: Frame |
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta name="x-apple-disable-message-reformatting" />
 <meta name="color-scheme" content="light" />
 <meta name="supported-color-schemes" content="light" />
 <title>${company}</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@500;700&amp;display=swap" rel="stylesheet" />
+<style>
+  body { margin: 0; padding: 0; width: 100% !important; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+  table { border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+  img { border: 0; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic; }
+  @media only screen and (max-width: 620px) {
+    .container { width: 100% !important; }
+    .px { padding-left: 20px !important; padding-right: 20px !important; }
+    .amount { font-size: 38px !important; line-height: 42px !important; }
+    .code { font-size: 28px !important; letter-spacing: 5px !important; }
+  }
+</style>
 </head>
 <body style="margin:0;padding:0;background-color:${BRAND.ground};-webkit-font-smoothing:antialiased;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${BRAND.ground}" style="background-color:${BRAND.ground};">
-<tr><td align="center" style="padding:28px 12px 32px;">
-  <table role="presentation" width="600" cellpadding="0" cellspacing="0" style="width:100%;max-width:600px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${BRAND.ground}" style="background-color:${BRAND.ground};">
+<tr><td align="center" style="padding:28px 12px;">
+  <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;font-family:${FONT};color:${BRAND.ink};">
 
-    <tr><td align="center" style="padding:0 0 18px;">${header}</td></tr>
+    ${topBar}
 
-    <tr><td>
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="${BRAND.card}" style="background-color:${BRAND.card};border-radius:16px;border:1px solid ${BRAND.cardEdge};border-collapse:separate;overflow:hidden;">
-        ${panel}
+    <tr><td bgcolor="${BRAND.card}" style="background-color:${BRAND.card};border-radius:24px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+        ${frame ? headerRow(frame) : ''}
+        ${frame?.kind === 'code' ? codeRow(frame) : ''}
         ${hero}
         <tr>
-          <td style="padding:26px 28px 6px;font-family:${FONT};font-size:15px;line-height:1.62;color:${BRAND.text};">
+          <td class="px" style="padding:32px 40px 8px;font-family:${FONT};font-size:15px;line-height:24px;color:${BRAND.text};">
 ${styleContent(contentHtml)}
           </td>
         </tr>
-        ${details}
-        ${button}
-        <tr><td style="height:14px;line-height:14px;font-size:0;">&nbsp;</td></tr>
+        ${frame && frame.details.length > 0 ? detailsRow(frame) : ''}
+        ${frame?.button ? buttonRow(frame.button) : ''}
+        ${safetyRow(company, support)}
       </table>
     </td></tr>
 
-    <tr>
-      <td align="center" style="padding:22px 20px 0;font-family:${FONT};font-size:12px;line-height:1.6;color:${BRAND.footerText};text-align:center;">
+    <tr><td style="padding-top:24px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${BRAND.primary}" style="background-color:${BRAND.primary};border-radius:28px;">
+      <tr>
+      <td align="center" class="px" style="padding:40px 44px 36px;text-align:center;font-family:${FONT};color:#FFFFFF;">
+        <table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;"><tr>
+          ${brand.logoSrc ? `<td bgcolor="#FFFFFF" style="background-color:#FFFFFF;border-radius:14px;padding:8px;">${logo(32)}</td><td style="width:12px;"></td>` : ''}
+          <td valign="middle">${name('#FFFFFF', 22)}</td>
+        </tr></table>
         ${socialRow(brand.social)}
-        ${footerLines.join('\n        ')}
-        <div style="margin-top:10px;">
-          Questions? <a href="mailto:${support}" style="color:${BRAND.band};font-weight:600;text-decoration:none;">${support}</a>
-        </div>
+        ${brand.footer.addressLine ? `<p style="margin:22px 0 0;font-size:14px;line-height:22px;color:${BRAND.onBlue};">${escapeAttr(brand.footer.addressLine)}</p>` : ''}
+        <p style="margin:${brand.footer.addressLine ? 6 : 22}px 0 0;font-size:14px;line-height:20px;"><a href="mailto:${support}" style="color:#FFFFFF;font-weight:700;text-decoration:underline;">${support}</a></p>
+        <table role="presentation" align="center" width="240" cellpadding="0" cellspacing="0" border="0" style="margin:24px auto 0;"><tr><td style="border-top:1px solid ${BRAND.accent};font-size:0;line-height:0;">&nbsp;</td></tr></table>
+        <p style="margin:20px 0 0;font-size:15px;line-height:20px;font-weight:700;color:${BRAND.onBlue};"><a href="${website}" style="color:#FFFFFF;text-decoration:none;">Website</a>&nbsp;&nbsp;|&nbsp;&nbsp;<a href="mailto:${support}" style="color:#FFFFFF;text-decoration:none;">Help &amp; support</a></p>
+        ${footerLegal.join('\n        ')}
+        <p style="margin:14px 0 0;font-size:12px;line-height:18px;font-weight:600;color:${BRAND.onBlue};">&copy; ${year} ${escapeAttr(brand.footer.legalName)}. All rights reserved.</p>
       </td>
-    </tr>
+      </tr>
+      </table>
+    </td></tr>
 
   </table>
 </td></tr>
@@ -270,58 +310,97 @@ ${styleContent(contentHtml)}
 </html>`;
 }
 
-/** The coloured panel at the top of the card. */
-function panelRow(frame: Frame): string {
+/**
+ * The coloured header at the top of the card: a white circle with a mark, the
+ * label, then the big value and one line under it. For a code email the code
+ * itself goes in the dashed box below, so the header carries the label alone.
+ */
+function headerRow(frame: Frame): string {
   const colour = PANEL_COLOURS[frame.kind];
   const isCode = frame.kind === 'code';
   // Long headlines ("Your password was changed") get a smaller size than amounts.
   const plainLength = frame.value.replace(/&[a-z#0-9]+;/gi, 'x').length;
-  const valueStyle = isCode
-    ? `font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:34px;font-weight:700;letter-spacing:8px;`
-    : `font-family:${FONT};font-size:${plainLength > 22 ? 21 : 28}px;font-weight:700;letter-spacing:-0.01em;`;
+  const long = plainLength > 16;
+  const value =
+    !isCode && frame.value
+      ? `<p${long ? '' : ' class="amount"'} style="margin:12px 0 0;font-family:${FONT};font-size:${long ? 30 : 48}px;line-height:${long ? 36 : 52}px;font-weight:800;letter-spacing:${long ? -0.5 : -1}px;color:#FFFFFF;">${frame.value}</p>`
+      : '';
+  const sub = !isCode && frame.sub ? `<p style="margin:12px 0 0;font-family:${FONT};font-size:16px;line-height:22px;color:#FFFFFF;">${frame.sub}</p>` : '';
+  const label = isCode
+    ? `<p style="margin:16px 0 0;font-family:${FONT};font-size:26px;line-height:32px;font-weight:800;letter-spacing:-0.4px;color:#FFFFFF;">${frame.label}</p>`
+    : `<p style="margin:16px 0 0;font-family:${FONT};font-size:15px;line-height:20px;font-weight:600;color:#FFFFFF;">${frame.label}</p>`;
   return `<tr>
-          <td align="center" bgcolor="${colour}" style="background-color:${colour};padding:26px 24px 24px;text-align:center;color:#ffffff;border-radius:16px 16px 0 0;">
-            <div style="font-family:${FONT};font-size:12px;font-weight:600;letter-spacing:1.5px;text-transform:uppercase;color:#ffffff;opacity:0.85;">${frame.label}</div>
-            ${frame.value ? `<div style="${valueStyle}line-height:1.25;color:#ffffff;margin-top:6px;">${frame.value}</div>` : ''}
-            ${frame.sub ? `<div style="font-family:${FONT};font-size:14px;color:#ffffff;opacity:0.92;margin-top:4px;">${frame.sub}</div>` : ''}
+          <td class="px" bgcolor="${colour}" style="background-color:${colour};border-radius:24px 24px 0 0;padding:40px 40px 44px;color:#FFFFFF;">
+            <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+              <td width="52" height="52" align="center" valign="middle" bgcolor="#FFFFFF" style="width:52px;height:52px;background-color:#FFFFFF;border-radius:26px;font-family:${FONT};font-size:24px;line-height:52px;font-weight:800;color:${colour};">${HEADER_GLYPH[frame.kind]}</td>
+            </tr></table>
+            ${label}
+            ${value}
+            ${sub}
           </td>
         </tr>`;
 }
 
-/** The receipt list: label left, value right, a hairline between rows, the status chip last but one. */
+/** The code in a dashed box, big and spaced out so it is easy to read and type. */
+function codeRow(frame: Frame): string {
+  if (!frame.value) return '';
+  return `<tr><td class="px" style="padding:28px 40px 0;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${BRAND.tint}" style="background-color:${BRAND.tint};border:2px dashed ${BRAND.primary};border-radius:18px;">
+          <tr><td align="center" style="padding:22px 20px;text-align:center;">
+            <p style="margin:0;font-family:${FONT};font-size:12px;line-height:16px;font-weight:700;letter-spacing:1.7px;color:${BRAND.muted};">ENTER THIS CODE</p>
+            <p class="code" style="margin:10px 0 0;font-family:${MONO};font-size:36px;line-height:42px;font-weight:700;letter-spacing:8px;color:${BRAND.ink};">${frame.value}</p>
+            ${frame.sub ? `<p style="margin:10px 0 0;font-family:${FONT};font-size:13px;line-height:19px;color:${BRAND.muted};">${frame.sub}. Never share it with anyone.</p>` : ''}
+          </td></tr>
+          </table>
+        </td></tr>`;
+}
+
+/** The receipt list: label left, value right, a hairline between rows, the status chip before the reference. */
 function detailsRow(frame: Frame): string {
   const rows = frame.details.map((d) => ({ label: d.label, value: d.mono ? mono(d.value) : d.value }));
   if (frame.status) {
-    const chip = `<span style="display:inline-block;padding:3px 10px;border-radius:999px;background-color:${frame.status.bg};color:${frame.status.fg};font-weight:600;font-size:12.5px;">${frame.status.text}</span>`;
+    const chip = `<span style="display:inline-block;background-color:${frame.status.bg};color:${frame.status.fg};font-weight:700;font-size:13px;line-height:16px;padding:5px 12px;border-radius:999px;">${frame.status.text}</span>`;
     // Before the reference, which reads best last.
     const at = rows.findIndex((r) => r.label === 'Reference');
     rows.splice(at === -1 ? rows.length : at, 0, { label: 'Status', value: chip });
   }
   const body = rows
     .map((r, i) => {
-      const edge = i < rows.length - 1 ? `border-bottom:1px solid ${BRAND.hairlineSoft};` : '';
+      const edge = i < rows.length - 1 ? `border-bottom:1px solid ${BRAND.hairline};` : '';
       return `<tr>
-              <td style="padding:10px 0;${edge}font-family:${FONT};font-size:13.5px;color:${BRAND.muted};vertical-align:top;white-space:nowrap;">${r.label}</td>
-              <td align="right" style="padding:10px 0 10px 16px;${edge}font-family:${FONT};font-size:13.5px;color:${BRAND.text};font-weight:600;text-align:right;word-break:break-word;">${r.value}</td>
+              <td valign="top" style="padding:14px 0;${edge}font-family:${FONT};font-size:15px;line-height:20px;color:${BRAND.muted};white-space:nowrap;">${r.label}</td>
+              <td align="right" style="padding:14px 0 14px 16px;${edge}font-family:${FONT};font-size:15px;line-height:20px;font-weight:600;color:${BRAND.ink};text-align:right;word-break:break-word;">${r.value}</td>
             </tr>`;
     })
     .join('');
-  return `<tr><td style="padding:6px 28px 4px;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;border-top:1px solid ${BRAND.hairlineSoft};">${body}</table>
+  return `<tr><td class="px" style="padding:12px 40px 8px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">${body}</table>
         </td></tr>`;
 }
 
 const mono = (value: string) =>
-  `<span style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;font-weight:500;word-break:break-all;">${value}</span>`;
+  `<span style="font-family:${MONO};font-size:13px;font-weight:500;word-break:break-all;">${value}</span>`;
 
-/** A button that survives Outlook: a coloured table cell around the link. */
+/** A full-width button that survives Outlook: a coloured table cell around the link. */
 function buttonRow(button: { label: string; url: string }): string {
-  return `<tr><td align="center" style="padding:20px 28px 8px;">
-          <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto;"><tr>
-            <td align="center" bgcolor="${BRAND.primary}" style="background-color:${BRAND.primary};border-radius:10px;">
-              <a href="${button.url}" target="_blank" style="display:inline-block;padding:13px 26px;font-family:${FONT};font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:10px;">${button.label}</a>
+  return `<tr><td class="px" style="padding:20px 40px 0;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
+            <td align="center" bgcolor="${BRAND.primary}" style="background-color:${BRAND.primary};border-radius:12px;">
+              <a href="${button.url}" target="_blank" style="display:block;padding:15px 20px;font-family:${FONT};font-size:15px;line-height:20px;font-weight:700;color:#FFFFFF;text-decoration:none;">${button.label}</a>
             </td>
           </tr></table>
+        </td></tr>`;
+}
+
+/** The pale box at the bottom of every card: we never ask for your PIN. */
+function safetyRow(company: string, support: string): string {
+  return `<tr><td class="px" style="padding:24px 40px 36px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${BRAND.tint}" style="background-color:${BRAND.tint};border-radius:12px;">
+          <tr>
+            <td valign="top" width="20" style="padding:16px 0 16px 18px;"><span style="display:inline-block;width:20px;height:20px;line-height:20px;text-align:center;border-radius:10px;background-color:${BRAND.primary};color:#FFFFFF;font-family:${FONT};font-size:12px;font-weight:800;">i</span></td>
+            <td style="padding:16px 18px 16px 12px;font-family:${FONT};font-size:13px;line-height:20px;color:${BRAND.text};">${company} will never ask for your PIN, password or code. Something doesn’t look right? <a href="mailto:${support}" style="color:${BRAND.primary};font-weight:600;text-decoration:underline;">Contact support</a> right away.</td>
+          </tr>
+          </table>
         </td></tr>`;
 }
 
@@ -336,7 +415,7 @@ function unescapeHtml(value: string): string {
     .replace(/&amp;/g, '&');
 }
 
-/** The plain-text alternative: the panel, the words, the receipt, the button's link. */
+/** The plain-text alternative: the header, the words, the receipt, the button's link. */
 export function wrapText(content: string, brand: EmailBrand, frame?: Frame | null): string {
   const lines: string[] = [brand.companyName, ''];
   if (frame) {
@@ -350,9 +429,11 @@ export function wrapText(content: string, brand: EmailBrand, frame?: Frame | nul
     if (frame.status) lines.push(`Status: ${frame.status.text}`);
   }
   if (frame?.button) lines.push('', `${unescapeHtml(frame.button.label)}: ${unescapeHtml(frame.button.url)}`);
+  lines.push('', `${brand.companyName} will never ask for your PIN, password or code.`);
   lines.push('', '—', brand.companyName);
   if (brand.footer.addressLine) lines.push(brand.footer.addressLine);
   lines.push(`Questions? ${brand.supportEmail}`);
   if (brand.footer.optInNote) lines.push('', brand.footer.optInNote);
   return lines.join('\n');
 }
+

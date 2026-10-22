@@ -1,6 +1,6 @@
 /**
- * The parts of an email around the words (design approved 22 Oct 2026: "look C",
- * receipt layout 1): a coloured panel at the top of the card, a receipt list
+ * The parts of an email around the words (design of 22 Oct 2026, after the
+ * "classic receipt" samples): a coloured panel at the top of the card, a receipt list
  * for money emails, and one button.
  *
  * These live in code, per template, and are NOT editable from the dashboard: an
@@ -10,20 +10,20 @@
 
 export type PanelKind = 'done' | 'code' | 'progress' | 'problem' | 'security';
 
-/** Blue for done and for codes, amber for in progress, red for "didn't go through", navy for security. */
+/** The logo's blue for done and for codes, amber for in progress, red for "didn't go through", deep navy for security. */
 export const PANEL_COLOURS: Record<PanelKind, string> = {
-  done: '#1062d3',
-  code: '#1062d3',
-  progress: '#b7791f',
-  problem: '#c0392b',
-  security: '#102c58',
+  done: '#135CF7',
+  code: '#135CF7',
+  progress: '#B7791F',
+  problem: '#D92D20',
+  security: '#0B1530',
 };
 
 /** The status chip on a receipt: the words and their colours. */
 export const STATUS_CHIPS: Record<'done' | 'progress' | 'problem', { text: string; fg: string; bg: string }> = {
-  done: { text: 'Completed', fg: '#0e7a45', bg: '#e3f6ec' },
-  progress: { text: 'In progress', fg: '#8a5a00', bg: '#fdf1d8' },
-  problem: { text: 'Not completed', fg: '#a8321f', bg: '#fbe6e2' },
+  done: { text: 'Completed', fg: '#067647', bg: '#E8F8EF' },
+  progress: { text: 'In progress', fg: '#8A5A00', bg: '#FDF1D8' },
+  problem: { text: 'Not completed', fg: '#B42318', bg: '#FDECEA' },
 };
 
 export interface FrameDef {
