@@ -36,5 +36,14 @@ describe('Payrep env (spec §8)', () => {
   it('a full test setup passes', () => {
     expect(errorsFor({ PAYREP_USE_MOCK: 'false', PAYREP_CLIENT_ID: 'pk_test_a', PAYREP_CLIENT_SECRET: 'sk_test_b', PAYREP_MAIN_ACCOUNT: '1234567890', PAYREP_WEBHOOK_SECRET: 'a'.repeat(64) })).toEqual([]);
   });
+  it('production must name its Payrep address, and it cannot be the sandbox', () => {
+    const live = { NODE_ENV: 'production', PAYREP_USE_MOCK: 'false', PAYREP_CLIENT_ID: 'pk_live_a', PAYREP_CLIENT_SECRET: 'sk_live_b', PAYREP_MAIN_ACCOUNT: '1234567890', PAYREP_WEBHOOK_SECRET: 'a'.repeat(64) };
+    expect(errorsFor(live)).toContain('PAYREP_BASE_URL');
+    expect(errorsFor({ ...live, PAYREP_BASE_URL: 'https://baasapi-sandbox.payrepmfb.com' })).toContain('PAYREP_BASE_URL');
+    expect(errorsFor({ ...live, PAYREP_BASE_URL: 'https://baasapi.payrepmfb.com' })).not.toContain('PAYREP_BASE_URL');
+  });
+  it('outside production the sandbox default still applies', () => {
+    expect(errorsFor({ PAYREP_USE_MOCK: 'false', PAYREP_CLIENT_ID: 'pk_sandbox_a', PAYREP_CLIENT_SECRET: 'sk_sandbox_b', PAYREP_MAIN_ACCOUNT: '1234567890', PAYREP_WEBHOOK_SECRET: 'a'.repeat(64) })).toEqual([]);
+  });
   it('https is required in staging and production', () => expect(errorsFor({ NODE_ENV: 'staging', PAYREP_USE_MOCK: 'false', PAYREP_BASE_URL: 'http://x.example' })).toContain('PAYREP_BASE_URL'));
 });

@@ -358,6 +358,14 @@ export const envSchema = z
     if ((env.NODE_ENV === 'staging' || env.NODE_ENV === 'production') && !env.PAYREP_BASE_URL.startsWith('https://')) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['PAYREP_BASE_URL'], message: 'PAYREP_BASE_URL must use https in staging and production' });
     }
+    // Unset, it falls back to the sandbox: a live server must name Payrep's live address.
+    if (env.NODE_ENV === 'production' && !env.PAYREP_USE_MOCK && /sandbox|shogun-dev/i.test(env.PAYREP_BASE_URL)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['PAYREP_BASE_URL'],
+        message: "PAYREP_BASE_URL must be Payrep's live address in production (https://baasapi.payrepmfb.com), not the sandbox",
+      });
+    }
     // ── Dojah ──
     if (env.DOJAH_USE_MOCK && !['development', 'test'].includes(env.NODE_ENV)) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['DOJAH_USE_MOCK'], message: 'DOJAH_USE_MOCK=true is only allowed in development and test' });
