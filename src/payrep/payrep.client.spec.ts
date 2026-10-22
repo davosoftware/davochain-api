@@ -123,6 +123,27 @@ describe('PayrepClient', () => {
     });
   });
 
+  it('two requests that both meet an expired token share ONE new token', async () => {
+    let tokens = 0;
+    let stale = 0;
+    const used: string[] = [];
+    handler = (req, res) => {
+      if (isToken(req)) return setTimeout(() => token(res, ++tokens + 1), 10);
+      used.push(String(req.headers.authorization));
+      if (req.headers.authorization === 'Bearer tok1') {
+        // The second "expired" answer arrives after the first request has already refreshed.
+        return setTimeout(() => json(res, 401, { message: 'expired' }), ++stale === 1 ? 0 : 150);
+      }
+      return json(res, 200, { status: true, response_code: '00', data: [] });
+    };
+    const c = client();
+    (c as unknown as { token: { value: string; refreshAt: number } }).token = { value: 'tok1', refreshAt: Date.now() + 3_600_000 };
+    await Promise.all([c.banks(), c.banks()]);
+    expect(tokens).toBe(1);
+    // Both resends used the same new token.
+    expect(new Set(used.filter((u) => u !== 'Bearer tok1'))).toEqual(new Set(['Bearer tok2']));
+  });
+
   it('two calls at once share one token request', async () => {
     let tokens = 0;
     handler = (req, res) => (isToken(req) ? setTimeout(() => token(res, ++tokens), 50) : json(res, 200, { status: true, response_code: '00', data: [] }));

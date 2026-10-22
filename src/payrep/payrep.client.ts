@@ -201,9 +201,11 @@ export class PayrepClient extends PayrepApi {
   /** One request; on a token problem the token is refreshed and the request resent ONCE. */
   private async post(path: string, body: Obj): Promise<Reply> {
     this.assertNotPaused();
-    let res = await this.send(path, body, await this.bearer());
+    const first = await this.bearer();
+    let res = await this.send(path, body, first);
     if (this.tokenProblem(res)) {
-      this.token = null;
+      // Only forget the token this request used: another request may already have a fresh one.
+      if (this.token?.value === first) this.token = null;
       res = await this.send(path, body, await this.bearer());
     }
     return res;
