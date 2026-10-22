@@ -138,6 +138,40 @@ export function styleContent(html: string): string {
   );
 }
 
+/**
+ * A solid colour that dark mode leaves alone.
+ *
+ * Gmail's apps and Outlook.com "helpfully" recolour backgrounds in dark mode,
+ * which turns the brand blue into a muddy navy. They recolour
+ * background-color but never a background-image, so the same colour is also
+ * laid down as a one-colour gradient.
+ */
+const solid = (colour: string) => `background-color:${colour};background-image:linear-gradient(${colour},${colour});`;
+
+/**
+ * The dark version, for mail apps that ask (Apple Mail, iOS Mail, Outlook):
+ * a deep navy page and card, light text, and the brand blue kept exactly as
+ * it is. The `[data-ogsb]` copies are how Outlook.com applies it.
+ */
+const DARK_RULES: [string, string][] = [
+  ['.dm-page', 'background-color:#070E22 !important;'],
+  ['.dm-card', 'background-color:#0E1A3A !important;'],
+  ['.dm-tint', 'background-color:#13224A !important;'],
+  ['.dm-ink, .dm-content strong, .dm-content b, .dm-content h1, .dm-content h2, .dm-content h3, .dm-content h4, .dm-content h5, .dm-content h6', 'color:#FFFFFF !important;'],
+  ['.dm-text, .dm-content', 'color:#C4CEE8 !important;'],
+  ['.dm-muted', 'color:#93A3CC !important;'],
+  ['.dm-hair', 'border-color:#1D2C57 !important;'],
+  ['.dm-link, .dm-content a', 'color:#66B3FF !important;'],
+  ['.dm-pill', 'background-color:#1A2A55 !important;color:#FFFFFF !important;'],
+  ['.dm-logotile', 'background-color:#FFFFFF !important;border-radius:8px !important;padding:4px !important;'],
+];
+const darkCss = (prefix: string) =>
+  DARK_RULES.map(([sel, body]) => `${sel.split(', ').map((x) => prefix + x).join(', ')} { ${body} }`).join('\n    ');
+const DARK_CSS = `@media (prefers-color-scheme: dark) {
+    ${darkCss('')}
+  }
+  ${darkCss('[data-ogsb] ')}`;
+
 /** The size a social icon is drawn at. Upload at 128px so a 3× screen stays crisp. */
 const ICON_POINTS = 40;
 
@@ -204,18 +238,18 @@ export function wrapHtml(contentHtml: string, brand: EmailBrand, frame?: Frame |
   const website = escapeAttr(brand.websiteUrl);
   const year = new Date().getFullYear();
 
-  const name = (colour: string, size: number) =>
-    `<span style="font-family:${FONT};font-size:${size}px;line-height:${size + 6}px;font-weight:800;letter-spacing:-0.3px;color:${colour};vertical-align:middle;">${company}</span>`;
+  const name = (colour: string, size: number, cls = '') =>
+    `<span${cls ? ` class="${cls}"` : ''} style="font-family:${FONT};font-size:${size}px;line-height:${size + 6}px;font-weight:800;letter-spacing:-0.3px;color:${colour};vertical-align:middle;">${company}</span>`;
   const logo = (size: number) =>
     brand.logoSrc
       ? `<img src="${escapeAttr(brand.logoSrc)}" alt="${company}" height="${size}" style="display:inline-block;height:${size}px;width:auto;border:0;vertical-align:middle;" />`
-      : `<span style="display:inline-block;width:${size - 8}px;height:${size - 8}px;border-radius:8px;background-color:${BRAND.primary};vertical-align:middle;"></span>`;
+      : `<span style="display:inline-block;width:${size - 8}px;height:${size - 8}px;border-radius:8px;${solid(BRAND.primary)}vertical-align:middle;"></span>`;
 
   const pill = kindPill(frame);
   const topBar = `<tr><td style="padding:0 8px 20px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-      <td align="left" valign="middle">${logo(32)}<span style="display:inline-block;width:10px;"></span>${name(BRAND.ink, 20)}</td>
-      ${pill ? `<td align="right" valign="middle"><span style="display:inline-block;background-color:${BRAND.tintStrong};color:${BRAND.link};font-family:${FONT};font-size:12px;line-height:16px;font-weight:700;letter-spacing:1px;padding:6px 12px;border-radius:999px;">${pill}</span></td>` : ''}
+      <td align="left" valign="middle"><span class="dm-logotile" style="display:inline-block;vertical-align:middle;">${logo(32)}</span><span style="display:inline-block;width:10px;"></span>${name(BRAND.ink, 20, 'dm-ink')}</td>
+      ${pill ? `<td align="right" valign="middle"><span class="dm-pill" style="display:inline-block;background-color:${BRAND.tintStrong};color:${BRAND.link};font-family:${FONT};font-size:12px;line-height:16px;font-weight:700;letter-spacing:1px;padding:6px 12px;border-radius:999px;">${pill}</span></td>` : ''}
     </tr></table>
   </td></tr>`;
 
@@ -244,8 +278,8 @@ export function wrapHtml(contentHtml: string, brand: EmailBrand, frame?: Frame |
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <meta name="x-apple-disable-message-reformatting" />
-<meta name="color-scheme" content="light" />
-<meta name="supported-color-schemes" content="light" />
+<meta name="color-scheme" content="light dark" />
+<meta name="supported-color-schemes" content="light dark" />
 <title>${company}</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600;700;800&amp;family=JetBrains+Mono:wght@500;700&amp;display=swap" rel="stylesheet" />
 <style>
@@ -258,22 +292,24 @@ export function wrapHtml(contentHtml: string, brand: EmailBrand, frame?: Frame |
     .amount { font-size: 38px !important; line-height: 42px !important; }
     .code { font-size: 28px !important; letter-spacing: 5px !important; }
   }
+  :root { color-scheme: light dark; supported-color-schemes: light dark; }
+  ${DARK_CSS}
 </style>
 </head>
-<body style="margin:0;padding:0;background-color:${BRAND.ground};-webkit-font-smoothing:antialiased;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${BRAND.ground}" style="background-color:${BRAND.ground};">
+<body class="dm-page" style="margin:0;padding:0;background-color:${BRAND.ground};-webkit-font-smoothing:antialiased;">
+<table role="presentation" class="dm-page" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${BRAND.ground}" style="background-color:${BRAND.ground};">
 <tr><td align="center" style="padding:28px 12px;">
   <table role="presentation" class="container" width="600" cellpadding="0" cellspacing="0" border="0" style="width:600px;max-width:600px;font-family:${FONT};color:${BRAND.ink};">
 
     ${topBar}
 
-    <tr><td bgcolor="${BRAND.card}" style="background-color:${BRAND.card};border-radius:24px;">
+    <tr><td class="dm-card" bgcolor="${BRAND.card}" style="background-color:${BRAND.card};border-radius:24px;">
       <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
         ${frame ? headerRow(frame) : ''}
         ${frame?.kind === 'code' ? codeRow(frame) : ''}
         ${hero}
         <tr>
-          <td class="px" style="padding:32px 40px 8px;font-family:${FONT};font-size:15px;line-height:24px;color:${BRAND.text};">
+          <td class="px dm-content" style="padding:32px 40px 8px;font-family:${FONT};font-size:15px;line-height:24px;color:${BRAND.text};">
 ${styleContent(contentHtml)}
           </td>
         </tr>
@@ -284,7 +320,7 @@ ${styleContent(contentHtml)}
     </td></tr>
 
     <tr><td style="padding-top:24px;">
-      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${BRAND.primary}" style="background-color:${BRAND.primary};border-radius:28px;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${BRAND.primary}" style="${solid(BRAND.primary)}border-radius:28px;">
       <tr>
       <td align="center" class="px" style="padding:40px 44px 36px;text-align:center;font-family:${FONT};color:#FFFFFF;">
         <table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;"><tr>
@@ -323,15 +359,15 @@ function headerRow(frame: Frame): string {
   const long = plainLength > 16;
   const value =
     !isCode && frame.value
-      ? `<p${long ? '' : ' class="amount"'} style="margin:12px 0 0;font-family:${FONT};font-size:${long ? 30 : 48}px;line-height:${long ? 36 : 52}px;font-weight:800;letter-spacing:${long ? -0.5 : -1}px;color:#FFFFFF;">${frame.value}</p>`
+      ? `<p${long ? '' : ' class="amount"'} style="margin:12px auto 0;max-width:460px;font-family:${FONT};font-size:${long ? 30 : 48}px;line-height:${long ? 36 : 52}px;font-weight:800;letter-spacing:${long ? -0.5 : -1}px;color:#FFFFFF;">${frame.value}</p>`
       : '';
-  const sub = !isCode && frame.sub ? `<p style="margin:12px 0 0;font-family:${FONT};font-size:16px;line-height:22px;color:#FFFFFF;">${frame.sub}</p>` : '';
+  const sub = !isCode && frame.sub ? `<p style="margin:12px auto 0;max-width:440px;font-family:${FONT};font-size:16px;line-height:22px;color:#FFFFFF;">${frame.sub}</p>` : '';
   const label = isCode
     ? `<p style="margin:16px 0 0;font-family:${FONT};font-size:26px;line-height:32px;font-weight:800;letter-spacing:-0.4px;color:#FFFFFF;">${frame.label}</p>`
     : `<p style="margin:16px 0 0;font-family:${FONT};font-size:15px;line-height:20px;font-weight:600;color:#FFFFFF;">${frame.label}</p>`;
   return `<tr>
-          <td class="px" bgcolor="${colour}" style="background-color:${colour};border-radius:24px 24px 0 0;padding:40px 40px 44px;color:#FFFFFF;">
-            <table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr>
+          <td class="px" align="center" bgcolor="${colour}" style="${solid(colour)}border-radius:24px 24px 0 0;padding:40px 40px 44px;color:#FFFFFF;text-align:center;">
+            <table role="presentation" align="center" cellpadding="0" cellspacing="0" border="0" style="margin:0 auto;"><tr>
               <td width="52" height="52" align="center" valign="middle" bgcolor="#FFFFFF" style="width:52px;height:52px;background-color:#FFFFFF;border-radius:26px;font-family:${FONT};font-size:24px;line-height:52px;font-weight:800;color:${colour};">${HEADER_GLYPH[frame.kind]}</td>
             </tr></table>
             ${label}
@@ -345,11 +381,11 @@ function headerRow(frame: Frame): string {
 function codeRow(frame: Frame): string {
   if (!frame.value) return '';
   return `<tr><td class="px" style="padding:28px 40px 0;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${BRAND.tint}" style="background-color:${BRAND.tint};border:2px dashed ${BRAND.primary};border-radius:18px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="dm-tint" bgcolor="${BRAND.tint}" style="background-color:${BRAND.tint};border:2px dashed ${BRAND.primary};border-radius:18px;">
           <tr><td align="center" style="padding:22px 20px;text-align:center;">
-            <p style="margin:0;font-family:${FONT};font-size:12px;line-height:16px;font-weight:700;letter-spacing:1.7px;color:${BRAND.muted};">ENTER THIS CODE</p>
-            <p class="code" style="margin:10px 0 0;font-family:${MONO};font-size:36px;line-height:42px;font-weight:700;letter-spacing:8px;color:${BRAND.ink};">${frame.value}</p>
-            ${frame.sub ? `<p style="margin:10px 0 0;font-family:${FONT};font-size:13px;line-height:19px;color:${BRAND.muted};">${frame.sub}. Never share it with anyone.</p>` : ''}
+            <p class="dm-muted" style="margin:0;font-family:${FONT};font-size:12px;line-height:16px;font-weight:700;letter-spacing:1.7px;color:${BRAND.muted};">ENTER THIS CODE</p>
+            <p class="code dm-ink" style="margin:10px 0 0;font-family:${MONO};font-size:36px;line-height:42px;font-weight:700;letter-spacing:8px;color:${BRAND.ink};">${frame.value}</p>
+            ${frame.sub ? `<p class="dm-muted" style="margin:10px 0 0;font-family:${FONT};font-size:13px;line-height:19px;color:${BRAND.muted};">${frame.sub}. Never share it with anyone.</p>` : ''}
           </td></tr>
           </table>
         </td></tr>`;
@@ -368,8 +404,8 @@ function detailsRow(frame: Frame): string {
     .map((r, i) => {
       const edge = i < rows.length - 1 ? `border-bottom:1px solid ${BRAND.hairline};` : '';
       return `<tr>
-              <td valign="top" style="padding:14px 0;${edge}font-family:${FONT};font-size:15px;line-height:20px;color:${BRAND.muted};white-space:nowrap;">${r.label}</td>
-              <td align="right" style="padding:14px 0 14px 16px;${edge}font-family:${FONT};font-size:15px;line-height:20px;font-weight:600;color:${BRAND.ink};text-align:right;word-break:break-word;">${r.value}</td>
+              <td class="dm-muted dm-hair" valign="top" style="padding:14px 0;${edge}font-family:${FONT};font-size:15px;line-height:20px;color:${BRAND.muted};white-space:nowrap;">${r.label}</td>
+              <td class="dm-ink dm-hair" align="right" style="padding:14px 0 14px 16px;${edge}font-family:${FONT};font-size:15px;line-height:20px;font-weight:600;color:${BRAND.ink};text-align:right;word-break:break-word;">${r.value}</td>
             </tr>`;
     })
     .join('');
@@ -385,7 +421,7 @@ const mono = (value: string) =>
 function buttonRow(button: { label: string; url: string }): string {
   return `<tr><td class="px" style="padding:20px 40px 0;">
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr>
-            <td align="center" bgcolor="${BRAND.primary}" style="background-color:${BRAND.primary};border-radius:12px;">
+            <td align="center" bgcolor="${BRAND.primary}" style="${solid(BRAND.primary)}border-radius:12px;">
               <a href="${button.url}" target="_blank" style="display:block;padding:15px 20px;font-family:${FONT};font-size:15px;line-height:20px;font-weight:700;color:#FFFFFF;text-decoration:none;">${button.label}</a>
             </td>
           </tr></table>
@@ -395,10 +431,10 @@ function buttonRow(button: { label: string; url: string }): string {
 /** The pale box at the bottom of every card: we never ask for your PIN. */
 function safetyRow(company: string, support: string): string {
   return `<tr><td class="px" style="padding:24px 40px 36px;">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${BRAND.tint}" style="background-color:${BRAND.tint};border-radius:12px;">
+          <table role="presentation" class="dm-tint" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${BRAND.tint}" style="background-color:${BRAND.tint};border-radius:12px;">
           <tr>
-            <td valign="top" width="20" style="padding:16px 0 16px 18px;"><span style="display:inline-block;width:20px;height:20px;line-height:20px;text-align:center;border-radius:10px;background-color:${BRAND.primary};color:#FFFFFF;font-family:${FONT};font-size:12px;font-weight:800;">i</span></td>
-            <td style="padding:16px 18px 16px 12px;font-family:${FONT};font-size:13px;line-height:20px;color:${BRAND.text};">${company} will never ask for your PIN, password or code. Something doesn’t look right? <a href="mailto:${support}" style="color:${BRAND.primary};font-weight:600;text-decoration:underline;">Contact support</a> right away.</td>
+            <td valign="top" width="20" style="padding:16px 0 16px 18px;"><span style="display:inline-block;width:20px;height:20px;line-height:20px;text-align:center;border-radius:10px;${solid(BRAND.primary)}color:#FFFFFF;font-family:${FONT};font-size:12px;font-weight:800;">i</span></td>
+            <td class="dm-text" style="padding:16px 18px 16px 12px;font-family:${FONT};font-size:13px;line-height:20px;color:${BRAND.text};">${company} will never ask for your PIN, password or code. Something doesn’t look right? <a class="dm-link" href="mailto:${support}" style="color:${BRAND.primary};font-weight:600;text-decoration:underline;">Contact support</a> right away.</td>
           </tr>
           </table>
         </td></tr>`;

@@ -13,6 +13,7 @@ import { htmlToText, sanitiseHtml } from './sanitise';
 import { wrapHtml, wrapText, type EmailBrand } from './email-layout';
 import { MONEY_VARIABLES, buildFrame, groupThousands, lagosDate } from './email-frame';
 import { SocialLinksService } from './social-links.service';
+import { BUILT_IN_SOCIAL_ICONS } from './social-icons';
 import { MailService } from '../common/mail.service';
 
 export interface EmailAttachment {
@@ -112,6 +113,18 @@ export class EmailTemplateService {
       ? [{ filename: `logo.${(row!.logoType ?? 'image/png').split('/')[1] ?? 'png'}`, content: logoBytes!, contentType: row!.logoType!, cid: LOGO_CID }]
       : [];
 
+    // A known network without an uploaded icon gets the built-in one, carried
+    // inside the email like the logo, so the footer shows real round icons
+    // rather than letters.
+    const socialsWithIcons = socials.map((s) => {
+      const key = s.label.trim().toLowerCase();
+      const builtIn = s.iconUrl ? undefined : BUILT_IN_SOCIAL_ICONS[key];
+      if (!builtIn) return s;
+      const cid = `social-${key.replace(/[^a-z0-9]/g, '')}@davochain`;
+      attachments.push({ filename: `${cid.split('@')[0]}.png`, content: Buffer.from(builtIn, 'base64'), contentType: 'image/png', cid });
+      return { ...s, iconUrl: `cid:${cid}` };
+    });
+
     return {
       companyName,
       supportEmail: row?.supportEmail ?? 'support@davochain.com',
@@ -132,7 +145,7 @@ export class EmailTemplateService {
           : null,
       imageAlt: template?.imageAlt ?? null,
 
-      social: socials,
+      social: socialsWithIcons,
 
       footer: {
         // Falls back to the company name rather than leaving the copyright line

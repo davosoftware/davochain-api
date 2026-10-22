@@ -9,7 +9,9 @@ import { PANEL_COLOURS } from './email-frame';
  */
 const PNG = Buffer.from('89504e470d0a1a0a0000000d4948445200000001', 'hex');
 
-function service(o: { logo?: Buffer | null; website?: string } = {}) {
+type Social = { label: string; url: string; iconUrl: string | null; glyph: string };
+
+function service(o: { logo?: Buffer | null; website?: string; social?: Social[] } = {}) {
   const site = {
     companyName: 'DavoChain',
     supportEmail: 'support@davochain.com',
@@ -29,7 +31,7 @@ function service(o: { logo?: Buffer | null; website?: string } = {}) {
     emailTemplate: { findUnique: jest.fn(async () => null) },
   };
   const config = { get: (k: string) => (k === 'PUBLIC_API_URL' ? 'http://localhost:3000' : undefined) };
-  const socials = { enabled: jest.fn(async () => []) };
+  const socials = { enabled: jest.fn(async () => o.social ?? []) };
   return new EmailTemplateService(prisma as never, config as never, {} as never, socials as never);
 }
 
@@ -128,6 +130,34 @@ describe('email design: the parts', () => {
     const r = await service().render('user.welcome', { firstName: 'Ada' });
     expect(r!.html).toContain('will never ask for your PIN, password or code');
     expect(r!.html).toContain('href="mailto:support@davochain.com"');
+  });
+
+  it('social links show as round icons in the footer; a known network gets the built-in icon, carried inside the email', async () => {
+    const r = await service({
+      social: [
+        { label: 'Instagram', url: 'https://instagram.com/davochain', iconUrl: null, glyph: 'ig' },
+        { label: 'Mastodon', url: 'https://mastodon.social/@davochain', iconUrl: null, glyph: 'ma' },
+      ],
+    }).render('user.welcome', { firstName: 'Ada' });
+    expect(r!.html).toContain('href="https://instagram.com/davochain"');
+    expect(r!.html).toContain('src="cid:social-instagram@davochain"');
+    expect(r!.attachments).toEqual(expect.arrayContaining([expect.objectContaining({ cid: 'social-instagram@davochain', contentType: 'image/png' })]));
+    // An unknown network still appears, as its letters.
+    expect(r!.html).toContain('href="https://mastodon.social/@davochain"');
+    expect(r!.attachments.some((a) => a.cid.includes('mastodon'))).toBe(false);
+  });
+
+  it('the amount at the top of a receipt is centred', async () => {
+    const r = await service().render('ngn.deposit.credited', { firstName: 'Ada', amount: '200000.00', transactionId: 'tx-1' });
+    expect(r!.html).toMatch(/<td class="px" align="center" bgcolor="#135CF7"[^>]*text-align:center;/);
+  });
+
+  it('dark mode keeps the brand blue: blue blocks carry a gradient dark mode cannot recolour, and a dark palette is offered', async () => {
+    const r = await service().render('ngn.deposit.credited', { firstName: 'Ada', amount: '1', transactionId: 'tx-1' });
+    expect(r!.html).toContain('background-image:linear-gradient(#135CF7,#135CF7)');
+    expect(r!.html).toContain('<meta name="color-scheme" content="light dark" />');
+    expect(r!.html).toContain('@media (prefers-color-scheme: dark)');
+    expect(r!.html).toContain('[data-ogsb] .dm-card');
   });
 
   it('panel colours by kind', () => {
