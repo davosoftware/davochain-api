@@ -110,9 +110,10 @@ export class AuthService {
         this.log.error(`Could not queue provisioning for ${user.id}: ${err.message}`),
       );
 
-    // H9: the code that confirms the email goes out at once. A mail failure never
-    // fails sign-up: the customer can ask for another code from the app.
-    await this.otps
+    // H9: the code that confirms the email goes out at once. Not awaited: a slow or
+    // dead mail server must never stall or fail sign-up; the customer can ask for
+    // another code from the app.
+    void this.otps
       .requestForUser(user.id, UserOtpPurpose.EMAIL_VERIFY)
       .catch((err: Error) => this.log.error(`Could not send the email code for ${user.id}: ${err.message}`));
 

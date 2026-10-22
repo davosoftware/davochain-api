@@ -44,6 +44,10 @@ export class MailService {
       auth: this.config.get<string>('SMTP_USER')
         ? { user: this.config.getOrThrow<string>('SMTP_USER'), pass: password ?? '' }
         : undefined,
+      // A mail server that never answers fails in seconds, not nodemailer's default 2 minutes.
+      connectionTimeout: 15_000,
+      greetingTimeout: 15_000,
+      socketTimeout: 30_000,
     });
     return this.transporter;
   }
