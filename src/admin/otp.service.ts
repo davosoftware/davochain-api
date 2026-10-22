@@ -191,6 +191,18 @@ export class AdminOtpService {
    * six-digit code can never be walked through.
    */
   async consume(adminId: string, code: string, purpose: AdminOtpPurpose = AdminOtpPurpose.PASSWORD_RESET): Promise<void> {
+    const id = await this.check(adminId, code, purpose);
+    // Single use, even when two right answers arrive together.
+    if (!(await this.consumeById(this.prisma, id))) throw new BadRequestException(NOT_RIGHT);
+  }
+
+  /**
+   * C8: check a code, counting the attempt, WITHOUT using it up. The caller
+   * burns it with consumeById inside the same transaction as the change it
+   * authorises, so a change that fails to save leaves the code usable.
+   * Burnt here only when the attempts run out, so six digits can never be walked.
+   */
+  async check(adminId: string, code: string, purpose: AdminOtpPurpose): Promise<string> {
     const otp = await this.prisma.adminOtp.findFirst({
       where: { adminUserId: adminId, purpose, consumedAt: null },
       orderBy: { createdAt: 'desc' },
@@ -229,13 +241,7 @@ export class AdminOtpService {
       }
       throw new BadRequestException(NOT_RIGHT);
     }
-
-    // Single use, even when two right answers arrive together.
-    const used = await this.prisma.adminOtp.updateMany({
-      where: { id: otp.id, consumedAt: null },
-      data: { consumedAt: new Date() },
-    });
-    if (used.count !== 1) throw new BadRequestException(NOT_RIGHT);
+    return otp.id;
   }
 
   /**

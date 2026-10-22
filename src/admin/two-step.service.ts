@@ -192,8 +192,10 @@ export class TwoStepService {
   async enable(adminId: string, code: string, currentJti: string): Promise<{ backupCodes: string[] }> {
     const admin = await this.mustFind(adminId);
     if (admin.twoStepEnabled) throw new ConflictException('Two-step sign-in is already on.');
-    await this.otps.consume(adminId, code, AdminOtpPurpose.TWO_STEP_CHANGE);
+    // C8: checked here, used up only inside the save, so a save that fails leaves the code usable.
+    const otpId = await this.otps.check(adminId, code, AdminOtpPurpose.TWO_STEP_CHANGE);
     const backupCodes = await this.prisma.$transaction(async (tx) => {
+      if (!(await this.otps.consumeById(tx, otpId))) throw new BadRequestException(NOT_RIGHT);
       await tx.adminUser.update({ where: { id: adminId }, data: { twoStepEnabled: true, twoStepEnabledAt: new Date() } });
       return this.generateBackupCodes(tx, adminId);
     });
@@ -217,11 +219,13 @@ export class TwoStepService {
     if (!admin.twoStepEnabled) throw new ConflictException('Two-step sign-in is already off.');
     await this.checkPassword(adminId, password);
     const backupId = await this.findBackup(this.prisma, adminId, code);
+    // C8: an emailed code is checked here and used up only inside the save.
+    const otpId = backupId ? null : await this.otps.check(adminId, code, AdminOtpPurpose.TWO_STEP_CHANGE);
     await this.prisma.$transaction(async (tx) => {
       if (backupId) {
         if (!(await this.useBackup(tx, backupId))) throw new BadRequestException(NOT_RIGHT);
-      } else {
-        await this.otps.consume(adminId, code, AdminOtpPurpose.TWO_STEP_CHANGE);
+      } else if (!(await this.otps.consumeById(tx, otpId!))) {
+        throw new BadRequestException(NOT_RIGHT);
       }
       await tx.adminUser.update({ where: { id: adminId }, data: { twoStepEnabled: false, twoStepEnabledAt: null } });
       await tx.adminBackupCode.deleteMany({ where: { adminUserId: adminId } });
@@ -238,6 +242,11 @@ export class TwoStepService {
     }
     const before = await this.isRequired();
     await this.flags.set(TWO_STEP_REQUIRED_FLAG, required, actor.id);
+    if (required && !before) {
+      // C8: an admin signed in with the password alone must sign in again, now with two-step.
+      const without = await this.prisma.adminUser.findMany({ where: { twoStepEnabled: false }, select: { id: true } });
+      for (const a of without) await this.sessions.revokeAllFor(a.id, 'two-step sign-in is now required');
+    }
     return { before, after: required };
   }
 

@@ -20,7 +20,8 @@ function setup(over: Partial<Admin> = {}, opts: { required?: boolean } = {}) {
   let challenges: Challenge[] = [];
   let backups: Backup[] = [];
   const flags: Record<string, unknown> = { [TWO_STEP_REQUIRED_FLAG]: opts.required ?? false };
-  const otp = { code: '', id: 'otp1', purpose: AdminOtpPurpose.LOGIN as AdminOtpPurpose, used: false };
+  // burntOutsideTx: consume() writes on its own connection, so a later rollback cannot undo it (as in Postgres).
+  const otp = { code: '', id: 'otp1', purpose: AdminOtpPurpose.LOGIN as AdminOtpPurpose, used: false, burntOutsideTx: false };
 
   const pick = <T extends object>(rows: T[], where: Record<string, unknown>) =>
     rows.filter((r) =>
@@ -37,6 +38,7 @@ function setup(over: Partial<Admin> = {}, opts: { required?: boolean } = {}) {
     adminUser: {
       findUnique: jest.fn(async ({ where }: { where: { id: string } }) => admins.find((a) => a.id === where.id) ?? null),
       update: jest.fn(async ({ where, data }: { where: { id: string }; data: Partial<Admin> }) => Object.assign(admins.find((a) => a.id === where.id)!, data)),
+      findMany: jest.fn(async ({ where }: { where: Record<string, unknown> }) => pick(admins, where).map((a) => ({ id: a.id }))),
     },
     adminLoginChallenge: {
       create: jest.fn(async ({ data }: { data: Omit<Challenge, 'id' | 'attempts' | 'consumedAt'> }) => {
@@ -82,7 +84,7 @@ function setup(over: Partial<Admin> = {}, opts: { required?: boolean } = {}) {
         admins.splice(0, admins.length, ...snap.admins);
         challenges = snap.challenges;
         backups = snap.backups;
-        otp.used = snap.used;
+        otp.used = snap.used || otp.burntOutsideTx;
         throw err;
       }
     }),
@@ -93,9 +95,14 @@ function setup(over: Partial<Admin> = {}, opts: { required?: boolean } = {}) {
       otp.code = '424242';
       otp.purpose = purpose;
       otp.used = false;
+      otp.burntOutsideTx = false;
       return { delivered: true, sentTo: ['ada@davochain.test'] };
     }),
     match: jest.fn(async (_id: string, code: string, purpose: AdminOtpPurpose) => (!otp.used && code === otp.code && purpose === otp.purpose ? otp.id : null)),
+    check: jest.fn(async (_id: string, code: string, purpose: AdminOtpPurpose) => {
+      if (otp.used || code !== otp.code || purpose !== otp.purpose) throw new BadRequestException('That code is not right.');
+      return otp.id;
+    }),
     consumeById: jest.fn(async () => {
       if (otp.used) return false;
       otp.used = true;
@@ -104,6 +111,7 @@ function setup(over: Partial<Admin> = {}, opts: { required?: boolean } = {}) {
     consume: jest.fn(async (_id: string, code: string, purpose: AdminOtpPurpose) => {
       if (otp.used || code !== otp.code || purpose !== otp.purpose) throw new BadRequestException('That code is not right.');
       otp.used = true;
+      otp.burntOutsideTx = true;
     }),
   };
   const passwords = { verify: jest.fn(async (pw: string) => pw === 'right-pw') };
@@ -285,6 +293,32 @@ describe('My account', () => {
     expect(s.sessions.revokeAllFor).toHaveBeenCalledWith('a1', expect.any(String), 'jti-now');
   });
 
+  it('C8: a switch-on that fails to save keeps the code, so the admin can simply try again', async () => {
+    const s = setup({ twoStepEnabled: false, twoStepEnabledAt: null });
+    await s.svc.sendChangeCode('a1', 'right-pw');
+    const real = s.svc.generateBackupCodes.bind(s.svc);
+    jest.spyOn(s.svc, 'generateBackupCodes').mockRejectedValueOnce(new Error('database hiccup'));
+    await expect(s.svc.enable('a1', '424242', 'jti-now')).rejects.toThrow('database hiccup');
+    expect(s.admins[0].twoStepEnabled).toBe(false);
+    (s.svc.generateBackupCodes as jest.Mock).mockImplementation(real);
+    await expect(s.svc.enable('a1', '424242', 'jti-now')).resolves.toMatchObject({ backupCodes: expect.any(Array) });
+  });
+
+  it('C8: a switch-off with the emailed code that fails to save keeps the code', async () => {
+    const s = setup();
+    await s.svc.sendChangeCode('a1', 'right-pw');
+    const db = s.svc['prisma'] as unknown as { adminBackupCode: { deleteMany: jest.Mock } };
+    const realDelete = db.adminBackupCode.deleteMany.getMockImplementation()!;
+    db.adminBackupCode.deleteMany.mockImplementationOnce(async () => {
+      throw new Error('database hiccup');
+    });
+    await expect(s.svc.disable('a1', 'right-pw', '424242')).rejects.toThrow('database hiccup');
+    expect(s.admins[0].twoStepEnabled).toBe(true);
+    db.adminBackupCode.deleteMany.mockImplementation(realDelete);
+    await expect(s.svc.disable('a1', 'right-pw', '424242')).resolves.toBeUndefined();
+    expect(s.admins[0].twoStepEnabled).toBe(false);
+  });
+
   it('switching on twice is refused', async () => {
     const s = setup();
     await expect(s.svc.enable('a1', '424242', 'j')).rejects.toBeInstanceOf(ConflictException);
@@ -322,6 +356,17 @@ describe('Owner: require two-step for all admins', () => {
     await expect(s.svc.setRequired(OWNER, true, 'wrong')).rejects.toThrow('That password is not correct.');
     await expect(s.svc.setRequired(OWNER, true, 'right-pw')).resolves.toEqual({ before: false, after: true });
     expect(s.flags[TWO_STEP_REQUIRED_FLAG]).toBe(true);
+  });
+
+  it('C8: requiring it signs out every admin who does not have it on, at once', async () => {
+    const s = setup({ twoStepEnabled: false, twoStepEnabledAt: null });
+    await s.svc.setRequired(OWNER, true, 'right-pw');
+    expect(s.sessions.revokeAllFor).toHaveBeenCalledWith('a1', expect.stringMatching(/required/));
+    expect(s.sessions.revokeAllFor).not.toHaveBeenCalledWith('o1', expect.anything());
+    s.sessions.revokeAllFor.mockClear();
+    await s.svc.setRequired(OWNER, true, 'right-pw'); // already required: nobody new to sign out
+    await s.svc.setRequired(OWNER, false, 'right-pw');
+    expect(s.sessions.revokeAllFor).not.toHaveBeenCalled();
   });
 
   it('an owner cannot require it without having it on themselves', async () => {

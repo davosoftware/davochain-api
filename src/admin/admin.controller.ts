@@ -1984,7 +1984,8 @@ export class AdminAuthController {
     const r = await this.twoStep.completeSetup(dto.ticket, dto.code);
     const accessToken = await this.admin.signToken(r.admin, { ip: req.ip, userAgent: req.headers['user-agent'] });
     await this.admin.audit(r.admin.id, 'admin.two_step.enable', 'AdminUser', r.admin.id, null, { via: 'sign-in (required by an owner)' }, req.ip);
-    return { accessToken, backupCodes: r.backupCodes };
+    // C8: the admin's own email, for the backup-code file (the masked one was shown before).
+    return { accessToken, backupCodes: r.backupCodes, email: r.admin.email };
   }
 
   /**
