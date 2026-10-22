@@ -74,5 +74,7 @@ export function parseCollection(raw: unknown): PayrepCollection | null {
     payerName: s(o.sender_account_name) ?? s(o.source_account_name),
     payerBankName: s(o.sender_bank_name) ?? s(o.source_bank_name) ?? s(o.bank_name),
     payerAccountMasked: sender ? `${'*'.repeat(Math.max(0, sender.length - 4))}${sender.slice(-4)}` : null,
+    payerAccountNumber: sender,
+    payerBankCode: s(o.sender_bank_code, 20) ?? s(o.source_bank_code, 20),
   };
 }

@@ -20,7 +20,7 @@ function setup() {
 
 const credit = (id: string, over: Partial<PayrepCollection> = {}): PayrepCollection => ({
   transactionId: id, referenceNumber: `R${id}`, sessionId: null, status: 'success', amount: '1500.00', fee: '0.00', channel: 'bank_transfer',
-  createdAt: '2026-10-07T10:00:00Z', accountNumber: OURS, transactionType: 'credit', payerName: 'A', payerBankName: 'B', payerAccountMasked: null, ...over,
+  createdAt: '2026-10-07T10:00:00Z', accountNumber: OURS, transactionType: 'credit', payerName: 'A', payerBankName: 'B', payerAccountMasked: null, payerAccountNumber: null, payerBankCode: null, ...over,
 });
 
 async function ourAccount(db: FakePrisma) {

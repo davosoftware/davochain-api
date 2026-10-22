@@ -99,7 +99,7 @@ export class PayrepMock extends PayrepApi {
   }
 
   /** A customer's transfer into one of our accounts, then the signed webhook to our own API. */
-  async simulateDeposit(i: { accountNumber: string; amount: string; senderName?: string; status?: 'success' | 'pending' | 'failed'; fee?: string }) {
+  async simulateDeposit(i: { accountNumber: string; amount: string; senderName?: string; status?: 'success' | 'pending' | 'failed'; fee?: string; senderAccount?: string | null }) {
     // As the sandbox does (22 Oct 2026): event "collection.<status>", status "successful",
     // no transaction_id, a null reference_number, and the bank's reference as the only id.
     const status = i.status === 'pending' ? 'pending' : i.status === 'failed' ? 'failed' : 'successful';
@@ -117,7 +117,10 @@ export class PayrepMock extends PayrepApi {
       transactionType: 'credit',
       payerName: i.senderName ?? 'MOCK SENDER',
       payerBankName: 'Access Bank',
-      payerAccountMasked: '******6789',
+      payerAccountMasked: i.senderAccount === null ? null : '******6789',
+      // A held deposit goes back here (Access Bank by its CBN code, as Payrep's list gives it). null = Payrep gave no sender.
+      payerAccountNumber: i.senderAccount === undefined ? '0123456789' : i.senderAccount,
+      payerBankCode: i.senderAccount === null ? null : '044',
     };
     this.credits.push(c);
     return { transactionId: c.transactionId, webhookStatus: await this.deliver(c) };

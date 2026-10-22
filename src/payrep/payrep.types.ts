@@ -59,6 +59,12 @@ export interface PayrepCollection {
   payerName: string | null;
   payerBankName: string | null;
   payerAccountMasked: string | null;
+  /**
+   * The sender's full account number and bank code, only so a held deposit can be
+   * sent back (plan 2026-10-22 Task 6). Never stored and never logged.
+   */
+  payerAccountNumber: string | null;
+  payerBankCode: string | null;
 }
 
 export interface PayrepCursor {

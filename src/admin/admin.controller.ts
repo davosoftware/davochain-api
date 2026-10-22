@@ -538,7 +538,10 @@ export class AdminController {
     return result;
   }
 
-  /** Refuse a held naira deposit. No money moves; the user is told why. */
+  /**
+   * Refuse a held naira deposit; the user is told why. A Payrep bank deposit is
+   * sent back to the account it came from (plan 2026-10-22 Task 6).
+   */
   @Post('transactions/:id/reject')
   @HttpCode(200)
   @RequirePermissions('transactions.approve')
@@ -548,8 +551,10 @@ export class AdminController {
     @Body() dto: RejectDepositDto,
   ) {
     const before = await this.txs.one(id);
-    const after = await this.txs.reject(id, dto.reason);
-    await this.admin.audit(adminId, 'transaction.reject', 'Transaction', id, before, after);
+    const after = await this.txs.reject(id, dto.reason, adminId);
+    // A plain reject ends FAILED; a deposit going back to its sender stays on hold until Payrep confirms.
+    const refund = after.status === 'ON_HOLD';
+    await this.admin.audit(adminId, refund ? 'transaction.refund' : 'transaction.reject', 'Transaction', id, before, { ...after, reason: dto.reason });
     return after;
   }
 

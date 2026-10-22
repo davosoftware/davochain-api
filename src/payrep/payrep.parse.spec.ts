@@ -43,7 +43,7 @@ describe('the real sandbox shapes', () => {
     expect(parseCollection(SANDBOX_LIST_ITEM)).toEqual({
       transactionId: '000013251022120000', referenceNumber: 'PRP-REF-0001', sessionId: null, status: 'successful', amount: '5000', fee: '0',
       channel: 'bank_transfer', createdAt: '2026-10-22T10:00:00.000000+01:00', accountNumber: '2012345678', transactionType: 'credit',
-      payerName: 'ADA OBI', payerBankName: 'Access Bank', payerAccountMasked: '******6789',
+      payerName: 'ADA OBI', payerBankName: 'Access Bank', payerAccountMasked: '******6789', payerAccountNumber: '0123456789', payerBankCode: '044',
     });
   });
   it('the webhook payload gives the SAME id as the list item, so a deposit can be confirmed', () => {
@@ -102,6 +102,8 @@ describe('parseCollection', () => {
       payerName: 'John Doe',
       payerBankName: 'Access Bank',
       payerAccountMasked: '******6789',
+      payerAccountNumber: '0123456789',
+      payerBankCode: null,
     });
   });
   it('accepts "id" for the transaction id and number amounts', () =>

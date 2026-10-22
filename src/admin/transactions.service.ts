@@ -1,10 +1,11 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { CollectionOutcome, LedgerAccount, PaymentProvider, Prisma, TxStatus, TxType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { LedgerService } from '../ledger/ledger.service';
 import type { LedgerLeg } from '../ledger/ledger.service';
 import { DepositLegsError, depositLegs } from '../ngn-deposits/deposit-legs';
 import { NotificationsService } from '../notifications/notifications.service';
+import { DepositRefundService } from '../ngn-deposits/deposit-refund.service';
 import { KycLimitsService } from '../kyc/kyc-limits.service';
 import { Decimal, ZERO, dec, str } from '../common/money';
 import { escapeLike } from './earnings.service';
@@ -102,6 +103,8 @@ export interface TxRow {
   withinLimitsNow: boolean | null;
   /** Why it still would not be allowed, when it would not. */
   limitReason: string | null;
+  /** A Payrep bank deposit: rejecting it sends the money back to the account it came from. */
+  returnsToSender: boolean;
 
   /** Who released or rejected it, from the audit log. Null until somebody has. */
   reviewedBy: string | null;
@@ -260,6 +263,7 @@ export class AdminTransactionsService {
     private readonly ledger: LedgerService,
     private readonly notifications: NotificationsService,
     private readonly kycLimits: KycLimitsService,
+    @Optional() private readonly refunds?: DepositRefundService,
   ) {}
 
   private where(query: TxQuery): Prisma.TransactionWhereInput {
@@ -506,6 +510,7 @@ export class AdminTransactionsService {
         needsApproval: isAwaitingApproval(t),
         withinLimitsNow: limits.get(t.id)?.within ?? null,
         limitReason: limits.get(t.id)?.reason ?? null,
+        returnsToSender: t.type === TxType.DEPOSIT && t.toAsset === 'ngn' && t.provider === PaymentProvider.PAYREP,
         reviewedBy: review?.by ?? null,
         reviewedAt: review?.at.toISOString() ?? null,
       };
@@ -664,15 +669,21 @@ export class AdminTransactionsService {
    * user, so the deposit stops sitting in a queue forever with nobody able to
    * say what was decided about it.
    */
-  async reject(id: string, reason: string): Promise<TxRow> {
+  async reject(id: string, reason: string, adminId?: string): Promise<TxRow> {
     const tx = await this.held(id);
+    const trimmed = reason.trim();
+    if (!trimmed) throw new BadRequestException('Say why — the user is shown this');
+    // A Payrep deposit goes back to the account it came from (plan 2026-10-22 Task 6);
+    // the customer is told when Payrep confirms the money went back.
+    if (tx.provider === PaymentProvider.PAYREP && this.refunds) {
+      await this.refunds.start(id, trimmed, adminId ?? 'unknown');
+      return this.one(id);
+    }
     if (isNairaRailDeposit(tx)) {
       throw new ConflictException(
         'Use reject and refund: a Payrep deposit has to go back to its sender, not just be refused.',
       );
     }
-    const trimmed = reason.trim();
-    if (!trimmed) throw new BadRequestException('Say why — the user is shown this');
 
     await this.prisma.serializable(
       async (t) => {
