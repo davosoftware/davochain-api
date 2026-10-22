@@ -20,7 +20,7 @@ describe('Payrep env (spec §8)', () => {
     expect(errorsFor({ PAYREP_USE_MOCK: 'true', PAYREP_CLIENT_ID: '', PAYREP_CLIENT_SECRET: '', PAYREP_MAIN_ACCOUNT: '', PAYREP_WEBHOOK_SECRET: '', PAYREP_BASE_URL: '' })).toEqual([]);
     const parsed = envSchema.parse({ ...BASE, PAYREP_MAIN_ACCOUNT: '', PAYREP_BASE_URL: '' });
     expect(parsed.PAYREP_MAIN_ACCOUNT).toBeUndefined();
-    expect(parsed.PAYREP_BASE_URL).toBe('https://shogun-dev.payrepmfb.com');
+    expect(parsed.PAYREP_BASE_URL).toBe('https://baasapi-sandbox.payrepmfb.com');
     expect(parsed.PAYREP_USE_MOCK).toBe(true);
   });
   it('with the mock off, the main account and webhook secret are required', () => {

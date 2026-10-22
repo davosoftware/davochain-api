@@ -4,7 +4,8 @@ import { CredentialsService } from '../common/credentials.service';
 import { PayrepError } from './payrep.errors';
 import { payrepKeyModeProblem } from './key-mode';
 
-export const PAYREP_SANDBOX_URL = 'https://shogun-dev.payrepmfb.com';
+/** Payrep's real sandbox. (Its docs and OpenAPI file name shogun-dev.payrepmfb.com, which refuses our keys.) */
+export const PAYREP_SANDBOX_URL = 'https://baasapi-sandbox.payrepmfb.com';
 export const PAYREP_LIVE_URL = 'https://baasapi.payrepmfb.com';
 /** Only ever used with the mock, so local development needs no Payrep setup. */
 export const MOCK_WEBHOOK_SECRET = '6d6f636b2d70617972657024776562686f6f6b2d7365637265742d6f6e6c7921';

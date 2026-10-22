@@ -28,6 +28,9 @@ export function classifyTransfer(httpStatus: number, body: unknown): TransferAns
   // Maker-checker (spec §2.5 C2): Payrep says yes, but nothing has been sent.
   if (e.status === true && (data?.auth_request_id || /once it has been approved/i.test(e.message))) return { kind: 'QUEUED_FOR_APPROVAL' };
   if (e.status === false && e.code === '51') return { kind: 'REFUSED', reason: e.message || 'Insufficient balance' };
+  // The sandbox (22 Oct 2026) sends "Insufficient balance" as HTTP 400 with code 83, the same code it
+  // uses for "Duplicate transaction". Only the words are a clear no; any other 83 stays unclear.
+  if (e.status === false && /^insufficient (balance|funds)\b/i.test(e.message)) return { kind: 'REFUSED', reason: e.message };
   if (isOk(httpStatus) && e.status === true && e.code === '00' && data) {
     const s = text(data.status).toLowerCase();
     const id = text(data.id);

@@ -24,6 +24,7 @@ import { OpsAlertsService } from '../common/ops-alerts/ops-alerts.service';
 import { RailTransferHooks } from '../naira-rail/rail-transfer-hooks';
 import { PayrepConfig } from '../payrep/payrep.config';
 import { verifyPayrepWebhook } from '../payrep/webhook-signature';
+import { collectionKey } from '../payrep/payrep.parse';
 
 interface RawBodyRequest extends Request {
   rawBody?: Buffer;
@@ -112,10 +113,11 @@ export class PayrepWebhookController {
     } catch {
       throw new BadRequestException('The body is not JSON');
     }
-    const event = s(body.event) ?? 'unknown';
-    const data = (body.data && typeof body.data === 'object' ? body.data : {}) as Obj;
-    // deposit.failed carries no reference_number; Payrep says to de-duplicate it on the bank's reference.
-    const id = s(data.transaction_id) ?? s(data.third_party_reference_number) ?? s(data.reference_number);
+    const event = s(body.event) ?? s(body.event_type) ?? 'unknown';
+    // Wrapped as {event, data} per the docs, or flat (fields beside the event): accept both.
+    const data = (body.data && typeof body.data === 'object' && !Array.isArray(body.data) ? body.data : body) as Obj;
+    // A collection carries no transaction_id and a null reference_number on the sandbox: the bank's reference is the id.
+    const id = s(data.transaction_id) ?? collectionKey(data);
 
     try {
       await this.store(event, id, raw, body, webhookId);
@@ -131,7 +133,8 @@ export class PayrepWebhookController {
 
   private async handOn(event: string, data: Obj): Promise<void> {
     const reference = s(data.reference_number);
-    const txId = s(data.transaction_id);
+    const txId = s(data.transaction_id) ?? collectionKey(data);
+    const depositId = collectionKey(data);
     if (TRANSFER_EVENTS.includes(event)) {
       if (reference && this.hooks) await this.hooks.dispatch(reference);
       return;
@@ -160,8 +163,8 @@ export class PayrepWebhookController {
       );
       return;
     }
-    if (DEPOSIT_EVENTS.includes(event) && txId && this.deposits) {
-      await this.deposits.intake({ transactionId: txId, accountNumber: s(data.account_number), referenceNumber: reference, createdAt: s(data.created_at), event }, 'WEBHOOK');
+    if (DEPOSIT_EVENTS.includes(event) && depositId && this.deposits) {
+      await this.deposits.intake({ transactionId: depositId, accountNumber: s(data.account_number), referenceNumber: reference, createdAt: s(data.created_at), event }, 'WEBHOOK');
     }
     // deposit.failed, account.*, tier.*, dispute.*, compliance.charge: stored only.
   }

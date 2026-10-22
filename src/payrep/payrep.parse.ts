@@ -30,27 +30,44 @@ export function nextCursorOf(data: unknown): { createdAt: string; id: string } |
   return createdAt && id ? { createdAt, id } : null;
 }
 
-/** One credit, or null when it lacks an id or a readable amount (never guessed). */
+/**
+ * The one id a deposit carries both in Payrep's webhook and in its transaction list.
+ * The sandbox (22 Oct 2026) sends no transaction_id in either, and reference_number
+ * is null on a collection webhook; the bank's third_party_reference_number is in both.
+ */
+export function collectionKey(raw: unknown): string | null {
+  const o = obj(raw);
+  if (!o) return null;
+  return s(o.third_party_reference_number) ?? s(o.reference_number) ?? s(o.transaction_id) ?? s(o.id);
+}
+
+/**
+ * One credit, or null when it lacks an id or a readable amount (never guessed).
+ * Reads both the documented names and the ones the sandbox really uses:
+ * our account in account__account_number (list) or account_number (webhook),
+ * the sender in source_* (list) or sender_* (webhook).
+ */
 export function parseCollection(raw: unknown): PayrepCollection | null {
   const o = obj(raw);
   if (!o) return null;
-  const transactionId = s(o.transaction_id) ?? s(o.id);
+  const transactionId = collectionKey(o);
   const amount = money(o.amount);
   if (!transactionId || !amount) return null;
-  const sender = s(o.sender_account_number, 20);
+  const sender = s(o.sender_account_number, 20) ?? s(o.source_account_number, 20);
+  const status = (s(o.status) ?? '').toLowerCase();
   return {
     transactionId,
     amount,
     referenceNumber: s(o.reference_number),
     sessionId: s(o.session_id),
-    status: (s(o.status) ?? '').toLowerCase(),
+    status: o.is_reversed === true ? 'reversed' : status,
     fee: money(o.charges),
     channel: s(o.channel, 50),
     createdAt: s(o.created_at, 40),
-    accountNumber: s(o.account_number, 20),
+    accountNumber: s(o.account_number, 20) ?? s(o.account__account_number, 20),
     transactionType: s(o.transaction_type, 20)?.toLowerCase() ?? null,
-    payerName: s(o.sender_account_name),
-    payerBankName: s(o.sender_bank_name) ?? s(o.bank_name),
+    payerName: s(o.sender_account_name) ?? s(o.source_account_name),
+    payerBankName: s(o.sender_bank_name) ?? s(o.source_bank_name) ?? s(o.bank_name),
     payerAccountMasked: sender ? `${'*'.repeat(Math.max(0, sender.length - 4))}${sender.slice(-4)}` : null,
   };
 }

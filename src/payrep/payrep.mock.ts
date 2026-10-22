@@ -100,12 +100,14 @@ export class PayrepMock extends PayrepApi {
 
   /** A customer's transfer into one of our accounts, then the signed webhook to our own API. */
   async simulateDeposit(i: { accountNumber: string; amount: string; senderName?: string; status?: 'success' | 'pending' | 'failed'; fee?: string }) {
-    const status = i.status ?? 'success';
+    // As the sandbox does (22 Oct 2026): event "collection.<status>", status "successful",
+    // no transaction_id, a null reference_number, and the bank's reference as the only id.
+    const status = i.status === 'pending' ? 'pending' : i.status === 'failed' ? 'failed' : 'successful';
     const c: StoredCredit = {
-      event: `deposit.${status}`,
-      transactionId: randomUUID(),
-      referenceNumber: `MOCKREF${Date.now()}${Math.floor(Math.random() * 1000)}`,
-      sessionId: `MOCKSESSION${Date.now()}`,
+      event: `collection.${i.status ?? 'success'}`,
+      transactionId: `MOCKTP${Date.now()}${String(Math.floor(Math.random() * 1e6)).padStart(6, '0')}`,
+      referenceNumber: null,
+      sessionId: null,
       status,
       amount: i.amount,
       fee: i.fee ?? '0.00',
@@ -127,23 +129,37 @@ export class PayrepMock extends PayrepApi {
     return c ? this.deliver(c) : null;
   }
 
-  private async deliver(c: StoredCredit): Promise<number | null> {
-    const raw = JSON.stringify({
-      event: c.event,
-      data: {
-        transaction_id: c.transactionId,
-        reference_number: c.referenceNumber,
-        status: c.status,
-        amount: c.amount,
-        charges: c.fee,
-        channel: c.channel,
-        created_at: c.createdAt,
-        account_number: c.accountNumber,
-        sender_account_name: c.payerName,
-        sender_account_number: '0123456789',
-        bank_name: c.payerBankName,
-      },
-    });
+  private deliver(c: StoredCredit): Promise<number | null> {
+    return this.post(
+      JSON.stringify({
+        event: c.event,
+        data: {
+          amount: c.amount,
+          status: c.status,
+          channel: 'webhook',
+          charges: c.fee,
+          remarks: 'mock deposit',
+          bank_code: '',
+          bank_name: '',
+          created_at: c.createdAt,
+          session_id: null,
+          is_reversal: false,
+          account_name: '',
+          account_number: c.accountNumber,
+          reference_number: null,
+          sender_bank_code: '044',
+          sender_bank_name: c.payerBankName,
+          transaction_type: 'credit',
+          sender_account_name: c.payerName,
+          sender_account_number: '0123456789',
+          third_party_reference_number: c.transactionId,
+        },
+      }),
+    );
+  }
+
+  /** Signs and sends one webhook body to our own API, as Payrep does. */
+  private async post(raw: string): Promise<number | null> {
     const ts = String(Math.floor(Date.now() / 1000));
     try {
       const res = await request(`http://127.0.0.1:${this.cfg.port}/webhooks/payrep`, {

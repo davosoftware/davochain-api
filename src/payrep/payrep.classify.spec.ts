@@ -15,6 +15,14 @@ describe('classifyTransfer (spec §2.1)', () => {
     expect(classifyTransfer(200, ok({ auth_request_id: 'a2' }))).toEqual({ kind: 'QUEUED_FOR_APPROVAL' });
   });
   it('code 51 is the only coded refusal', () => expect(classifyTransfer(200, no('51', 'Insufficient balance'))).toEqual({ kind: 'REFUSED', reason: 'Insufficient balance' }));
+  // The sandbox (22 Oct 2026) answers HTTP 400 with code 83 for BOTH of these: only the words tell them apart.
+  it('sandbox: HTTP 400 code 83 "Insufficient balance" is a refusal', () =>
+    expect(classifyTransfer(400, no('83', 'Insufficient balance'))).toEqual({ kind: 'REFUSED', reason: 'Insufficient balance' }));
+  it('sandbox: HTTP 400 code 83 "Duplicate transaction…" stays UNCLEAR (it may have been paid)', () =>
+    expect(classifyTransfer(400, no('83', 'Duplicate transaction. This reference number has already been processed.')).kind).toBe('UNCLEAR'));
+  it('sandbox: HTTP 500 code "error" is UNCLEAR', () => expect(classifyTransfer(500, { message: "[<class 'decimal.ConversionSyntax'>]", response_code: 'error', data: null }).kind).toBe('UNCLEAR'));
+  it('sandbox: a successful send reads as SENT', () =>
+    expect(classifyTransfer(200, ok({ id: 'a1b2', status: 'successful', charges: '0', amount: '1.00' }, 'Transfer successful (Sandbox)'))).toEqual({ kind: 'SENT', id: 'a1b2', providerStatus: 'successful', fee: '0' }));
   it('HTTP 400 "invalid" is a refusal (no transaction is created)', () => {
     expect(classifyTransfer(400, { message: 'beneficiary_account_number: must be 10 digits', response_code: 'invalid', data: null })).toMatchObject({ kind: 'REFUSED' });
   });

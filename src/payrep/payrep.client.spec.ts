@@ -49,6 +49,19 @@ describe('PayrepClient', () => {
     expect(JSON.parse(seen[0].body)).toEqual({ client_id: 'pk_test_a', client_secret: 'sk_test_b' });
   });
 
+  it('reads the token where the sandbox really puts it: message.data, with expires_in as text', async () => {
+    let tokens = 0;
+    handler = (req, res) =>
+      isToken(req)
+        ? json(res, 200, { status: true, response_code: '00', message: { status: true, data: { access_token: `tokM${++tokens}`, token_type: 'Bearer', expires_in: '36000' } }, data: null })
+        : json(res, 200, { status: true, response_code: '00', data: [] });
+    const c = client();
+    await c.banks();
+    await c.banks();
+    expect(tokens).toBe(1);
+    expect(seen.filter((s) => s.url.endsWith('/fetch_banks')).every((s) => s.headers.authorization === 'Bearer tokM1')).toBe(true);
+  });
+
   it('two calls at once share one token request', async () => {
     let tokens = 0;
     handler = (req, res) => (isToken(req) ? setTimeout(() => token(res, ++tokens), 50) : json(res, 200, { status: true, response_code: '00', data: [] }));
@@ -133,10 +146,44 @@ describe('PayrepClient', () => {
     expect(seen.filter((s) => s.url.endsWith('/funds_transfer'))).toHaveLength(1);
   });
 
-  it('transactionStatus posts the reference and classifies the answer', async () => {
-    handler = (req, res) => (isToken(req) ? token(res) : json(res, 200, { status: false, response_code: '80', message: 'Transaction not found.', data: null }));
-    expect(await client().transactionStatus('trsy_1')).toEqual({ kind: 'NOT_FOUND' });
-    expect(JSON.parse(seen[1].body)).toEqual({ reference_number: 'trsy_1' });
+  describe('transactionStatus reads the transaction list, never the status endpoint', () => {
+    // The sandbox's status endpoint answers "SUCCESSFUL ₦1,000" for ANY reference, even one never sent
+    // (22 Oct 2026), so it proves nothing. The list filtered by our reference holds the real record.
+    const listed = (items: unknown[]) => (req: IncomingMessage, res: ServerResponse) =>
+      isToken(req) ? token(res) : json(res, 200, { status: true, response_code: '00', message: 'ok', data: { items, limit: 5, has_next: false, next_cursor: null } });
+    const item = (over: Record<string, unknown> = {}) => ({ reference_number: 'dvc_ngnwd_1', transaction_type: 'debit', status: 'successful', amount: 1, charges: 0, is_reversed: false, ...over });
+
+    it('asks the list for our reference and never calls transaction_status', async () => {
+      handler = listed([item()]);
+      expect(await client().transactionStatus('dvc_ngnwd_1')).toEqual({ kind: 'FOUND', status: 'SUCCESSFUL' });
+      expect(seen.some((s) => s.url.endsWith('/transaction_status'))).toBe(false);
+      const body = JSON.parse(seen[1].body);
+      expect(seen[1].url).toBe('/api/v1/transaction/api/fetch_transactions');
+      expect(body.filters).toMatchObject({ reference_number: 'dvc_ngnwd_1', start_date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), end_date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) });
+    });
+    it.each([
+      ['failed', {}, 'FAILED'],
+      ['pending', {}, 'PENDING'],
+      ['processing', {}, 'PENDING'],
+      ['successful', { is_reversed: true }, 'FAILED'],
+    ])('a listed "%s" transfer reads as %s', async (status, over, expected) => {
+      handler = listed([item({ status, ...over })]);
+      expect(await client().transactionStatus('dvc_ngnwd_1')).toEqual({ kind: 'FOUND', status: expected });
+    });
+    it('an unknown status word is UNCLEAR', async () => {
+      handler = listed([item({ status: 'weird' })]);
+      expect((await client().transactionStatus('dvc_ngnwd_1')).kind).toBe('UNCLEAR');
+    });
+    it('nothing listed for our reference is NOT_FOUND; a different reference or a credit does not count', async () => {
+      handler = listed([item({ reference_number: 'someone_else' }), item({ transaction_type: 'credit' })]);
+      expect(await client().transactionStatus('dvc_ngnwd_1')).toEqual({ kind: 'NOT_FOUND' });
+    });
+    it('a list that cannot be read, or no answer, is UNCLEAR and never throws', async () => {
+      handler = (req, res) => (isToken(req) ? token(res) : json(res, 503, { message: 'down' }));
+      expect((await client().transactionStatus('dvc_ngnwd_1')).kind).toBe('UNCLEAR');
+      handler = (req, res) => (isToken(req) ? token(res) : json(res, 200, { status: true, response_code: '00', data: { records: [] } }));
+      expect((await client().transactionStatus('dvc_ngnwd_1')).kind).toBe('UNCLEAR');
+    });
   });
 
   it('reads throw typed errors: CONFIG on 41, REFUSED on 06, UNCLEAR on 5xx', async () => {

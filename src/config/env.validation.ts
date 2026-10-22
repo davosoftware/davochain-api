@@ -193,7 +193,7 @@ export const envSchema = z
     NGN_WITHDRAWALS_ENABLED: bool(false),
     // ── Payrep MFB (the naira rail, spec 2026-10-20 §8). An empty value counts as unset. ──
     PAYREP_USE_MOCK: bool(true),
-    PAYREP_BASE_URL: z.preprocess(emptyToUndefined, z.string().url().default('https://shogun-dev.payrepmfb.com')),
+    PAYREP_BASE_URL: z.preprocess(emptyToUndefined, z.string().url().default('https://baasapi-sandbox.payrepmfb.com')),
     PAYREP_CLIENT_ID: z.preprocess(emptyToUndefined, z.string().optional()),
     PAYREP_CLIENT_SECRET: z.preprocess(emptyToUndefined, z.string().optional()),
     PAYREP_MAIN_ACCOUNT: z.preprocess(emptyToUndefined, z.string().regex(/^\d{10}$/, 'PAYREP_MAIN_ACCOUNT is a 10-digit account number').optional()),

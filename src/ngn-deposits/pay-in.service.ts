@@ -271,10 +271,18 @@ export class PayInService extends DepositIntake {
       startDate: ymd(from),
       endDate: ymd(to),
     };
+    const found = await this.search(filters, row.providerTransactionId);
+    if (found || (!filters.accountNumber && !filters.referenceNumber)) return found;
+    // On the sandbox (22 Oct 2026) the account filter missed a payment the plain list showed:
+    // look again by date only. The match is still on the exact id, so nothing else can be picked up.
+    return this.search({ startDate: filters.startDate, endDate: filters.endDate }, row.providerTransactionId);
+  }
+
+  private async search(filters: { accountNumber?: string; referenceNumber?: string; startDate: string; endDate: string }, id: string): Promise<PayrepCollection | null> {
     let cursor: PayrepCursor | null = null;
     for (let page = 0; page < MAX_PAGES; page++) {
       const { items, next } = await this.payrep.fetchCredits(filters, cursor);
-      const hit = items.find((c) => c.transactionId === row.providerTransactionId);
+      const hit = items.find((c) => c.transactionId === id);
       if (hit) return hit;
       // No next page, or Payrep ignored the cursor (the same page again): not there yet.
       if (!next || (cursor && next.createdAt === cursor.createdAt && next.id === cursor.id)) return null;

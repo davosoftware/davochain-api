@@ -21,7 +21,7 @@ import { randomUUID, timingSafeEqual } from 'node:crypto';
 import { request } from 'undici';
 import { PrismaClient } from '@prisma/client';
 import { payrepKeyModeProblem } from '../src/payrep/key-mode';
-import { classifyStatus, classifyTransfer } from '../src/payrep/payrep.classify';
+import { classifyTransfer } from '../src/payrep/payrep.classify';
 import { PAYREP_SANDBOX_URL } from '../src/payrep/payrep.config';
 import { listOf } from '../src/payrep/payrep.parse';
 import { payrepSignature } from '../src/payrep/webhook-signature';
@@ -64,6 +64,14 @@ async function post(path: string, body: Obj | null, auth = true): Promise<{ stat
 }
 const code = (r: { status: number; body: Obj | undefined }) => `HTTP ${r.status}, code ${String(r.body?.response_code ?? '-')}`;
 
+/** What the transaction list shows for one of our references: how DavoChain decides a transfer's outcome. */
+async function listed(reference: string): Promise<string> {
+  const day = (o: number) => new Date(Date.now() + o * 86_400_000).toISOString().slice(0, 10);
+  const r = await post('/transaction/api/fetch_transactions', { filters: { reference_number: reference, start_date: day(-2), end_date: day(1) }, limit: 10 });
+  const items = (listOf(r.body?.data) ?? []).filter((i) => String((i as Obj).reference_number) === reference);
+  return `${code(r)}, ${items.length} record(s)${items.length ? `: ${items.map((i) => `${String((i as Obj).transaction_type)} ${String((i as Obj).status)}${(i as Obj).is_reversed ? ' (reversed)' : ''}`).join(', ')}` : ''}`;
+}
+
 async function main(): Promise<void> {
   if (base !== PAYREP_SANDBOX_URL || env('CONFIRM_SANDBOX') !== 'yes') {
     console.error(`Refusing: this runs only against the Payrep test system (${PAYREP_SANDBOX_URL}) with CONFIRM_SANDBOX=yes.`);
@@ -84,12 +92,14 @@ async function main(): Promise<void> {
 
   // 1. Token
   const t = await post('/security/api/generate_token', { client_id: clientId, client_secret: clientSecret }, false);
-  token = String((t.body?.data as Obj | undefined)?.access_token ?? '');
+  // The sandbox puts the token in message.data (data is null); the docs say data.
+  const tokenBox = ((t.body?.data as Obj | undefined) ?? ((t.body?.message as Obj | undefined)?.data as Obj | undefined)) ?? {};
+  token = String(tokenBox.access_token ?? '');
   if (!token) {
     bad('token', code(t));
     return;
   }
-  ok('token', `${code(t)}, expires_in ${String((t.body?.data as Obj).expires_in ?? '?')}s`);
+  ok('token', `${code(t)}, expires_in ${String(tokenBox.expires_in ?? '?')}s`);
 
   // Our main account, as Payrep knows it. Used for this run when PAYREP_MAIN_ACCOUNT is empty.
   const primary = await post('/account/api/get_primary_account', null);
@@ -102,7 +112,7 @@ async function main(): Promise<void> {
   // 2. Banks
   const banks = await post('/transaction/transfer/api/fetch_banks', {});
   const list = (listOf(banks.body?.data) ?? []) as Obj[];
-  if (list.length) ok('bank list', `${code(banks)}, ${list.length} banks, Access 000014 ${list.some((b) => b.code === '000014') ? 'present' : 'MISSING'}`);
+  if (list.length) ok('bank list', `${code(banks)}, ${list.length} banks; Access Bank code ${String(list.find((b) => /^access/i.test(String(b.name)))?.code ?? 'not listed')}`);
   else bad('bank list', code(banks));
 
   // 3. Our main account
@@ -136,13 +146,11 @@ async function main(): Promise<void> {
       };
       const first = await post('/transaction/transfer/api/funds_transfer', body);
       console.log(`  first send: ${code(first)} → our reading: ${classifyTransfer(first.status, first.body).kind}; message: "${String(first.body?.message ?? '')}"`);
-      const s1 = await post('/transaction/transfer/api/transaction_status', { reference_number: reference });
-      console.log(`  status: ${code(s1)} → ${JSON.stringify(classifyStatus(s1.status, s1.body))}`);
+      console.log(`  as DavoChain reads it (transaction list by reference): ${await listed(reference)}`);
       const again = await post('/transaction/transfer/api/funds_transfer', body);
       const kind = classifyTransfer(again.status, again.body).kind;
       console.log(`  same reference again: ${code(again)} → our reading: ${kind}; message: "${String(again.body?.message ?? '')}"`);
-      const s2 = await post('/transaction/transfer/api/transaction_status', { reference_number: reference });
-      console.log(`  status again: ${code(s2)} → ${JSON.stringify(classifyStatus(s2.status, s2.body))}`);
+      console.log(`  after the repeat, the list shows: ${await listed(reference)}`);
       if (kind === 'SENT') bad('C3 duplicate reference', 'Payrep accepted the same reference twice: check the account for a second ₦1 debit');
       else ok('C3 duplicate reference', 'the repeat was not accepted as a new transfer');
     }
@@ -182,7 +190,10 @@ async function main(): Promise<void> {
     }
   }
 
-  // 6. C1: the webhook signature recipe, from deliveries this API recorded (local database only)
+  // 6. C1: the webhook signature recipe, from deliveries this API recorded (local database only).
+  //    Note: on a development machine these rows may come from the automated tests, which sign with the
+  //    pretend secret; only a delivery Payrep itself sent proves the recipe.
+  console.log('- webhook recipe (local database rows; on a dev machine they may be from automated tests):');
   const secret = env('PAYREP_WEBHOOK_SECRET');
   if (!/^[0-9a-f]{64}$/i.test(secret)) {
     bad('webhook recipe', 'PAYREP_WEBHOOK_SECRET is not set (64 hex characters)');

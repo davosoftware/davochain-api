@@ -73,10 +73,10 @@ describe('POST /webhooks/payrep (spec §6.1)', () => {
     expect(alerts.raise).toHaveBeenCalledWith('NAIRA_WEBHOOK_REJECTED', 'webhook-rejected', expect.any(String), expect.any(Array), expect.any(Number));
   });
 
-  it('deposit.success goes to intake with the hint, de-duplicated on transaction_id', async () => {
+  it('deposit.success goes to intake keyed on its reference (the id the transaction list also has), de-duplicated', async () => {
     await send({ event: 'deposit.success', data: { transaction_id: 't9', account_number: '2012345678', reference_number: 'R9', created_at: '2026-10-21T10:00:00Z' } });
     expect(intake.intake).toHaveBeenCalledWith(
-      { transactionId: 't9', accountNumber: '2012345678', referenceNumber: 'R9', createdAt: '2026-10-21T10:00:00Z', event: 'deposit.success' },
+      { transactionId: 'R9', accountNumber: '2012345678', referenceNumber: 'R9', createdAt: '2026-10-21T10:00:00Z', event: 'deposit.success' },
       'WEBHOOK',
     );
     const dedup = prisma.webhookEvent.create.mock.calls[0][0].data.dedupHash;
@@ -90,6 +90,26 @@ describe('POST /webhooks/payrep (spec §6.1)', () => {
     prisma.webhookEvent.create.mockRejectedValueOnce(new Error('db down'));
     await expect(send({ event: 'deposit.success', data: { transaction_id: 't1' } })).rejects.toThrow(/retry/);
     expect(intake.intake).not.toHaveBeenCalled();
+  });
+
+  // The sandbox (22 Oct 2026) calls a deposit "collection.success"; its payload has no transaction_id
+  // and reference_number is null. The bank's third_party_reference_number is the id, as in the list.
+  const COLLECTION = {
+    amount: '5000.00', status: 'successful', channel: 'webhook', charges: '0.00', account_number: '2012345678', reference_number: null,
+    sender_account_name: 'ADA OBI', sender_account_number: '0123456789', sender_bank_name: 'Access Bank', transaction_type: 'credit',
+    third_party_reference_number: '000013251022120000', created_at: '2026-10-22T10:00:00.000000+01:00',
+  };
+  it.each([
+    ['wrapped as {event, data}', { event: 'collection.success', data: COLLECTION }],
+    ['flat, with the event beside the fields', { event: 'collection.success', ...COLLECTION }],
+    ['flat, with event_type', { event_type: 'collection.success', ...COLLECTION }],
+  ])('a sandbox-shaped collection.success, %s, reaches the deposit side keyed on the bank reference', async (_n, body) => {
+    await expect(send(body)).resolves.toEqual({ received: true });
+    expect(intake.intake).toHaveBeenCalledWith(
+      { transactionId: '000013251022120000', accountNumber: '2012345678', referenceNumber: null, createdAt: '2026-10-22T10:00:00.000000+01:00', event: 'collection.success' },
+      'WEBHOOK',
+    );
+    expect(prisma.webhookEvent.create.mock.calls[0][0].data.eventName).toBe('payrep.collection.success');
   });
 
   it('transfer.reversal and deposit.reversed alert an owner; nothing moves', async () => {

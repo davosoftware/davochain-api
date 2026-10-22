@@ -2,7 +2,7 @@ import { Logger } from '@nestjs/common';
 import { request } from 'undici';
 import { parseJsonExact } from '../common/exact-json';
 import { PayrepApi } from './payrep.api';
-import { classifyCreateAccount, classifyRead, classifyStatus, classifyTransfer, type StatusAnswer, type TransferAnswer } from './payrep.classify';
+import { classifyCreateAccount, classifyRead, classifyTransfer, type StatusAnswer, type TransferAnswer } from './payrep.classify';
 import { PayrepError } from './payrep.errors';
 import { listOf, nextCursorOf, parseCollection } from './payrep.parse';
 import type { PayrepAccount, PayrepBank, PayrepCollection, PayrepCursor, PayrepCustomerAccount, PayrepNameEnquiry, PayrepTransferInput } from './payrep.types';
@@ -12,6 +12,18 @@ type Obj = Record<string, unknown>;
 type Reply = { status: number; body: unknown };
 const PREFIX = '/api/v1';
 const PAGE = 50;
+/** How far back a transfer is looked for by its reference. Payouts and Treasury moves are finished well within this. */
+const STATUS_LOOKBACK_DAYS = 35;
+
+/** A transfer as it appears in Payrep's transaction list. A reversed one counts as failed: the money came back. */
+function listedTransferStatus(item: Obj): StatusAnswer {
+  if (item.is_reversed === true) return { kind: 'FOUND', status: 'FAILED' };
+  const s = str(item.status).toLowerCase();
+  if (s === 'successful' || s === 'success') return { kind: 'FOUND', status: 'SUCCESSFUL' };
+  if (s === 'failed' || s === 'reversed') return { kind: 'FOUND', status: 'FAILED' };
+  if (s === 'pending' || s === 'processing') return { kind: 'FOUND', status: 'PENDING' };
+  return { kind: 'UNCLEAR', reason: `Payrep lists the transfer with a status we don't know: "${s || 'none'}"` };
+}
 const str = (v: unknown) => (typeof v === 'string' ? v.trim() : v === null || v === undefined ? '' : String(v));
 
 /**
@@ -88,10 +100,25 @@ export class PayrepClient extends PayrepApi {
     }
   }
 
+  /**
+   * What happened to one of our transfers, read from Payrep's transaction list by our
+   * reference. Payrep's transaction_status endpoint is not used: on the sandbox
+   * (22 Oct 2026) it answers "SUCCESSFUL" for any reference, even one never sent.
+   * Never throws: anything we can't read is UNCLEAR, which never refunds.
+   */
   async transactionStatus(reference: string): Promise<StatusAnswer> {
     try {
-      const r = await this.post('/transaction/transfer/api/transaction_status', { reference_number: reference });
-      return classifyStatus(r.status, r.body);
+      const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+      const data = await this.read<unknown>('/transaction/api/fetch_transactions', {
+        filters: { reference_number: reference, start_date: day(-STATUS_LOOKBACK_DAYS), end_date: day(1) },
+        limit: PAGE,
+        page_size: PAGE,
+      });
+      const list = listOf(data);
+      if (!list) return { kind: 'UNCLEAR', reason: 'Payrep answered the transaction list in a shape we cannot read' };
+      const ours = list.map((i) => (i ?? {}) as Obj).filter((i) => str(i.reference_number) === reference && str(i.transaction_type).toLowerCase() !== 'credit');
+      if (!ours.length) return { kind: 'NOT_FOUND' };
+      return listedTransferStatus(ours[0]);
     } catch (err) {
       return { kind: 'UNCLEAR', reason: (err as Error).message };
     }
@@ -215,8 +242,10 @@ export class PayrepClient extends PayrepApi {
     }
     const a = classifyRead<Obj | null>(r.status, r.body);
     if (!a.ok) throw new PayrepError(a.kind === 'REFUSED' || a.kind === 'TOKEN' ? 'CONFIG' : a.kind, `Payrep refused our keys: ${a.message}`, r.status, a.code);
-    const value = str(a.data?.access_token);
-    const ttl = Number(a.data?.expires_in) || 3600;
+    // The docs put the token in data; the sandbox (22 Oct 2026) puts it in message.data, with data null.
+    const box = (a.data && typeof a.data === 'object' ? a.data : (((r.body as Obj | undefined)?.message as Obj | undefined)?.data as Obj | undefined)) ?? null;
+    const value = str(box?.access_token);
+    const ttl = Number(box?.expires_in) || 3600;
     if (!value) throw new PayrepError('UNCLEAR', 'Payrep answered without a token', r.status, '00');
     // Refresh 5 minutes early (never sooner than a minute from now).
     this.token = { value, refreshAt: Date.now() + Math.max(60, ttl - 300) * 1000 };

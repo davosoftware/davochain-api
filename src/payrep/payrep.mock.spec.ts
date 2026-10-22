@@ -1,3 +1,4 @@
+import { collectionKey } from './payrep.parse';
 import { PayrepMock } from './payrep.mock';
 
 const m = () => new PayrepMock({ port: 1 });
@@ -64,10 +65,24 @@ describe('PayrepMock', () => {
     expect(webhookStatus).toBe(200);
     const day = new Date().toISOString().slice(0, 10);
     const { items } = await p.fetchCredits({ accountNumber: '2012345678', startDate: day, endDate: day });
-    expect(items).toEqual([expect.objectContaining({ transactionId, amount: '5000.00', status: 'success', accountNumber: '2012345678', transactionType: 'credit' })]);
+    expect(items).toEqual([expect.objectContaining({ transactionId, amount: '5000.00', status: 'successful', accountNumber: '2012345678', transactionType: 'credit' })]);
     expect((await p.fetchCredits({ accountNumber: '2099999999', startDate: day, endDate: day })).items).toEqual([]);
     expect(await p.redeliver(transactionId)).toBe(200);
     expect(deliver).toHaveBeenCalledTimes(2);
     expect(await p.redeliver('nope')).toBeNull();
+  });
+  it('sends deposits the way the sandbox does: collection.success, keyed on the bank reference, no transaction_id', async () => {
+    const p = m();
+    let raw = '';
+    jest.spyOn(p as unknown as { post: (body: string) => Promise<number> }, 'post').mockImplementation(async (body: string) => {
+      raw = body;
+      return 200;
+    });
+    const { transactionId } = await p.simulateDeposit({ accountNumber: '2012345678', amount: '700.00' });
+    const body = JSON.parse(raw);
+    expect(body.event).toBe('collection.success');
+    expect(body.data).toMatchObject({ third_party_reference_number: transactionId, reference_number: null, status: 'successful', account_number: '2012345678', transaction_type: 'credit' });
+    expect(body.data).not.toHaveProperty('transaction_id');
+    expect(collectionKey(body.data)).toBe(transactionId);
   });
 });

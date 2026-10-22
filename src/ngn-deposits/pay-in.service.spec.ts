@@ -82,7 +82,7 @@ describe('PayInService.processPayment (Payrep, spec §6)', () => {
     expect(net(posts[0].legs).isZero()).toBe(true);
     expect(db.rows('nairaCollection')[0]).toMatchObject({
       providerTransactionId: id, outcome: 'CREDITED', previousOutcome: 'UNVERIFIED', userId: USER, transactionId: tx.id,
-      providerStatus: 'success', accountNumber: ACC, payerName: 'ADA OBI', checkCount: 1, firstSource: 'WEBHOOK',
+      providerStatus: 'successful', accountNumber: ACC, payerName: 'ADA OBI', checkCount: 1, firstSource: 'WEBHOOK',
     });
     expect(notifications.notify).toHaveBeenCalledTimes(1);
     expect(notifications.notify).toHaveBeenCalledWith(
@@ -118,14 +118,27 @@ describe('PayInService.processPayment (Payrep, spec §6)', () => {
   });
 
   it('a hint naming the wrong account cannot redirect money: only Payrep’s own record decides', async () => {
-    const { svc, posts, payrep } = await setup();
+    const { svc, db, posts, payrep } = await setup();
     const { transactionId } = await payrep.simulateDeposit({ accountNumber: ACC, amount: '500.00' });
     await svc.intake({ transactionId, accountNumber: '2099999999', referenceNumber: null, createdAt: null, event: 'deposit.success' }, 'WEBHOOK');
-    await expect(svc.processPayment(transactionId)).rejects.toThrow(/not yet visible/);
-    // The sweep reads Payrep's own list and corrects what to look for.
-    await svc.intake({ transactionId, accountNumber: ACC, referenceNumber: null, createdAt: new Date().toISOString(), event: 'sweep' }, 'SWEEP');
+    // Found by its exact id; the account (so the owner) is the one in Payrep's record, not the hint's.
     await expect(svc.processPayment(transactionId)).resolves.toMatchObject({ outcome: 'CREDITED' });
     expect(posts[0].legs[0]).toMatchObject({ userId: USER, amount: '500' });
+    expect(db.rows('nairaCollection')[0].accountNumber).toBe(ACC);
+  });
+
+  it("finds the payment even when Payrep's account filter misses it (seen on the sandbox, 22 Oct 2026)", async () => {
+    const { svc, payrep, posts, deposit } = await setup();
+    const id = await deposit('250.00');
+    const real = payrep.fetchCredits.bind(payrep);
+    const calls: Array<{ accountNumber?: string }> = [];
+    jest.spyOn(payrep, 'fetchCredits').mockImplementation(async (f) => {
+      calls.push(f);
+      return f.accountNumber ? { items: [], next: null } : real(f);
+    });
+    await expect(svc.processPayment(id)).resolves.toMatchObject({ outcome: 'CREDITED' });
+    expect(calls.map((f) => Boolean(f.accountNumber))).toEqual([true, false]);
+    expect(posts[0].legs[0]).toMatchObject({ amount: '250' });
   });
 
   it('after 48 hours unconfirmed: NOT_FOUND, with an alert', async () => {
