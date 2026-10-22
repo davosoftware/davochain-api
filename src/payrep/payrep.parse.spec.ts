@@ -50,6 +50,18 @@ describe('the real sandbox shapes', () => {
     expect(collectionKey(SANDBOX_WEBHOOK_PAYLOAD)).toBe(parseCollection(SANDBOX_LIST_ITEM)!.transactionId);
     expect(parseCollection(SANDBOX_WEBHOOK_PAYLOAD)).toMatchObject({ transactionId: '000013251022120000', accountNumber: '2012345678', payerName: 'ADA OBI', payerBankName: 'Access Bank' });
   });
+  // A simulated deposit into a customer account (sandbox, 22 Oct 2026) is listed against our MAIN pool
+  // account; the customer's account is beneficiary_account_number, and the account filter doesn't find it.
+  it('a collection: the account paid is the beneficiary, not the pool account the item is filed under', () => {
+    const collection = {
+      ...SANDBOX_LIST_ITEM,
+      account__account_number: '7801231424', beneficiary_account_number: '6077165401', beneficiary_account_name: '',
+      bank_code: '', bank_name: '', transaction_type: 'credit', transfer_type: 'inter', channel: 'webhook', transaction_category: 'collection',
+    };
+    expect(parseCollection(collection)).toMatchObject({ accountNumber: '6077165401', payerName: 'ADA OBI', payerBankName: 'Access Bank' });
+    // A debit still names the account it left from.
+    expect(parseCollection({ ...collection, transaction_type: 'debit' })?.accountNumber).toBe('7801231424');
+  });
   it('a reversed item reads as reversed', () => expect(parseCollection({ ...SANDBOX_LIST_ITEM, is_reversed: true })?.status).toBe('reversed'));
   it('the id falls back to reference_number, then transaction_id', () => {
     expect(collectionKey({ reference_number: 'R1', transaction_id: 'T1' })).toBe('R1');

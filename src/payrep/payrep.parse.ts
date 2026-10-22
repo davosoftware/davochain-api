@@ -55,6 +55,11 @@ export function parseCollection(raw: unknown): PayrepCollection | null {
   if (!transactionId || !amount) return null;
   const sender = s(o.sender_account_number, 20) ?? s(o.source_account_number, 20);
   const status = (s(o.status) ?? '').toLowerCase();
+  const type = s(o.transaction_type, 20)?.toLowerCase() ?? null;
+  // The webhook names the account paid account_number. The list files a collection under our pool
+  // account (account__account_number); the customer's account paid is the beneficiary (sandbox, 22 Oct 2026).
+  const accountNumber =
+    s(o.account_number, 20) ?? (type === 'credit' ? s(o.beneficiary_account_number, 20) : null) ?? s(o.account__account_number, 20);
   return {
     transactionId,
     amount,
@@ -64,8 +69,8 @@ export function parseCollection(raw: unknown): PayrepCollection | null {
     fee: money(o.charges),
     channel: s(o.channel, 50),
     createdAt: s(o.created_at, 40),
-    accountNumber: s(o.account_number, 20) ?? s(o.account__account_number, 20),
-    transactionType: s(o.transaction_type, 20)?.toLowerCase() ?? null,
+    accountNumber,
+    transactionType: type,
     payerName: s(o.sender_account_name) ?? s(o.source_account_name),
     payerBankName: s(o.sender_bank_name) ?? s(o.source_bank_name) ?? s(o.bank_name),
     payerAccountMasked: sender ? `${'*'.repeat(Math.max(0, sender.length - 4))}${sender.slice(-4)}` : null,
