@@ -87,7 +87,7 @@ describe('AdminAuthController: the second step', () => {
   it('setup gives a token and the backup codes, and records the switch-on without them', async () => {
     const { c, audit } = controller();
     const out = await c.completeTwoStepSetup({ ticket: 'tkt', code: '123456' } as never, { ip: '1.2.3.4', headers: {} } as never);
-    expect(out).toEqual({ accessToken: 'token', backupCodes: ['111111'] });
+    expect(out).toEqual({ accessToken: 'token', backupCodes: ['111111'], email: 'e' });
     expect(audit).toHaveBeenCalledWith('a1', 'admin.two_step.enable', 'AdminUser', 'a1', null, { via: 'sign-in (required by an owner)' }, '1.2.3.4');
     expect(JSON.stringify(audit.mock.calls)).not.toContain('111111');
   });
