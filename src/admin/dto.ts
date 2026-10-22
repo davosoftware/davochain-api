@@ -154,6 +154,11 @@ export class RejectDepositDto {
   @IsString() @MaxLength(500) reason!: string;
 }
 
+/** A held Payrep deposit sent back from the Payrep dashboard: how, for the team (final review, Important 1). */
+export class MarkReturnedDto {
+  @IsString() @MaxLength(500) note!: string;
+}
+
 /** H4: an owner's decision on a transaction that is being checked. */
 export class ResolveTransactionDto {
   @IsIn(['COMPLETED', 'FAILED'], { message: 'Choose COMPLETED or FAILED' }) outcome!: 'COMPLETED' | 'FAILED';

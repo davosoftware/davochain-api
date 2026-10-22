@@ -89,6 +89,7 @@ import {
   RecordRefillDto,
   ReferralSettingsDto,
   RejectDepositDto,
+  MarkReturnedDto,
   ResolveTransactionDto,
   ReviewKycDto,
   SetGateDto,
@@ -555,6 +556,24 @@ export class AdminController {
     // A plain reject ends FAILED; a deposit going back to its sender stays on hold until Payrep confirms.
     const refund = after.status === 'ON_HOLD';
     await this.admin.audit(adminId, refund ? 'transaction.refund' : 'transaction.reject', 'Transaction', id, before, { ...after, reason: dto.reason });
+    return after;
+  }
+
+  /**
+   * Owner only: a held Payrep deposit the team sent back from the Payrep dashboard
+   * is closed here, so it can never be released afterwards (final review, Important 1).
+   */
+  @Post('transactions/:id/mark-returned')
+  @HttpCode(200)
+  @RequirePermissions('transactions.approve')
+  async markDepositReturned(
+    @CurrentAdmin() actor: AdminJwtPayload,
+    @Param('id') id: string,
+    @Body() dto: MarkReturnedDto,
+  ) {
+    const before = await this.txs.one(id);
+    const after = await this.txs.markReturned(id, dto.note, { id: actor.sub, role: actor.role });
+    await this.admin.audit(actor.sub, 'transaction.mark_returned', 'Transaction', id, before, { ...after, note: dto.note });
     return after;
   }
 

@@ -149,6 +149,57 @@ describe('DepositRefundService: return a held Payrep deposit to its sender', () 
   });
 });
 
+describe('a deposit that cannot be returned through DavoChain (final review, Important 1)', () => {
+  const OWNER = { id: 'owner1', role: 'OWNER' };
+
+  it('a second reject after Payrep failed the first return sends nothing again: 409, still HELD', async () => {
+    const s = await setup('1500.13'); // the mock fails this return on the first status check
+    await s.svc.start('t1', 'r', 'a1');
+    await s.svc.recheck(s.reference); // FAILED → HELD
+    expect(s.row().outcome).toBe('HELD');
+    const err = await s.svc.start('t1', 'r', 'a1').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConflictException);
+    expect((err as Error).message).toMatch(/already sent to Payrep.*Mark returned/);
+    expect(s.transfer).toHaveBeenCalledTimes(1);
+    expect(s.row().outcome).toBe('HELD');
+  });
+
+  it('an owner marks a held deposit returned outside DavoChain: REFUNDED, FAILED, customer told, and Release is then impossible', async () => {
+    const s = await setup();
+    await s.svc.markReturned('t1', 'Returned from the Payrep dashboard, ref ABC123', OWNER);
+    expect(s.row()).toMatchObject({ outcome: 'REFUNDED', previousOutcome: 'HELD' });
+    expect(s.tx()).toMatchObject({ status: 'FAILED', failureReason: 'Returned to the sender outside DavoChain: Returned from the Payrep dashboard, ref ABC123' });
+    expect(s.notifications.notify).toHaveBeenCalledTimes(1);
+    // The owner's note is for the team, never the customer.
+    expect(s.notifications.notify).toHaveBeenCalledWith(expect.objectContaining({ body: 'We returned your naira deposit of ₦1,500.00 to the account it came from.' }));
+    expect(s.transfer).not.toHaveBeenCalled();
+    await expect(s.svc.markReturned('t1', 'Returned from the Payrep dashboard again', OWNER)).rejects.toThrow('That deposit was already dealt with');
+  });
+
+  it('a return stuck "being returned" with no Payrep record can be marked returned', async () => {
+    const s = await setup('1500.80'); // unclear answer, never recorded by Payrep
+    await s.svc.start('t1', 'r', 'a1');
+    expect(s.row().outcome).toBe('REFUND_PENDING');
+    await s.svc.markReturned('t1', 'Payrep has no record; returned by hand', OWNER);
+    expect(s.row().outcome).toBe('REFUNDED');
+  });
+
+  it('refuses while our own return is still going through at Payrep (no double return)', async () => {
+    const s = await setup();
+    await s.svc.start('t1', 'r', 'a1');
+    jest.spyOn(s.rail, 'transferStatus').mockResolvedValue({ id: 'x', reference: s.reference, status: 'PENDING', fee: null, reason: null });
+    await expect(s.svc.markReturned('t1', 'Returned from the Payrep dashboard', OWNER)).rejects.toThrow(/still going through/);
+    expect(s.row().outcome).toBe('REFUND_PENDING');
+  });
+
+  it('only an owner, and only with a real note', async () => {
+    const s = await setup();
+    await expect(s.svc.markReturned('t1', 'Returned from the Payrep dashboard', { id: 'a', role: 'SUB_ADMIN' })).rejects.toThrow(/owner/);
+    await expect(s.svc.markReturned('t1', 'done', OWNER)).rejects.toThrow(/at least 10 characters/);
+    expect(s.row().outcome).toBe('HELD');
+  });
+});
+
 describe('AdminTransactionsService.reject and naira bank deposits', () => {
   async function admin(provider: string) {
     const db = new FakePrisma();

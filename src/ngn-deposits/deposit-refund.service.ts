@@ -1,6 +1,6 @@
-import { ConflictException, Inject, Injectable, Logger, OnModuleInit, Optional, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, OnModuleInit, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { AlertType, CollectionOutcome, NairaCollection, PaymentProvider, TxStatus, TxType } from '@prisma/client';
+import { AdminRole, AlertType, CollectionOutcome, NairaCollection, PaymentProvider, TxStatus, TxType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { OpsAlertsService } from '../common/ops-alerts/ops-alerts.service';
@@ -18,6 +18,7 @@ const DAY = 24 * HOUR;
 const MAX_PAGES = 20;
 const BEING_RETURNED = 'Being returned to the sender: ';
 const RETURNED = 'Returned to the sender: ';
+const RETURNED_OUTSIDE = 'Returned to the sender outside DavoChain: ';
 const RETURN_FAILED = 'Returning it to the sender failed, so it is held again for review.';
 const DEALT_WITH = 'That deposit was already dealt with';
 
@@ -91,6 +92,22 @@ export class DepositRefundService implements OnModuleInit {
       throw new ConflictException('The amount Payrep shows differs from what we recorded. Nothing was sent; check the payment first.');
     }
 
+    // An earlier return for this deposit (the reference is fixed per deposit): never send twice.
+    // After a failed return, the money goes back from the Payrep dashboard and an owner marks it.
+    const reference = refundReference(row.id);
+    let earlier;
+    try {
+      earlier = await this.rail.transferStatus(reference);
+    } catch {
+      throw new ServiceUnavailableException(`We could not check with ${this.rail.name} whether this deposit was already returned. Nothing was sent. Try again shortly.`);
+    }
+    if (earlier) {
+      throw new ConflictException(
+        `A return for this deposit was already sent to ${this.rail.name} (${earlier.status.toLowerCase()}), so nothing was sent again. ` +
+          'Check it in the Payrep dashboard; if the money went back from there, an owner uses Mark returned.',
+      );
+    }
+
     // 2. Claim it, once: of two admins (or two clicks), only one moves HELD on.
     const { count } = await this.prisma.nairaCollection.updateMany({
       where: { id: row.id, outcome: CollectionOutcome.HELD },
@@ -101,7 +118,6 @@ export class DepositRefundService implements OnModuleInit {
     await this.prisma.transaction.update({ where: { id: tx.id }, data: { failureReason: `${BEING_RETURNED}${reason}`.slice(0, 500) } });
 
     // 3. Send once.
-    const reference = refundReference(row.id);
     try {
       await this.rail.transfer({
         reference,
@@ -145,7 +161,12 @@ export class DepositRefundService implements OnModuleInit {
     }
     if (!t || t.status === 'PENDING') return;
 
-    if (t.status === 'SUCCESSFUL') return this.finish(row);
+    if (t.status === 'SUCCESSFUL') {
+      const tx = await this.prisma.transaction.findUnique({ where: { id: row.transactionId } });
+      const reason = tx?.failureReason?.startsWith(BEING_RETURNED) ? tx.failureReason.slice(BEING_RETURNED.length) : 'returned by DavoChain';
+      await this.close(row, [CollectionOutcome.REFUND_PENDING], `${RETURNED}${reason}`, reason);
+      return;
+    }
 
     const { count } = await this.prisma.nairaCollection.updateMany({
       where: { id, outcome: CollectionOutcome.REFUND_PENDING },
@@ -167,27 +188,61 @@ export class DepositRefundService implements OnModuleInit {
     );
   }
 
-  /** Payrep confirmed the money went back: the deposit is closed as failed, and the customer is told. */
-  private async finish(row: NairaCollection): Promise<void> {
+  /**
+   * The money went back outside DavoChain (from the Payrep dashboard): an owner,
+   * with a note, closes the deposit so it can never be released afterwards
+   * (final review, Important 1). Refused while our own return is still going
+   * through, so the sender is never paid twice.
+   */
+  async markReturned(transactionId: string, note: string, actor: { id: string; role: string }): Promise<void> {
+    if (actor.role !== AdminRole.OWNER) throw new ForbiddenException('Only an owner can mark a deposit returned outside DavoChain');
+    const text = (note ?? '').trim();
+    if (text.length < 10) throw new BadRequestException('Write a note (at least 10 characters) saying how it was returned');
+    const tx = await this.prisma.transaction.findUnique({ where: { id: transactionId } });
+    const row = await this.prisma.nairaCollection.findUnique({ where: { transactionId } });
+    const open: CollectionOutcome[] = [CollectionOutcome.HELD, CollectionOutcome.REFUND_PENDING];
+    if (!tx || !row || tx.type !== TxType.DEPOSIT || tx.status !== TxStatus.ON_HOLD || tx.provider !== PaymentProvider.PAYREP || !open.includes(row.outcome)) {
+      throw new ConflictException(DEALT_WITH);
+    }
+    let ours;
+    try {
+      ours = await this.rail.transferStatus(refundReference(row.id));
+    } catch {
+      throw new ServiceUnavailableException(`We could not check our own return with ${this.rail.name}. Nothing changed. Try again shortly.`);
+    }
+    if (ours?.status === 'PENDING') {
+      throw new ConflictException(`Our return of this deposit is still going through at ${this.rail.name}. Wait for it to finish; it closes by itself.`);
+    }
+    if (ours?.status === 'SUCCESSFUL') {
+      throw new ConflictException(`${this.rail.name} shows our own return went through. It closes by itself within 10 minutes; do not return it again.`);
+    }
+    // The owner's note is for the team; the customer sees the reason given at Reject, if there was one.
+    const customerReason = tx.failureReason?.startsWith(BEING_RETURNED) ? tx.failureReason.slice(BEING_RETURNED.length) : null;
+    const closed = await this.close(row, open, `${RETURNED_OUTSIDE}${text}`, customerReason);
+    if (!closed) throw new ConflictException(DEALT_WITH);
+    this.log.log(`Owner ${actor.id} marked deposit ${row.providerTransactionId} returned outside DavoChain`);
+  }
+
+  /** Closes a deposit as returned, once, and tells the customer. False when someone else moved it first. */
+  private async close(row: NairaCollection, from: CollectionOutcome[], failureReason: string, reason: string | null): Promise<boolean> {
     const txId = row.transactionId!;
     const tx = await this.prisma.transaction.findUnique({ where: { id: txId } });
-    const reason = tx?.failureReason?.startsWith(BEING_RETURNED) ? tx.failureReason.slice(BEING_RETURNED.length) : 'returned by DavoChain';
     const finished = await this.prisma.$transaction(async (t) => {
       const { count } = await t.nairaCollection.updateMany({
-        where: { id: row.id, outcome: CollectionOutcome.REFUND_PENDING },
-        data: { outcome: CollectionOutcome.REFUNDED, previousOutcome: CollectionOutcome.REFUND_PENDING },
+        where: { id: row.id, outcome: { in: from } },
+        data: { outcome: CollectionOutcome.REFUNDED, previousOutcome: row.outcome },
       });
       if (count === 0) return false;
       await t.transaction.update({
         where: { id: txId },
-        data: { status: TxStatus.FAILED, failureReason: `${RETURNED}${reason}`.slice(0, 500), completedAt: new Date() },
+        data: { status: TxStatus.FAILED, failureReason: failureReason.slice(0, 500), completedAt: new Date() },
       });
       return true;
     });
-    if (!finished || !tx) return;
+    if (!finished || !tx) return false;
 
     const amount = `₦${Number(dec(row.amount ?? tx.toAmount ?? 0).toFixed(2)).toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-    const body = `We returned your naira deposit of ${amount} to the account it came from. Reason: ${reason}`;
+    const body = `We returned your naira deposit of ${amount} to the account it came from.${reason ? ` Reason: ${reason}` : ''}`;
     try {
       await this.notifications.notify({
         userId: tx.userId,
@@ -203,6 +258,7 @@ export class DepositRefundService implements OnModuleInit {
     } catch (err) {
       this.log.error(`Could not tell ${tx.userId} their deposit ${tx.id} was returned: ${redactIds((err as Error).message)}`);
     }
+    return true;
   }
 
   /** Backup for a lost webhook: every 10 minutes, ask about every return still under way. */

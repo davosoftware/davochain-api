@@ -722,6 +722,13 @@ export class AdminTransactionsService {
     return this.one(id);
   }
 
+  /** An owner closes a held Payrep deposit the team returned from the Payrep dashboard. */
+  async markReturned(id: string, note: string, actor: { id: string; role: string }): Promise<TxRow> {
+    if (!this.refunds) throw new ConflictException('Returning naira deposits is not available on this server');
+    await this.refunds.markReturned(id, note, actor);
+    return this.one(id);
+  }
+
   async one(id: string): Promise<TxRow> {
     const found = await this.prisma.transaction.findUnique({
       where: { id },
