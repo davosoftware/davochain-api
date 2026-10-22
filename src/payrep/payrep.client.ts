@@ -15,6 +15,9 @@ const PAGE = 50;
 /** How far back a transfer is looked for by its reference. Payouts and Treasury moves are finished well within this. */
 const STATUS_LOOKBACK_DAYS = 35;
 
+/** Thrown before a request is sent while Payrep's rate limit lasts: nothing reached Payrep. */
+class PausedError extends Error {}
+
 /** A transfer as it appears in Payrep's transaction list. A reversed one counts as failed: the money came back. */
 function listedTransferStatus(item: Obj): StatusAnswer {
   if (item.is_reversed === true) return { kind: 'FOUND', status: 'FAILED' };
@@ -34,6 +37,8 @@ const str = (v: unknown) => (typeof v === 'string' ? v.trim() : v === null || v 
 export class PayrepClient extends PayrepApi {
   protected log: Pick<Logger, 'log' | 'warn'> = new Logger('PayrepClient');
   private token: { value: string; refreshAt: number } | null = null;
+  /** No call goes to Payrep before this time (its rate limit). */
+  private pausedUntil = 0;
   private pending: Promise<string> | null = null;
   private readonly timeoutMs: number;
 
@@ -96,6 +101,8 @@ export class PayrepClient extends PayrepApi {
       const r = await this.post('/transaction/transfer/api/funds_transfer', body);
       return classifyTransfer(r.status, r.body);
     } catch (err) {
+      // Paused before sending: nothing went to Payrep, so this is a clear no and safe to refund.
+      if (err instanceof PausedError) return { kind: 'REFUSED', reason: err.message };
       return { kind: 'UNCLEAR', reason: (err as Error).message };
     }
   }
@@ -136,6 +143,7 @@ export class PayrepClient extends PayrepApi {
     try {
       r = await this.post('/account/api/create_customer_account', body);
     } catch (err) {
+      if (err instanceof PausedError) throw new PayrepError('BUSY', err.message, 429, '94');
       throw new PayrepError('UNCLEAR', (err as Error).message, 0, null);
     }
     const a = classifyCreateAccount<Obj>(r.status, r.body);
@@ -192,6 +200,7 @@ export class PayrepClient extends PayrepApi {
 
   /** One request; on a token problem the token is refreshed and the request resent ONCE. */
   private async post(path: string, body: Obj): Promise<Reply> {
+    this.assertNotPaused();
     let res = await this.send(path, body, await this.bearer());
     if (this.tokenProblem(res)) {
       this.token = null;
@@ -223,7 +232,27 @@ export class PayrepClient extends PayrepApi {
       parsed = undefined;
     }
     this.log.log(`POST ${path} → ${res.statusCode} code ${str((parsed as Obj | undefined)?.response_code) || '-'} in ${Date.now() - started}ms`);
+    if (res.statusCode === 429 || str((parsed as Obj | undefined)?.response_code) === '94') this.pause(str((parsed as Obj | undefined)?.message));
     return { status: res.statusCode, body: parsed };
+  }
+
+  /**
+   * Payrep's rate limit locks our key out for a while (sandbox, 22 Oct 2026: HTTP 429, code 94,
+   * "try again in 600 seconds"). Calling again early only extends it, and while it lasts every
+   * call fails, payouts included. So the whole client stops calling for the time Payrep gives.
+   */
+  private pause(message: string): void {
+    const seconds = Number(/try again in (\d+)\s*second/i.exec(message)?.[1]) || 60;
+    const until = Date.now() + Math.min(seconds, 15 * 60) * 1000;
+    if (until > this.pausedUntil) {
+      this.pausedUntil = until;
+      this.log.warn(`Payrep rate limit reached: no calls for ${Math.round((until - Date.now()) / 1000)}s`);
+    }
+  }
+
+  private assertNotPaused(): void {
+    const left = Math.ceil((this.pausedUntil - Date.now()) / 1000);
+    if (left > 0) throw new PausedError(`Payrep asked us to slow down (rate limit): nothing was sent; calls resume in ${left}s`);
   }
 
   private async bearer(): Promise<string> {

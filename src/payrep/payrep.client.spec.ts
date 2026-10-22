@@ -62,6 +62,67 @@ describe('PayrepClient', () => {
     expect(seen.filter((s) => s.url.endsWith('/fetch_banks')).every((s) => s.headers.authorization === 'Bearer tokM1')).toBe(true);
   });
 
+  describe('Payrep rate limit (sandbox, 22 Oct 2026: HTTP 429, code 94, "try again in 600 seconds")', () => {
+    const limited = (res: ServerResponse, seconds = 600) =>
+      json(res, 429, { status: false, response_code: '94', message: `Too many requests. Please try again in ${seconds} seconds.`, data: null });
+    const calls = (path: string) => seen.filter((s) => s.url.endsWith(path)).length;
+    const xfer = { reference: 'r1', sourceAccountNumber: '1', sourceAccountName: 'X', beneficiaryAccountNumber: '2', beneficiaryAccountName: 'Y', bankCode: '044', bankName: 'B', amount: '1.00', transferType: 'inter' as const, remarks: 'r', sessionId: null };
+
+    it('after a 429 the client stops calling Payrep for the time it asked; reads fail at once as UNCLEAR', async () => {
+      let n = 0;
+      handler = (req, res) => (isToken(req) ? token(res) : ++n === 1 ? limited(res) : json(res, 200, { status: true, response_code: '00', data: [] }));
+      const c = client();
+      await expect(c.banks()).rejects.toMatchObject({ kind: 'UNCLEAR' });
+      await expect(c.banks()).rejects.toMatchObject({ kind: 'UNCLEAR', message: expect.stringMatching(/rate limit|try again/i) });
+      await expect(c.fetchCredits({ startDate: '2026-10-20', endDate: '2026-10-22' })).rejects.toMatchObject({ kind: 'UNCLEAR' });
+      expect((await c.transactionStatus('r1')).kind).toBe('UNCLEAR');
+      expect(calls('/fetch_banks') + calls('/fetch_transactions')).toBe(1);
+    });
+
+    it('a transfer during the pause is NOT sent, so it is a clear no (REFUSED): the customer is refunded at once', async () => {
+      handler = (req, res) => (isToken(req) ? token(res) : limited(res, 60));
+      const c = client();
+      await expect(c.banks()).rejects.toMatchObject({ kind: 'UNCLEAR' });
+      expect(await c.transfer(xfer)).toMatchObject({ kind: 'REFUSED', reason: expect.stringMatching(/nothing was sent/i) });
+      expect(calls('/funds_transfer')).toBe(0);
+    });
+
+    it('opening an account during the pause is BUSY: nothing was sent', async () => {
+      handler = (req, res) => (isToken(req) ? token(res) : limited(res, 60));
+      const c = client();
+      await expect(c.banks()).rejects.toMatchObject({ kind: 'UNCLEAR' });
+      await expect(c.createCustomerAccount({ bvn: '22222222222', poolAccountNumber: '7801234567' })).rejects.toMatchObject({ kind: 'BUSY' });
+      expect(calls('/create_customer_account')).toBe(0);
+    });
+
+    it('a transfer that Payrep itself answers with 429 stays UNCLEAR (never refunded)', async () => {
+      handler = (req, res) => (isToken(req) ? token(res) : limited(res, 60));
+      expect((await client().transfer(xfer)).kind).toBe('UNCLEAR');
+    });
+
+    it('the pause ends: after the time Payrep gave, calls go out again', async () => {
+      let n = 0;
+      handler = (req, res) => (isToken(req) ? token(res) : ++n === 1 ? limited(res, 1) : json(res, 200, { status: true, response_code: '00', data: [] }));
+      const c = client();
+      await expect(c.banks()).rejects.toMatchObject({ kind: 'UNCLEAR' });
+      await new Promise((r) => setTimeout(r, 1100));
+      await expect(c.banks()).resolves.toEqual([]);
+    });
+
+    it('with no time given, it pauses for a minute; a huge time is capped at 15 minutes', async () => {
+      handler = (req, res) => (isToken(req) ? token(res) : json(res, 429, { message: 'slow down' }));
+      const c = client();
+      await expect(c.banks()).rejects.toMatchObject({ kind: 'UNCLEAR' });
+      const until = (c as unknown as { pausedUntil: number }).pausedUntil;
+      expect(until - Date.now()).toBeGreaterThan(55_000);
+      expect(until - Date.now()).toBeLessThanOrEqual(60_000);
+      handler = (req, res) => (isToken(req) ? token(res) : limited(res, 99999));
+      const d = client();
+      await expect(d.banks()).rejects.toMatchObject({ kind: 'UNCLEAR' });
+      expect((d as unknown as { pausedUntil: number }).pausedUntil - Date.now()).toBeLessThanOrEqual(15 * 60_000);
+    });
+  });
+
   it('two calls at once share one token request', async () => {
     let tokens = 0;
     handler = (req, res) => (isToken(req) ? setTimeout(() => token(res, ++tokens), 50) : json(res, 200, { status: true, response_code: '00', data: [] }));

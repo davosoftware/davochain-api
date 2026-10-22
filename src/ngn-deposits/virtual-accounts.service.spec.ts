@@ -161,6 +161,17 @@ describe('VirtualAccountsService.openForUser (Payrep, spec §4)', () => {
     expect(db.rows('virtualAccountRequest')[0].state).toBe('UNKNOWN');
   });
 
+  it('Payrep busy (rate limit, nothing sent): 503 "try later", no 30-minute wait, no alert', async () => {
+    const { svc, db, payrep, alerts } = await setup();
+    jest.spyOn(payrep, 'createCustomerAccount').mockRejectedValueOnce(new PayrepError('BUSY', 'Payrep asked us to slow down; nothing was sent', 429, '94'));
+    const err = await failure(svc.openForUser(USER, { bvn: BVN }));
+    expect(err.getStatus()).toBe(503);
+    expect(err.getResponse()).toMatchObject({ code: 'DEPOSITS_UNAVAILABLE' });
+    expect(db.rows('virtualAccountRequest')[0].state).toBe('IDLE');
+    expect(alerts.raise).not.toHaveBeenCalled();
+    await expect(svc.openForUser(USER, { bvn: BVN })).resolves.toMatchObject({ httpStatus: 201 });
+  });
+
   it('after an unclear answer: ops are alerted, and the BVN is not sent again for 30 minutes (final review I5)', async () => {
     const { svc, db, payrep, alerts } = await setup();
     const create = jest.spyOn(payrep, 'createCustomerAccount').mockRejectedValueOnce(new PayrepError('UNCLEAR', 'timeout', 0, null));

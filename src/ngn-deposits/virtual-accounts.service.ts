@@ -186,6 +186,8 @@ export class VirtualAccountsService {
         });
       } catch (err) {
         lastError = redactIds((err as Error).message).slice(0, 500);
+        // Payrep's rate limit: nothing was sent, so the customer can simply try again later.
+        if (err instanceof PayrepError && err.kind === 'BUSY') throw this.unavailable();
         if (err instanceof PayrepError && err.kind === 'CONFIG') {
           await this.alerts.raise(AlertType.NAIRA_RAIL_CONFIG, 'config', 'Payrep refused to open a deposit account', [lastError]);
           throw this.unavailable();

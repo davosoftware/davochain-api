@@ -5,8 +5,9 @@ import { redactIds } from '../common/redact';
  * REFUSED: Payrep clearly said no; nothing happened.
  * UNCLEAR: we don't know (timeout, 5xx, 80, 99, an odd answer). It may have happened.
  * TOKEN: the bearer token was refused; the client refreshes once.
+ * BUSY: Payrep asked us to slow down (rate limit) and we sent nothing; try again later.
  */
-export type PayrepErrorKind = 'CONFIG' | 'REFUSED' | 'UNCLEAR' | 'TOKEN';
+export type PayrepErrorKind = 'CONFIG' | 'REFUSED' | 'UNCLEAR' | 'TOKEN' | 'BUSY';
 
 export class PayrepError extends Error {
   constructor(
