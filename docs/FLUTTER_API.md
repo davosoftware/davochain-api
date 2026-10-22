@@ -27,7 +27,7 @@ DavoChain moved its naira deposits and payouts from Flutterwave to **Payrep MFB*
 | Change | Where | What the app must do |
 | --- | --- | --- |
 | **Deposit accounts are Payrep accounts:** `bankName` is `"Payrep MFB"`, and the account name starts with DavoChain's business name | 6.4, 6.5 | Show `bankName` and `accountName` exactly as sent. The account is still permanent and the same flow opens it. |
-| **Bank codes in the bank list are 6-digit NIP codes** (Access Bank is `"000014"`, was `"044"`) | 8.5, 8.6, 8.8 | Always take `code` from 8.5. A bank account saved before 21 Oct with a 3-digit code answers `400 "Choose a supported Nigerian bank"` at withdrawal: ask the customer to save it again. |
+| **Bank codes come from Payrep's bank list** (on Payrep's test system: mostly 3-digit, e.g. Access Bank `"044"`; some 6-digit, e.g. Kuda `"090267"`) | 8.5, 8.6, 8.8 | Always take `code` from 8.5 and never type codes into the app. A saved bank account whose code isn't in today's list answers `400 "Choose a supported Nigerian bank"` at withdrawal: ask the customer to save it again. |
 | **`provider` in deposit history is `PAYREP`** for a bank transfer into the naira account | 6.3 | Treat `PAYREP` (and the older `FLUTTERWAVE`) as "bank transfer". |
 | **A deposit into a switched-off account is held** | 6.4 | Nothing to send. It shows as `ON_HOLD` (push `deposit.on_hold`) until an admin reviews it. |
 
@@ -2082,14 +2082,14 @@ Authorization: Bearer eyJhbGciOi…
 **Response** `200`
 ```json
 [
-  { "code": "000014", "name": "Access Bank" },
-  { "code": "000013", "name": "GTBank" }
+  { "code": "044", "name": "Access Bank" },
+  { "code": "090267", "name": "Kuda Bank" }
 ]
 ```
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `code` | string | The bank's 6-digit NIP code. Send as `bankCode` in 8.6 / 8.8 |
+| `code` | string | The bank's code as Payrep lists it (3 or 6 digits). Send it exactly as given as `bankCode` in 8.6 / 8.8 |
 | `name` | string | Display name |
 
 **Errors**
@@ -2115,19 +2115,19 @@ Looks up the **account holder's name** for an account number and bank, so the us
 | Field | Type | Required | Rules | Example |
 | --- | --- | --- | --- | --- |
 | `accountNumber` | string | ✅ | Exactly 10 digits | `"0123456789"` |
-| `bankCode` | string | ✅ | `code` from 8.5, letters/numbers, 1–20 | `"000014"` |
+| `bankCode` | string | ✅ | `code` from 8.5, letters/numbers, 1–20 | `"044"` |
 
 ```http
 POST /v1/withdrawals/ngn/verify-account
 Authorization: Bearer eyJhbGciOi…
 Content-Type: application/json
 
-{ "accountNumber": "0123456789", "bankCode": "000014" }
+{ "accountNumber": "0123456789", "bankCode": "044" }
 ```
 
 **Response** `201`
 ```json
-{ "accountName": "ADA OBI", "accountNumberLast4": "6789", "bankCode": "000014" }
+{ "accountName": "ADA OBI", "accountNumberLast4": "6789", "bankCode": "044" }
 ```
 
 | Field | Type | Description |
@@ -2234,7 +2234,7 @@ Withdrawals go only to a saved account (since 15 Oct 2026). A customer may keep 
 
 | Field | Type | Required | Rules | Example |
 | --- | --- | --- | --- | --- |
-| `bankCode` | string | ✅ | From 8.5 | `"000013"` |
+| `bankCode` | string | ✅ | From 8.5 | `"058"` |
 | `accountNumber` | string | ✅ | Exactly 10 digits | `"0123451234"` |
 | `nickname` | string | — | Max 40 | `"Salary"` |
 | `password` | string | ✅ | The customer's password. Never stored. | |
@@ -2243,7 +2243,7 @@ Withdrawals go only to a saved account (since 15 Oct 2026). A customer may keep 
 ```json
 {
   "id": "b81d4f2a-6c3e-4a9b-8d1f-5e0c7a2b9d36",
-  "bankCode": "000013",
+  "bankCode": "058",
   "bankName": "GTBank",
   "accountNumberMasked": "******1234",
   "accountName": "ADA OKAFOR",
