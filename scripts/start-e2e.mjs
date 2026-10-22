@@ -6,6 +6,9 @@
  *
  *   npm run start:e2e              (port 3000, the default the tests use)
  *   npm run start:e2e -- 3001      (another port; then run the tests with API_URL)
+ *   npm run start:e2e -- 3001 --payrep-sandbox
+ *                                  (the same, but naira goes to Payrep's real SANDBOX, using the
+ *                                   PAYREP_* keys in api/.env; everything else stays mocked)
  *
  * Works the same in PowerShell, cmd and Bash, because the settings are set here
  * rather than with shell syntax. Refuses to run with NODE_ENV=production.
@@ -15,7 +18,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
-const port = process.argv[2] ?? process.env.PORT ?? '3000';
+const args = process.argv.slice(2);
+const payrepSandbox = args.includes('--payrep-sandbox');
+const port = args.find((a) => /^\d+$/.test(a)) ?? process.env.PORT ?? '3000';
 
 if (process.env.NODE_ENV === 'production') {
   console.error('Refusing: start:e2e mocks every provider and must never run in production.');
@@ -29,8 +34,10 @@ const testSettings = {
   // Advanced checks (spec 2026-10-21) on the Dojah mock.
   KYC_ADVANCED_ENABLED: 'true',
   QUIDAX_USE_MOCK: 'true',
-  PAYREP_USE_MOCK: 'true',
-  // Naira deposit accounts on the pretend Payrep.
+  // The pretend Payrep, unless --payrep-sandbox: then the real sandbox (never the live system:
+  // env validation refuses live keys outside production).
+  PAYREP_USE_MOCK: payrepSandbox ? 'false' : 'true',
+  // Naira deposit accounts on.
   NGN_DEPOSITS_ENABLED: 'true',
   // Files go to the in-memory store, never the real R2 bucket.
   STORAGE_DRIVER: 'memory',
