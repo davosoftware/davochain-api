@@ -73,8 +73,11 @@ export function uniquePhone(): string {
   return '+23480' + String(Date.now()).slice(-6) + String(counter).padStart(2, '0');
 }
 
-/** A fresh, unverified user, logged in. */
-export async function newUser(firstName = 'E2e', lastName = 'Tester'): Promise<TestUser> {
+/**
+ * A fresh user with no KYC, logged in. Their email is confirmed (H9) unless
+ * `verifyEmail: false`: the gate reads the database, so the token stays good.
+ */
+export async function newUser(firstName = 'E2e', lastName = 'Tester', opts: { verifyEmail?: boolean } = {}): Promise<TestUser> {
   const email = `e2e-${randomUUID().slice(0, 12)}@davochain.invalid`;
   const password = `E2e-${randomUUID().slice(0, 10)}-9`;
   const phone = uniquePhone();
@@ -85,7 +88,14 @@ export async function newUser(firstName = 'E2e', lastName = 'Tester'): Promise<T
         'If this is 429, the server is not in test mode: stop it and start it with `npm run start:e2e` (test/e2e/README.md).',
     );
   }
-  return { id: r.body.userId, email, password, phone, token: r.body.accessToken, refreshToken: r.body.refreshToken };
+  const user = { id: r.body.userId, email, password, phone, token: r.body.accessToken, refreshToken: r.body.refreshToken };
+  if (opts.verifyEmail !== false) verifyEmail(user);
+  return user;
+}
+
+/** Confirm the email through the development-only script (refuses in production). */
+export function verifyEmail(user: { email: string }): void {
+  execSync(`node scripts/dev-verify-email.mjs --email ${user.email}`, { cwd: join(__dirname, '..', '..'), stdio: 'ignore' });
 }
 
 export async function login(user: TestUser): Promise<TestUser> {

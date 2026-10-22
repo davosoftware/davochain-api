@@ -20,6 +20,17 @@
    - **Integration notes:** UX rules and gotchas
 3. Use **Part 2, Appendices** for push notifications, enum values, ready-made Dart code, testing on the local backend, and known limitations.
 
+## What changed for the app (22 October 2026): confirm email
+
+New customers must **confirm their email address** before money moves. After sign-up we email a six-digit code. Until they enter it, they can sign in and look around, but they cannot deposit, withdraw, trade, sell gift cards, start verification (KYC) or open a naira deposit account.
+
+| Change | Where | What the app must do |
+| --- | --- | --- |
+| **Two new routes:** send the code again, and confirm the code | 2.9, 2.10 | After sign-up, show "Enter the code we emailed you" (the customer may skip it). Add a "Send again" button that calls 2.9. |
+| **New 403 `code: "EMAIL_NOT_VERIFIED"`** on money, KYC and naira-account routes | 0.4 | Whenever you get it, open the "Enter the code" screen. Show `message` as-is (it names the masked email). |
+| **`emailVerified` in the profile** | 3.1 | `false` → show a banner "Confirm your email" that opens the code screen. |
+| Customers who signed up before 22 October | - | Already counted as confirmed. Nothing to do. |
+
 ## What changed for the app (21 October 2026): Payrep is the naira provider
 
 DavoChain moved its naira deposits and payouts from Flutterwave to **Payrep MFB**. No request body changes; some values the app shows do.
@@ -103,7 +114,7 @@ Admins now decide, on one screen, what people at each level may do: **None** (no
 | # | Area | Endpoints |
 | --- | --- | --- |
 | 1 | [Health](#1-health) | 1.1 Server health |
-| 2 | [Authentication](#2-authentication) | 2.1 Register · 2.2 Log in · 2.3 Refresh token · 2.4 Log out · 2.5 Change password · 2.6 Request reset code · 2.7 Reset password · 2.8 Who am I (token) |
+| 2 | [Authentication](#2-authentication) | 2.1 Register · 2.2 Log in · 2.3 Refresh token · 2.4 Log out · 2.5 Change password · 2.6 Request reset code · 2.7 Reset password · 2.8 Who am I (token) · 2.9 Send email code · 2.10 Confirm email |
 | 3 | [Profile & wallets](#3-profile--wallets) | 3.1 Get profile · 3.2 Get wallet balances |
 | 4 | [KYC](#4-kyc-identity-verification) | 4.1 Get KYC status · 4.2 Basic verification · 4.3 Upload a document · 4.4 States and LGAs · 4.5 Basic screen flow · 4.6 Advanced verification |
 | 5 | [Assets](#5-assets--networks) | 5.1 List coins · 5.2 List a coin's networks |
@@ -182,6 +193,7 @@ In development you can try every endpoint in the browser at `http://<host>/docs`
 { "message": "Verification required before you can do this", "requiredTier": "TIER_1", "currentTier": "TIER_0", "kycStatus": "NOT_STARTED" }
 { "code": "VERIFICATION_PENDING", "message": "Your verification is still being completed." }
 { "code": "ACCOUNT_UNDER_REVIEW", "message": "Your account is under review. Contact support." }
+{ "statusCode": 403, "code": "EMAIL_NOT_VERIFIED", "message": "Confirm your email address first. We sent a code to a**@example.com." }
 { "statusCode": 503, "code": "MAINTENANCE", "message": "<the admin's maintenance message>" }
 ```
 
@@ -193,7 +205,7 @@ In development you can try every endpoint in the browser at `http://<host>/docs`
 | --- | --- | --- |
 | 400 | Request rejected. **Nothing moved.** | Show `message` |
 | 401 | Token missing, expired or invalid ("Missing bearer token" / "Invalid or expired token") | Refresh the token once and retry (§0.5), **except** on the auth routes listed in §0.5 |
-| 403 | Not allowed: KYC too low, account suspended or closed, feature paused or off | If the body has `requiredTier`, open the verification screen. If `code`, the blocked-account screen. Otherwise show `message`. |
+| 403 | Not allowed: email not confirmed, KYC too low, account suspended or closed, feature paused or off | If `code` is `EMAIL_NOT_VERIFIED`, open the "Enter the code" screen (2.10). If the body has `requiredTier`, open the verification screen. If another `code`, the blocked-account screen. Otherwise show `message`. |
 | 404 | Not found, or not yours (the API doesn't tell you which) | Show `message` |
 | 409 | Conflict (see each endpoint) | See each endpoint |
 | 413 | Request body too large (1 MB normally; 36 MB for 9.3; a 10 MB file for 4.3) | Show `message`; make the photo or file smaller |
@@ -214,6 +226,8 @@ Every endpoint has a request limit. Going over it returns **`429`** with a `Retr
 | 2.7 Reset password | 20 per hour | IP address |
 | 2.3 Refresh token | 60 per minute | IP address |
 | 2.5 Change password | 5 per hour | Signed-in user |
+| 2.9 Send email code | 20 per hour · 5 per hour | IP address · signed-in user |
+| 2.10 Confirm email | 30 per hour · 10 per hour | IP address · signed-in user |
 | 4.2 Basic verification | 5 per hour | Signed-in user |
 | Public endpoints (1.1, 5.1, 5.2, 9.1, 9.2, 10.1, 13.x) | 120 per minute | IP address |
 | Everything else | 300 per minute | Signed-in user |
@@ -712,6 +726,68 @@ Authorization: Bearer eyJhbGciOi…
 
 ---
 
+### 2.9 Send the email code (again)
+
+**Endpoint:** `POST /v1/auth/email/send-code` · **Auth:** **Bearer** · **KYC:** none · **Success:** `200`
+
+**What it does**
+Emails a new six-digit code that confirms the customer's email address. Sign-up already sends one, so the app only calls this for "Send again". A code lasts **10 minutes**. Asking again within a minute sends nothing new (the last code still works).
+
+**Request**
+```http
+POST /v1/auth/email/send-code
+Authorization: Bearer eyJhbGciOi…
+```
+
+**Response** `200`
+```json
+{ "sent": true }
+```
+If the email is already confirmed: `{ "sent": true, "alreadyVerified": true }` and nothing is emailed. Close the code screen.
+
+**Errors:** `429` (rate limit, §0.4.1).
+
+---
+
+### 2.10 Confirm the email
+
+**Endpoint:** `POST /v1/auth/email/verify` · **Auth:** **Bearer** · **KYC:** none · **Success:** `200`
+
+**What it does**
+Checks the code. If it is right, the email is confirmed and money routes open at once (no new sign-in needed).
+
+**Request**
+```http
+POST /v1/auth/email/verify
+Authorization: Bearer eyJhbGciOi…
+Content-Type: application/json
+
+{ "code": "123456" }
+```
+
+| Field | Type | Required | Rules |
+| --- | --- | --- | --- |
+| `code` | string | yes | exactly 6 digits |
+
+**Response** `200`
+```json
+{ "verified": true }
+```
+
+**Errors** (all `400`, show `message` as-is)
+- `"That code is not right. N tries left."`
+- `"Too many wrong codes. Ask for a new one."` (after 5 wrong tries: call 2.9)
+- `"That code has expired. Ask for a new one."`
+- No code waiting, or already used: ask for a new one.
+
+**Screen flow**
+1. After sign-up (2.1), show "Enter the code we emailed to …" with a **Skip** link and a **Send again** button (2.9).
+2. If the customer skips, show a "Confirm your email" banner while `emailVerified` (3.1) is `false`.
+3. Any `403` with `code: "EMAIL_NOT_VERIFIED"` opens the same screen.
+4. On `{ "verified": true }`, refresh the profile (3.1) and go back to what they were doing.
+
+---
+
 ## 3. Profile & wallets
 
 ### 3.1 Get profile
@@ -743,6 +819,7 @@ Authorization: Bearer eyJhbGciOi…
     "submittedAt": "2026-10-01T08:00:00.000Z"
   },
   "walletReady": true,
+  "emailVerified": true,
   "createdAt": "2026-09-30T12:00:00.000Z"
 }
 ```
@@ -759,6 +836,7 @@ Authorization: Bearer eyJhbGciOi…
 | `kyc.rejectionReason` | string \| null | Why KYC was rejected (show it) |
 | `kyc.submittedAt` | string \| null | When KYC was last submitted |
 | `walletReady` | boolean | `false` while the crypto wallet is still being set up (usually seconds after signup) |
+| `emailVerified` | boolean | `false` until the customer enters the emailed code (2.10). Money routes answer `403 EMAIL_NOT_VERIFIED` until then. |
 | `createdAt` | string | Signup date |
 
 **Integration notes**

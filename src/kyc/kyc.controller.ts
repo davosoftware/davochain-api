@@ -13,6 +13,7 @@ import { Public } from '../auth/public.decorator';
 import { RateLimit } from '../rate-limit/rate-limit.decorator';
 import { NG_STATES } from './ng-states';
 import { PausedDuringMaintenance } from '../common/maintenance.guard';
+import { RequiresVerifiedEmail } from '../levels/requires-action.decorator';
 
 /** A letter first, then letters, accents, apostrophes, spaces, dots and hyphens. */
 const NAME = /^[\p{L}][\p{L}\p{M}' .-]{0,59}$/u;
@@ -80,6 +81,7 @@ export class KycController {
 
   /** Basic verification (spec §11). Off until KYC_BASIC_ENABLED and readiness are green. */
   @PausedDuringMaintenance()
+  @RequiresVerifiedEmail()
   @Post('basic')
   @RateLimit('kyc.basic')
   submitBasic(@CurrentUser('sub') userId: string, @Body() dto: SubmitBasicDto) {
@@ -88,6 +90,7 @@ export class KycController {
 
   /** Advanced Step A (spec 2026-10-21 §4.1): ID + selfie. 202: the checks run in the background; poll GET /v1/kyc. */
   @PausedDuringMaintenance()
+  @RequiresVerifiedEmail()
   @Post('advanced/identity')
   @HttpCode(202)
   @RateLimit('kyc.advanced')
@@ -97,6 +100,7 @@ export class KycController {
 
   /** Advanced Step B (spec §4.2): ONE proof-of-address document of the customer's choice. */
   @PausedDuringMaintenance()
+  @RequiresVerifiedEmail()
   @Post('advanced/address')
   @HttpCode(202)
   @RateLimit('kyc.advanced')
@@ -119,6 +123,7 @@ export class KycController {
    */
   @PausedDuringMaintenance()
   @RateLimit('kyc.documents')
+  @RequiresVerifiedEmail()
   @Post('documents')
   @UseInterceptors(DocumentUploadInterceptor)
   @ApiConsumes('multipart/form-data')

@@ -5,6 +5,7 @@ import { IsOptional, IsString, Matches } from 'class-validator';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { VirtualAccountsService } from './virtual-accounts.service';
 import { PausedDuringMaintenance } from '../common/maintenance.guard';
+import { RequiresVerifiedEmail } from '../levels/requires-action.decorator';
 
 /** Exactly one of the two; the service enforces "exactly one". Messages never echo the value. */
 export class OpenNgnAccountDto {
@@ -26,6 +27,7 @@ export class VirtualAccountsController {
 
   /** 201 created, 200 already had one, 202 Payrep has not confirmed yet. */
   @PausedDuringMaintenance()
+  @RequiresVerifiedEmail()
   @Post('account')
   async open(
     @CurrentUser('sub') userId: string,

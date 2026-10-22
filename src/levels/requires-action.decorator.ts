@@ -8,3 +8,11 @@ export const REQUIRED_ACTION_KEY = 'requiredAction';
  * of the stored quote named by body.quoteId).
  */
 export const RequiresAction = (action: PolicyAction | 'QUOTE_SIDE') => SetMetadata(REQUIRED_ACTION_KEY, action);
+
+export const REQUIRED_EMAIL_KEY = 'requiredVerifiedEmail';
+/**
+ * H9: the route needs a confirmed email and nothing else (KYC submissions,
+ * opening a naira deposit account). @RequiresAction and @RequiresKyc routes
+ * need a confirmed email too, so they don't also need this.
+ */
+export const RequiresVerifiedEmail = () => SetMetadata(REQUIRED_EMAIL_KEY, true);

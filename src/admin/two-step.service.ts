@@ -19,6 +19,7 @@ import { recordFailedLogin } from '../auth/failed-logins';
 import { AdminOtpService, CodeCooldownError } from './otp.service';
 import { AdminSessionsService } from './sessions.service';
 import { WRONG_PASSWORD_MESSAGE } from './ngn-withdrawals.service';
+import { maskEmail } from '../common/mask-email';
 
 /** System flag: an owner requires two-step sign-in for every admin. */
 export const TWO_STEP_REQUIRED_FLAG = 'admin_two_step_required';
@@ -40,11 +41,7 @@ const sameHash = (a: string, b: string) => {
   return x.length === y.length && timingSafeEqual(x, y);
 };
 
-/** "ada@davochain.test" → "a**@davochain.test": enough to recognise, not to harvest. */
-export function maskEmail(email: string): string {
-  const [local, domain] = email.split('@');
-  return `${local.slice(0, 1)}${'*'.repeat(Math.max(1, local.length - 1))}@${domain}`;
-}
+export { maskEmail };
 
 /**
  * Admin two-step sign-in (M7, spec docs/superpowers/specs/2026-10-20-admin-two-step-design.md).

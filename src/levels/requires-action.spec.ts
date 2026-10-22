@@ -14,12 +14,12 @@ function guard(user: Record<string, unknown>, rules: Array<{ level: PolicyLevel;
     rulesFor: jest.fn(async (level: PolicyLevel) => rules.filter((r) => r.level === level)),
     allRules: jest.fn(async () => rules),
   };
-  const g = new KycGuard(reflector, prisma as never, policy as never);
+  const g = new KycGuard(reflector, prisma as never, policy as never, { get: () => true } as never);
   const ctx = { getHandler: () => null, getClass: () => null, switchToHttp: () => ({ getRequest: () => ({ user: { sub: 'u1' }, body }) }) } as never;
   return () => g.canActivate(ctx);
 }
-const basicUser = { status: UserStatus.ACTIVE, kycTier: KycTier.TIER_1, kycStatus: KycStatus.APPROVED, amlStatus: 'CLEAR' };
-const noneUser = { status: UserStatus.ACTIVE, kycTier: KycTier.TIER_0, kycStatus: KycStatus.NOT_STARTED, amlStatus: 'NOT_SCREENED' };
+const basicUser = { status: UserStatus.ACTIVE, kycTier: KycTier.TIER_1, kycStatus: KycStatus.APPROVED, amlStatus: 'CLEAR', emailVerifiedAt: new Date() };
+const noneUser = { status: UserStatus.ACTIVE, kycTier: KycTier.TIER_0, kycStatus: KycStatus.NOT_STARTED, amlStatus: 'NOT_SCREENED', emailVerifiedAt: new Date() };
 const allow = (level: PolicyLevel, action: PolicyAction) => ({ level, action, allowed: true });
 
 describe('@RequiresAction: the admin rules decide', () => {

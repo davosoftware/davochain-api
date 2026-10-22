@@ -15,7 +15,8 @@ import { IS_PUBLIC_KEY } from './public.decorator';
 import type { JwtPayload } from './auth.service';
 import { LevelPolicyService } from '../levels/level-policy.service';
 import { ACTIONS, LEVEL_TITLES, levelOf, lowestLevelAllowing, tierFor } from '../levels/levels';
-import { REQUIRED_ACTION_KEY } from '../levels/requires-action.decorator';
+import { REQUIRED_ACTION_KEY, REQUIRED_EMAIL_KEY } from '../levels/requires-action.decorator';
+import { maskEmail } from '../common/mask-email';
 
 /**
  * Auth is on by default across the whole API — a route opts OUT with @Public().
@@ -95,27 +96,26 @@ export class KycGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly prisma: PrismaService,
     private readonly policy: LevelPolicyService,
+    private readonly config: ConfigService,
   ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
-    const action = this.reflector.getAllAndOverride<PolicyAction | 'QUOTE_SIDE'>(REQUIRED_ACTION_KEY, [ctx.getHandler(), ctx.getClass()]);
+    const targets = [ctx.getHandler(), ctx.getClass()];
+    const action = this.reflector.getAllAndOverride<PolicyAction | 'QUOTE_SIDE'>(REQUIRED_ACTION_KEY, targets);
     if (action) return this.byAdminRules(ctx, action);
 
-    const required = this.reflector.getAllAndOverride<KycTier>(REQUIRED_TIER_KEY, [
-      ctx.getHandler(),
-      ctx.getClass(),
-    ]);
-    if (!required) return true;
+    const required = this.reflector.getAllAndOverride<KycTier>(REQUIRED_TIER_KEY, targets);
+    const emailOnly = this.reflector.getAllAndOverride<boolean>(REQUIRED_EMAIL_KEY, targets);
+    if (!required && !emailOnly) return true;
 
     const req = ctx.switchToHttp().getRequest<{ user?: JwtPayload }>();
     if (!req.user) throw new UnauthorizedException();
 
-    const u = await this.prisma.user.findUnique({
-      where: { id: req.user.sub },
-      select: { status: true, kycTier: true, kycStatus: true, amlStatus: true },
-    });
+    const u = await this.findUser(req.user.sub);
     const review = () => new ForbiddenException({ message: GATE_REVIEW, code: 'ACCOUNT_UNDER_REVIEW' });
     if (!u || u.status !== UserStatus.ACTIVE) throw review();
+    this.assertEmailConfirmed(u);
+    if (!required) return true;
     if (u.amlStatus === 'BLOCKED' || u.amlStatus === 'RESTRICTED' || u.amlStatus === 'UNDER_REVIEW') throw review();
     if (u.kycStatus !== KycStatus.APPROVED || TIER_ORDER[u.kycTier] < TIER_ORDER[required] || u.amlStatus === 'NOT_SCREENED') {
       // The fields the app opens the verification screen on (FLUTTER_API.md §1).
@@ -125,16 +125,32 @@ export class KycGuard implements CanActivate {
     return true;
   }
 
+  /** One query for everything the gates read. */
+  private findUser(id: string) {
+    return this.prisma.user.findUnique({
+      where: { id },
+      select: { status: true, kycTier: true, kycStatus: true, amlStatus: true, email: true, emailVerifiedAt: true },
+    });
+  }
+
+  /** H9: money and verification wait until the customer proves the inbox is theirs. */
+  private assertEmailConfirmed(u: { email: string; emailVerifiedAt: Date | null }): void {
+    if (u.emailVerifiedAt || this.config.get<boolean>('EMAIL_VERIFICATION_REQUIRED') === false) return;
+    throw new ForbiddenException({
+      statusCode: 403,
+      code: 'EMAIL_NOT_VERIFIED',
+      message: `Confirm your email address first. We sent a code to ${maskEmail(u.email)}.`,
+    });
+  }
+
   /** @RequiresAction: the admin's level rules decide, not a fixed tier (level policy spec §5.3). */
   private async byAdminRules(ctx: ExecutionContext, action: PolicyAction | 'QUOTE_SIDE'): Promise<boolean> {
     const req = ctx.switchToHttp().getRequest<{ user?: JwtPayload; body?: { side?: string; quoteId?: string } }>();
     if (!req.user) throw new UnauthorizedException();
-    const u = await this.prisma.user.findUnique({
-      where: { id: req.user.sub },
-      select: { status: true, kycTier: true, kycStatus: true, amlStatus: true },
-    });
+    const u = await this.findUser(req.user.sub);
     const review = () => new ForbiddenException({ message: GATE_REVIEW, code: 'ACCOUNT_UNDER_REVIEW' });
     if (!u || u.status !== UserStatus.ACTIVE) throw review();
+    this.assertEmailConfirmed(u);
     if (u.amlStatus === 'BLOCKED' || u.amlStatus === 'RESTRICTED' || u.amlStatus === 'UNDER_REVIEW') throw review();
 
     const resolved = action === 'QUOTE_SIDE' ? await this.quoteSide(req.user.sub, req.body) : action;
