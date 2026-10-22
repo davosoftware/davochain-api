@@ -63,6 +63,8 @@ export class MailService {
     subject: string;
     text: string;
     html?: string;
+    /** Inline pictures (the logo), referenced from the HTML as cid:… */
+    attachments?: Array<{ filename: string; content: Buffer; contentType: string; cid: string }>;
     /** Which CMS template produced it, so the log can be read by event. */
     templateKey?: string;
   }): Promise<boolean> {
@@ -90,6 +92,7 @@ export class MailService {
         subject: message.subject,
         text: message.text,
         html: message.html,
+        attachments: message.attachments,
       });
       await this.prisma.emailLog.create({
         data: {

@@ -23,6 +23,7 @@
     "check:r2": "ts-node --transpile-only scripts/check-r2.ts",
     "check:dojah-advanced": "ts-node --transpile-only scripts/check-dojah-advanced.ts",
     "check:payrep": "ts-node --transpile-only scripts/check-payrep.ts",
+    "email:preview": "ts-node --transpile-only scripts/email-preview.ts",
     "smoke": "node scripts/smoke.mjs",
     "setup": "prisma migrate dev --name init && prisma generate && ts-node prisma/seed.ts",
     "stop": "node scripts/free-port.mjs",

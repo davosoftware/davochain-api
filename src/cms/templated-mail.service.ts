@@ -68,6 +68,7 @@ export class TemplatedMailService {
       subject: rendered.subject,
       text: rendered.text,
       html: rendered.html,
+      attachments: rendered.attachments,
       templateKey: message.key,
     });
   }

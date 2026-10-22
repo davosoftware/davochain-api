@@ -301,6 +301,7 @@ export class AdminsService {
         subject: rendered.subject,
         text: rendered.text,
         html: rendered.html,
+        attachments: rendered.attachments,
         templateKey: 'admin.password_changed',
       });
     }
@@ -526,6 +527,7 @@ export class AdminsService {
         subject: rendered.subject,
         text: rendered.text,
         html: rendered.html,
+        attachments: rendered.attachments,
         templateKey: 'admin.invited',
       });
     }

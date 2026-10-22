@@ -11,14 +11,29 @@ import {
 import { fillVariables, variablesUsed } from './markdown';
 import { htmlToText, sanitiseHtml } from './sanitise';
 import { wrapHtml, wrapText, type EmailBrand } from './email-layout';
+import { MONEY_VARIABLES, buildFrame, groupThousands, lagosDate } from './email-frame';
 import { SocialLinksService } from './social-links.service';
 import { MailService } from '../common/mail.service';
+
+export interface EmailAttachment {
+  filename: string;
+  content: Buffer;
+  contentType: string;
+  /** Referenced from the HTML as src="cid:…". */
+  cid: string;
+}
 
 export interface RenderedEmail {
   subject: string;
   text: string;
   html: string;
+  /** The logo, carried inside the email so it shows even when our server can't be reached. */
+  attachments: EmailAttachment[];
 }
+
+const LOGO_CID = 'logo@davochain';
+/** A bigger logo is linked rather than carried, so every email doesn't grow by megabytes. */
+const MAX_INLINE_LOGO_BYTES = 200_000;
 
 /**
  * Turns a stored template into a finished email.
@@ -54,7 +69,7 @@ export class EmailTemplateService {
    * needs a name, an address, a logo and a footer — not the upload validation
    * that comes with them.
    */
-  private async brand(templateKey?: string): Promise<EmailBrand> {
+  private async brand(templateKey?: string): Promise<EmailBrand & { attachments: EmailAttachment[] }> {
     const [row, template, socials] = await Promise.all([
       this.prisma.siteSetting
         .findUnique({
@@ -63,8 +78,10 @@ export class EmailTemplateService {
             companyName: true,
             supportEmail: true,
             address: true,
+            logo: true,
             logoType: true,
             logoUpdatedAt: true,
+            websiteUrl: true,
             emailLegalName: true,
             emailAddressLine: true,
             emailOptInNote: true,
@@ -87,16 +104,28 @@ export class EmailTemplateService {
     const companyName = row?.companyName ?? 'Davochain';
     const base = this.base();
 
+    // The logo travels inside the email (decision 22 Oct 2026): it shows even when
+    // the email was sent from a laptop, or our server is down, or images are proxied.
+    const logoBytes = row?.logo ? Buffer.from(row.logo) : null;
+    const inline = Boolean(logoBytes && row?.logoType && logoBytes.length <= MAX_INLINE_LOGO_BYTES);
+    const attachments: EmailAttachment[] = inline
+      ? [{ filename: `logo.${(row!.logoType ?? 'image/png').split('/')[1] ?? 'png'}`, content: logoBytes!, contentType: row!.logoType!, cid: LOGO_CID }]
+      : [];
+
     return {
       companyName,
       supportEmail: row?.supportEmail ?? 'support@davochain.com',
       address: row?.address ?? null,
 
-      // Absolute, always. A relative src resolves against the mail client's own
-      // domain, so the logo silently never appears.
-      logoUrl: row?.logoType
-        ? `${base}/v1/site/logo?v=${row.logoUpdatedAt ? row.logoUpdatedAt.getTime() : 0}`
-        : null,
+      // Inside the email when small enough; otherwise linked, absolutely (a relative
+      // src resolves against the mail client's own domain and never appears).
+      logoSrc: inline
+        ? `cid:${LOGO_CID}`
+        : row?.logoType
+          ? `${base}/v1/site/logo?v=${row.logoUpdatedAt ? row.logoUpdatedAt.getTime() : 0}`
+          : null,
+      websiteUrl: (row?.websiteUrl ?? 'https://davochain.com').replace(/\/+$/, ''),
+      attachments,
       imageUrl:
         templateKey && template?.imageType
           ? `${base}/v1/site/email-image/${encodeURIComponent(templateKey)}?v=${template.imageUpdatedAt ? template.imageUpdatedAt.getTime() : 0}`
@@ -169,12 +198,7 @@ export class EmailTemplateService {
     if (!current.isActive && !options.ignoreActive) return null;
 
     const brand = await this.brand(key);
-    const values: Record<string, string | null | undefined> = {
-      companyName: brand.companyName,
-      supportEmail: brand.supportEmail,
-      year: String(new Date().getFullYear()),
-      ...variables,
-    };
+    const values = this.values(brand, variables);
 
     const subject = fillVariables(current.subject, values).replace(/\s+/g, ' ').trim();
     /*
@@ -186,12 +210,34 @@ export class EmailTemplateService {
      * placeholder can smuggle a tag into an email.
      */
     const filled = sanitiseHtml(fillVariables(current.body, values));
+    const frame = buildFrame(current.def.frame, values);
 
     return {
       subject,
-      text: wrapText(htmlToText(filled), brand),
-      html: wrapHtml(filled, brand),
+      text: wrapText(htmlToText(filled), brand, frame),
+      html: wrapHtml(filled, brand, frame),
+      attachments: brand.attachments,
     };
+  }
+
+  /**
+   * Everything a template can fill in: the shared values, the caller's, today's
+   * date and the website, with money shown with thousands separators.
+   */
+  private values(brand: EmailBrand, variables: Record<string, string | null | undefined>): Record<string, string | null | undefined> {
+    const values: Record<string, string | null | undefined> = {
+      companyName: brand.companyName,
+      supportEmail: brand.supportEmail,
+      websiteUrl: brand.websiteUrl,
+      year: String(new Date().getFullYear()),
+      date: lagosDate(),
+      ...variables,
+    };
+    for (const name of MONEY_VARIABLES) {
+      const v = values[name];
+      if (typeof v === 'string') values[name] = groupThousands(v);
+    }
+    return values;
   }
 
   /**
@@ -213,18 +259,15 @@ export class EmailTemplateService {
     const body = input.body ?? current.body;
     const brand = await this.brand(key);
 
-    const values: Record<string, string> = {
-      ...SAMPLE_VALUES,
-      companyName: brand.companyName,
-      supportEmail: brand.supportEmail,
-      year: String(new Date().getFullYear()),
-    };
+    const values = this.values(brand, { ...SAMPLE_VALUES, ...current.def.samples });
 
     const filled = sanitiseHtml(fillVariables(body, values));
+    const frame = buildFrame(current.def.frame, values);
     const rendered: RenderedEmail = {
       subject: fillVariables(subject, values).replace(/\s+/g, ' ').trim(),
-      text: wrapText(htmlToText(filled), brand),
-      html: wrapHtml(filled, brand),
+      text: wrapText(htmlToText(filled), brand, frame),
+      html: wrapHtml(filled, brand, frame),
+      attachments: brand.attachments,
     };
 
     // A placeholder the catalogue does not define is almost always a typo, and
@@ -247,6 +290,7 @@ export class EmailTemplateService {
         subject: `[Test] ${rendered.subject}`,
         text: rendered.text,
         html: rendered.html,
+        attachments: rendered.attachments,
         templateKey: key,
       });
       this.log.log(`Test of ${key} sent to ${to} by ${adminId}: ${sent ? 'ok' : 'not delivered'}`);

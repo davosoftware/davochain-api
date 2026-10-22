@@ -170,6 +170,7 @@ export class AdminOtpService {
         subject: message.subject,
         text: message.text,
         html: message.html,
+        attachments: message.attachments,
         templateKey: isOwnerCopy ? 'admin.password_reset_notice' : TEMPLATE[purpose],
       });
       delivered = delivered || sent;

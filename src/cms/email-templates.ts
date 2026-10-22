@@ -14,6 +14,7 @@
  */
 
 import { renderMarkdown } from './markdown';
+import type { FrameDef } from './email-frame';
 
 /**
  * The defaults below are WRITTEN in Markdown and STORED as HTML.
@@ -24,7 +25,10 @@ import { renderMarkdown } from './markdown';
  * Markdown and converting once, here, keeps the source legible and the output
  * exactly what the editor would have produced.
  */
-const html = (markdown: string): string => renderMarkdown(markdown);
+const SIGN_OFF_MARK = 'SIGNOFFMARKER';
+const html = (markdown: string): string =>
+  // Markdown has no line break inside a paragraph, so the sign-off's two lines are put in after.
+  renderMarkdown(markdown).replace(`<p>${SIGN_OFF_MARK}</p>`, '<p>Thanks,<br />The {{companyName}} team</p>');
 
 export interface EmailTemplateDef {
   key: string;
@@ -40,6 +44,10 @@ export interface EmailTemplateDef {
   pending?: string;
   subject: string;
   body: string;
+  /** The coloured panel, receipt list and button around the words (design approved 22 Oct 2026). Not editable from the dashboard. */
+  frame: FrameDef;
+  /** Sample values for the preview where the shared ones would read wrong (naira amounts, say). */
+  samples?: Record<string, string>;
 }
 
 /** Available to every template, so they are not repeated on each one. */
@@ -52,26 +60,12 @@ export const SHARED_VARIABLES = [
   'year',
 ];
 
+/** "Thanks, / The DavoChain team", on two lines. Receipts end with their list instead. */
 const SIGN_OFF = `
-Thanks,
-The {{companyName}} team`;
+${SIGN_OFF_MARK}`;
 
-/**
- * A one-time code, set out to be read and typed.
- *
- * Written as literal HTML rather than through the Markdown helper because this
- * is the one thing in these emails whose *presentation* is the point: six
- * digits somebody has to copy off a screen, often from a phone, sometimes
- * squinting. Bold body text is not enough. Wide letter-spacing stops 8 and B
- * running together, and a monospace face keeps every digit the same width.
- *
- * An admin can restyle or replace it — it is ordinary content in the editor.
- */
-const codeBlock = (placeholder: string) =>
-  `<p style="text-align:center;margin:22px 0;">` +
-  `<span style="display:inline-block;padding:14px 26px;background:#f1f4f7;border:1px solid #dadee3;` +
-  `border-radius:10px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:30px;` +
-  `font-weight:600;letter-spacing:7px;color:#102c58;">{{${placeholder}}}</span></p>`;
+/** The button on emails that ask someone to act in the app. */
+const NO_BUTTON = false as const;
 
 export const EMAIL_TEMPLATES: EmailTemplateDef[] = [
   // ── account ───────────────────────────────────────────────
@@ -83,12 +77,16 @@ export const EMAIL_TEMPLATES: EmailTemplateDef[] = [
     variables: [],
     sentBy: 'AuthService.register',
     subject: 'Welcome to {{companyName}}',
+    frame: { panel: { kind: 'done', label: 'Welcome', value: 'Your account is ready', sub: 'Hi {{firstName}}, glad to have you' } },
     body: html(`Hi {{firstName}},
 
-Your {{companyName}} account is ready.
+Welcome to {{companyName}}. You can buy, sell and swap crypto, sell gift cards
+and move naira, all in one app.
 
-To start buying and selling, you will need to verify your identity — it takes a
-couple of minutes and unlocks trading, deposit addresses and withdrawals.
+**Two quick steps to get going:**
+
+1. Confirm your email with the code we just sent you.
+2. Verify your identity in the app. It takes a couple of minutes.
 
 If you did not create this account, reply to this email and we will close it.
 ${SIGN_OFF}`),
@@ -101,13 +99,14 @@ ${SIGN_OFF}`),
     variables: ['reason'],
     sentBy: 'UsersAdminService.suspend',
     subject: 'Your {{companyName}} account has been suspended',
+    frame: { panel: { kind: 'problem', label: 'Account update', value: 'Your account is suspended' }, button: NO_BUTTON },
     body: html(`Hi {{firstName}},
 
-Your account has been suspended and you will not be able to sign in.
+Your account has been suspended, so you can't sign in for now.
 
 **Reason:** {{reason}}
 
-If you believe this is a mistake, reply to this email or contact
+If you think this is a mistake, reply to this email or write to
 {{supportEmail}} and we will look into it.
 ${SIGN_OFF}`),
   },
@@ -119,9 +118,10 @@ ${SIGN_OFF}`),
     variables: [],
     sentBy: 'UsersAdminService.reinstate',
     subject: 'Your {{companyName}} account is active again',
+    frame: { panel: { kind: 'done', label: 'Account update', value: 'Your account is active again' } },
     body: html(`Hi {{firstName}},
 
-Your account has been reinstated and you can sign in as normal.
+Good news: your account is active again and you can sign in as normal.
 
 Thank you for your patience.
 ${SIGN_OFF}`),
@@ -134,13 +134,13 @@ ${SIGN_OFF}`),
     variables: ['code', 'expiresIn'],
     sentBy: 'AuthService.requestPasswordReset',
     subject: 'Your {{companyName}} password reset code',
-    body:
-      html('Hi {{firstName}},\n\nYour password reset code is:') +
-      codeBlock('code') +
-      html(`It expires in {{expiresIn}}. Enter it in the app to choose a new password.
+    frame: { panel: { kind: 'code', label: 'Password reset code', value: '{{code}}', sub: 'Expires in {{expiresIn}}' }, button: NO_BUTTON },
+    body: html(`Hi {{firstName}},
 
-If you did not ask to reset your password, ignore this email — nothing has
-changed, and nobody can use this code without your inbox.
+Enter the code above in the app to choose a new password.
+
+If you didn't ask to reset your password, ignore this email. Nothing has
+changed, and nobody can use this code without access to your inbox.
 ${SIGN_OFF}`),
   },
   {
@@ -151,12 +151,13 @@ ${SIGN_OFF}`),
     variables: ['code', 'expiresIn'],
     sentBy: 'AuthService.sendEmailCode',
     subject: 'Your {{companyName}} email code',
-    body:
-      html('Hi {{firstName}},\n\nYour code to confirm this email address is:') +
-      codeBlock('code') +
-      html(`It expires in {{expiresIn}}. Enter it in the app.
+    frame: { panel: { kind: 'code', label: 'Your code', value: '{{code}}', sub: 'Expires in {{expiresIn}}' }, button: NO_BUTTON },
+    body: html(`Hi {{firstName}},
 
-If you did not open a {{companyName}} account, ignore this email.
+Enter the code above in the app to confirm your email address. Once it's
+confirmed, deposits, trading and withdrawals open straight away.
+
+Didn't sign up for {{companyName}}? Ignore this email.
 ${SIGN_OFF}`),
   },
   {
@@ -167,13 +168,14 @@ ${SIGN_OFF}`),
     variables: ['changedAt', 'method'],
     sentBy: 'AuthService.changePassword and .resetPassword',
     subject: 'Your {{companyName}} password was changed',
+    frame: { panel: { kind: 'security', label: 'Security notice', value: 'Your password was changed', sub: '{{changedAt}}' } },
     body: html(`Hi {{firstName}},
 
-The password on your account was changed on {{changedAt}} ({{method}}).
-Every device signed in to this account has been signed out.
+The password on your account was changed ({{method}}). For your safety,
+every device signed in to your account has been signed out.
 
-**If this was not you**, contact {{supportEmail}} straight away — somebody else
-may have access to your account.
+**Wasn't you?** Contact {{supportEmail}} straight away: someone else may have
+access to your account.
 ${SIGN_OFF}`),
   },
 
@@ -185,12 +187,13 @@ ${SIGN_OFF}`),
     variables: ['destination'],
     sentBy: 'SavedDestinationsService.addBank and .addCrypto',
     subject: 'A new withdrawal destination was added to your {{companyName}} account',
+    frame: { panel: { kind: 'security', label: 'Security notice', value: 'New withdrawal destination', sub: '{{destination}}' } },
     body: html(`Hi {{firstName}},
 
-A new withdrawal destination was added to your account: **{{destination}}**.
+A new place to withdraw to was saved on your account: **{{destination}}**.
 
-**If this was not you**, contact {{supportEmail}} straight away and change your
-password — somebody else may have access to your account.
+**Wasn't you?** Contact {{supportEmail}} straight away and change your
+password: someone else may have access to your account.
 ${SIGN_OFF}`),
   },
   {
@@ -201,14 +204,15 @@ ${SIGN_OFF}`),
     variables: ['destination', 'reason'],
     sentBy: 'Admin: remove a saved destination',
     subject: 'A saved withdrawal destination was removed',
+    frame: { panel: { kind: 'security', label: 'Account update', value: 'Withdrawal destination removed', sub: '{{destination}}' } },
     body: html(`Hi {{firstName}},
 
 Our team removed a saved withdrawal destination from your account:
 **{{destination}}**.
 
-Reason: {{reason}}
+**Reason:** {{reason}}
 
-If you have questions, contact {{supportEmail}}.
+Questions? Write to {{supportEmail}}.
 ${SIGN_OFF}`),
   },
 
@@ -221,12 +225,13 @@ ${SIGN_OFF}`),
     variables: [],
     sentBy: 'BasicVerificationService.submit',
     subject: 'We have your verification details',
+    frame: { panel: { kind: 'progress', label: 'Verification', value: 'We’re reviewing your details' } },
     body: html(`Hi {{firstName}},
 
-Thanks — we have received your verification details and they are being
-reviewed. You will hear from us as soon as that is done.
+Thanks, we have your verification details. A member of our team is reviewing
+them, and we'll email you as soon as it's done.
 
-You do not need to send anything else in the meantime.
+You don't need to send anything else.
 ${SIGN_OFF}`),
   },
   {
@@ -237,12 +242,13 @@ ${SIGN_OFF}`),
     variables: ['tier'],
     sentBy: 'KycAdminService.approve',
     subject: 'You are verified',
+    frame: { panel: { kind: 'done', label: 'Verification', value: 'You’re verified' } },
     body: html(`Hi {{firstName}},
 
-Your identity has been verified and your account is now **{{tier}}**. Buying,
-selling, swapping and withdrawals are all open to you.
+Your identity has been verified. Buying, selling, swapping and withdrawals are
+now open to you, up to your new limits.
 
-You will need to sign in again for the change to take effect.
+Sign in again in the app for the change to take effect.
 ${SIGN_OFF}`),
   },
   {
@@ -253,14 +259,15 @@ ${SIGN_OFF}`),
     variables: ['reason'],
     sentBy: 'KycAdminService.reject',
     subject: 'We could not verify your details',
+    frame: { panel: { kind: 'problem', label: 'Verification', value: 'We couldn’t verify you yet' } },
     body: html(`Hi {{firstName}},
 
-We were not able to verify the details you sent.
+We weren't able to verify the details you sent.
 
 **Reason:** {{reason}}
 
-You can submit again from the app. If you think this is wrong, contact
-{{supportEmail}} and we will take another look.
+You can try again from the app. If you think this is wrong, write to
+{{supportEmail}} and we'll take another look.
 ${SIGN_OFF}`),
   },
 
@@ -273,18 +280,18 @@ ${SIGN_OFF}`),
     variables: ['assetCode', 'networkLabel', 'address', 'destinationTag'],
     sentBy: 'AddressesService.applyGenerated',
     subject: 'Your {{assetCode}} deposit address is ready',
+    frame: {
+      panel: { kind: 'done', label: 'Deposit address ready', value: '{{assetCode}}', sub: 'on {{networkLabel}}' },
+      details: [['Network', '{{networkLabel}}'], ['Address', '{{address}}'], ['Destination tag', '{{destinationTag}}']],
+      status: false,
+    },
     body: html(`Hi {{firstName}},
 
-Your **{{assetCode}}** deposit address on {{networkLabel}} is ready:
+Your **{{assetCode}}** deposit address is ready. Copy it from the app rather
+than from this email: a single wrong character sends coins to the wrong place.
 
-\`{{address}}\`
-
-Open the app to copy it — reading an address off an email and typing it by hand
-is how coins get sent to the wrong place.
-
-Only send **{{assetCode}}** on **{{networkLabel}}** to this address. Anything
-else is lost on the chain and cannot be recovered by us or by anyone.
-${SIGN_OFF}`),
+**Only send {{assetCode}} on {{networkLabel}}** to this address. Anything else is
+lost and can't be recovered, by us or by anyone.`),
   },
   {
     key: 'deposit.credited',
@@ -294,13 +301,13 @@ ${SIGN_OFF}`),
     variables: ['amount', 'assetCode', 'transactionId'],
     sentBy: 'DepositsService (deposit.successful webhook)',
     subject: '{{amount}} {{assetCode}} added to your wallet',
+    frame: {
+      panel: { kind: 'done', label: 'Deposit received', value: '{{amount}} {{assetCode}}', sub: 'added to your wallet' },
+      details: [['Amount', '{{amount}} {{assetCode}}'], ['Date', '{{date}}'], ['Reference', '{{transactionId}}']],
+    },
     body: html(`Hi {{firstName}},
 
-Your deposit of **{{amount}} {{assetCode}}** has cleared and is available in
-your wallet now.
-
-Reference: {{transactionId}}
-${SIGN_OFF}`),
+Your deposit has cleared and is in your wallet now.`),
   },
   {
     key: 'deposit.on_hold',
@@ -310,15 +317,14 @@ ${SIGN_OFF}`),
     variables: ['amount', 'assetCode', 'transactionId'],
     sentBy: 'DepositsService (deposit.on_hold webhook)',
     subject: 'Your {{assetCode}} deposit is being reviewed',
+    frame: {
+      panel: { kind: 'progress', label: 'Deposit under review', value: '{{amount}} {{assetCode}}', sub: 'a routine check' },
+      details: [['Amount', '{{amount}} {{assetCode}}'], ['Date', '{{date}}'], ['Reference', '{{transactionId}}']],
+    },
     body: html(`Hi {{firstName}},
 
-Your deposit of **{{amount}} {{assetCode}}** is going through a routine check.
-
-Your funds are safe. We will email you again as soon as the review is finished —
-there is nothing you need to do.
-
-Reference: {{transactionId}}
-${SIGN_OFF}`),
+Your deposit is going through a routine check. Your money is safe, and there's
+nothing you need to do. We'll email you as soon as the review is finished.`),
   },
   {
     key: 'deposit.failed',
@@ -328,33 +334,33 @@ ${SIGN_OFF}`),
     variables: ['amount', 'assetCode', 'reason', 'transactionId'],
     sentBy: 'DepositsService (deposit.rejected / failed_aml webhook)',
     subject: 'Your {{assetCode}} deposit could not be completed',
+    frame: {
+      panel: { kind: 'problem', label: 'Deposit not completed', value: '{{amount}} {{assetCode}}' },
+      details: [['Amount', '{{amount}} {{assetCode}}'], ['Reason', '{{reason}}'], ['Date', '{{date}}'], ['Reference', '{{transactionId}}']],
+    },
     body: html(`Hi {{firstName}},
 
-We were not able to complete your deposit of **{{amount}} {{assetCode}}**.
+We weren't able to complete this deposit. The reason is below.
 
-**Reason:** {{reason}}
-
-Contact {{supportEmail}} if you believe this is an error and we will
-investigate.
-
-Reference: {{transactionId}}
-${SIGN_OFF}`),
+If you think this is a mistake, write to {{supportEmail}} with the reference
+and we'll look into it.`),
   },
   {
     key: 'ngn.deposit.credited',
+    samples: { amount: '25000.00' },
     label: 'Naira deposit credited',
     hint: 'Sent when a bank transfer tops up a naira balance.',
     group: 'Deposits',
     variables: ['amount', 'transactionId'],
-    sentBy: 'Naira funding provider',
-    pending: 'No naira funding provider is connected yet, so nothing sends this.',
+    sentBy: 'PayInService (Payrep deposit credited), AdminTransactionsService.release',
     subject: '₦{{amount}} added to your balance',
+    frame: {
+      panel: { kind: 'done', label: 'Deposit received', value: '₦{{amount}}', sub: 'added to your naira balance' },
+      details: [['Amount', '₦{{amount}}'], ['Method', 'Bank transfer'], ['Date', '{{date}}'], ['Reference', '{{transactionId}}']],
+    },
     body: html(`Hi {{firstName}},
 
-We have received **₦{{amount}}** and added it to your naira balance.
-
-Reference: {{transactionId}}
-${SIGN_OFF}`),
+Your bank transfer has arrived and is in your naira balance now.`),
   },
 
   // ── withdrawals ───────────────────────────────────────────
@@ -366,21 +372,17 @@ ${SIGN_OFF}`),
     variables: ['amount', 'assetCode', 'address', 'networkLabel', 'transactionId'],
     sentBy: 'WithdrawalsService.withdrawCrypto',
     subject: 'Withdrawal requested: {{amount}} {{assetCode}}',
+    frame: {
+      panel: { kind: 'progress', label: 'Withdrawal requested', value: '{{amount}} {{assetCode}}', sub: 'on {{networkLabel}}' },
+      details: [['Amount', '{{amount}} {{assetCode}}'], ['Network', '{{networkLabel}}'], ['Address', '{{address}}'], ['Date', '{{date}}'], ['Reference', '{{transactionId}}']],
+    },
     body: html(`Hi {{firstName}},
 
-A withdrawal of **{{amount}} {{assetCode}}** has been requested from your
-account, to this address on {{networkLabel}}:
+We've received your withdrawal request and will email you again when it leaves.
 
-\`{{address}}\`
-
-We will email you again when it leaves.
-
-**If you did not request this**, contact {{supportEmail}} immediately and change
-your password. A withdrawal that has not been sent yet can sometimes be stopped;
-once it is on the chain it cannot.
-
-Reference: {{transactionId}}
-${SIGN_OFF}`),
+**Didn't request this?** Contact {{supportEmail}} immediately and change your
+password. A withdrawal that hasn't been sent can sometimes be stopped; once it's
+on the blockchain it can't.`),
   },
   {
     key: 'withdrawal.sent',
@@ -390,17 +392,15 @@ ${SIGN_OFF}`),
     variables: ['amount', 'assetCode', 'txHash', 'transactionId'],
     sentBy: 'SettlementService (withdrawal.successful webhook)',
     subject: '{{amount}} {{assetCode}} is on its way',
+    frame: {
+      panel: { kind: 'done', label: 'Withdrawal sent', value: '{{amount}} {{assetCode}}', sub: 'on its way' },
+      details: [['Amount', '{{amount}} {{assetCode}}'], ['Transaction hash', '{{txHash}}'], ['Date', '{{date}}'], ['Reference', '{{transactionId}}']],
+    },
     body: html(`Hi {{firstName}},
 
-Your withdrawal of **{{amount}} {{assetCode}}** has been sent.
-
-Transaction hash: \`{{txHash}}\`
-
-You can track it on a block explorer with that hash. How long it takes to
-arrive depends on the network, not on us.
-
-Reference: {{transactionId}}
-${SIGN_OFF}`),
+Your withdrawal has left {{companyName}}. You can follow it on a block explorer
+with the transaction hash below. How long it takes to arrive depends on the
+network.`),
   },
   {
     key: 'withdrawal.rejected',
@@ -410,126 +410,121 @@ ${SIGN_OFF}`),
     variables: ['amount', 'assetCode', 'reason', 'transactionId'],
     sentBy: 'SettlementService (withdrawal.rejected webhook)',
     subject: 'Your {{assetCode}} withdrawal was not sent',
+    frame: {
+      panel: { kind: 'problem', label: 'Withdrawal not sent', value: '{{amount}} {{assetCode}}', sub: 'returned to your wallet' },
+      details: [['Amount', '{{amount}} {{assetCode}}'], ['Reason', '{{reason}}'], ['Date', '{{date}}'], ['Reference', '{{transactionId}}']],
+    },
     body: html(`Hi {{firstName}},
 
-Your withdrawal of **{{amount}} {{assetCode}}** could not be sent, and the
-amount has been returned to your wallet.
-
-**Reason:** {{reason}}
-
-Reference: {{transactionId}}
-${SIGN_OFF}`),
+Your withdrawal couldn't be sent, so the full amount is back in your wallet.
+The reason is below.`),
   },
   {
     key: 'ngn.withdrawal.submitted',
+    samples: { amount: '25000.00', fee: '50.00' },
     label: 'Naira withdrawal requested',
     hint: 'Sent when a naira bank payout is requested, before the provider processes it.',
     group: 'Withdrawals',
     variables: ['amount', 'fee', 'bankName', 'accountNumber', 'transactionId'],
     sentBy: 'WithdrawalsService.withdrawNgn',
     subject: 'Naira withdrawal requested: ₦{{amount}}',
+    frame: {
+      panel: { kind: 'progress', label: 'Withdrawal on its way', value: '₦{{amount}}', sub: 'to {{bankName}} {{accountNumber}}' },
+      details: [['Amount', '₦{{amount}}'], ['Fee', '₦{{fee}}'], ['Bank', '{{bankName}}'], ['Account', '{{accountNumber}}'], ['Date', '{{date}}'], ['Reference', '{{transactionId}}']],
+    },
     body: html(`Hi {{firstName}},
 
-A withdrawal of **₦{{amount}}** has been requested to {{bankName}}
-({{accountNumber}}). A fee of ₦{{fee}} will be charged if it completes.
+We're sending your naira to your bank. We'll email you again when it's paid.
 
-**If you did not request this**, contact {{supportEmail}} immediately.
-
-Reference: {{transactionId}}
-${SIGN_OFF}`),
+**Didn't request this?** Contact {{supportEmail}} immediately.`),
   },
   {
     key: 'ngn.withdrawal.sent',
+    samples: { amount: '25000.00', fee: '50.00' },
     label: 'Naira withdrawal sent',
     hint: 'Sent when a naira cash-out is paid to a bank account.',
     group: 'Withdrawals',
     variables: ['amount', 'fee', 'bankName', 'accountNumber', 'transactionId'],
     sentBy: 'SettlementService (withdraw.successful webhook)',
     subject: '₦{{amount}} sent to your bank',
+    frame: {
+      panel: { kind: 'done', label: 'Withdrawal paid', value: '₦{{amount}}', sub: 'to {{bankName}} {{accountNumber}}' },
+      details: [['Amount', '₦{{amount}}'], ['Fee', '₦{{fee}}'], ['Bank', '{{bankName}}'], ['Account', '{{accountNumber}}'], ['Date', '{{date}}'], ['Reference', '{{transactionId}}']],
+    },
     body: html(`Hi {{firstName}},
 
-**₦{{amount}}** is on its way to {{bankName}} ({{accountNumber}}).
-
-A fee of ₦{{fee}} was charged, so ₦{{amount}} reaches your bank.
-
-Reference: {{transactionId}}
-${SIGN_OFF}`),
+Your withdrawal has been paid to your bank. Most banks show it within minutes.`),
   },
   {
     key: 'ngn.withdrawal.rejected',
+    samples: { amount: '25000.00' },
     label: 'Naira withdrawal rejected',
     hint: 'Sent when a bank payout is rejected and the locked balance is returned.',
     group: 'Withdrawals',
     variables: ['amount', 'bankName', 'accountNumber', 'reason', 'transactionId'],
     sentBy: 'SettlementService (withdraw.rejected webhook)',
     subject: 'Your naira withdrawal was not paid',
+    frame: {
+      panel: { kind: 'problem', label: 'Withdrawal not paid', value: '₦{{amount}}', sub: 'returned to your naira balance' },
+      details: [['Amount', '₦{{amount}}'], ['Bank', '{{bankName}}'], ['Account', '{{accountNumber}}'], ['Reason', '{{reason}}'], ['Date', '{{date}}'], ['Reference', '{{transactionId}}']],
+    },
     body: html(`Hi {{firstName}},
 
-Your withdrawal of **₦{{amount}}** to {{bankName}} ({{accountNumber}}) could
-not be completed. The amount has been returned to your naira balance.
-
-**Reason:** {{reason}}
-
-Reference: {{transactionId}}
-${SIGN_OFF}`),
+Your withdrawal couldn't be paid, so the full amount is back in your naira
+balance. The reason is below.`),
   },
 
   // ── trading ───────────────────────────────────────────────
   {
     key: 'trade.buy.completed',
+    samples: { rate: '144265000.00' },
     label: 'Crypto buy',
     hint: 'Sent when a purchase with naira completes.',
     group: 'Trading',
     variables: ['fromAmount', 'toAmount', 'toAsset', 'rate', 'transactionId'],
     sentBy: 'TradesService / SettlementService on a BUY',
     subject: 'You bought {{toAmount}} {{toAsset}}',
+    frame: {
+      panel: { kind: 'done', label: 'You bought', value: '{{toAmount}} {{toAsset}}', sub: 'for ₦{{fromAmount}}' },
+      details: [['You paid', '₦{{fromAmount}}'], ['You got', '{{toAmount}} {{toAsset}}'], ['Rate', '₦{{rate}} per {{toAsset}}'], ['Date', '{{date}}'], ['Reference', '{{transactionId}}']],
+    },
     body: html(`Hi {{firstName}},
 
-Your purchase is complete.
-
-- **Spent:** ₦{{fromAmount}}
-- **Received:** {{toAmount}} {{toAsset}}
-- **Rate:** ₦{{rate}} per unit
-
-Reference: {{transactionId}}
-${SIGN_OFF}`),
+Your purchase is complete and the {{toAsset}} is in your wallet.`),
   },
   {
     key: 'trade.sell.completed',
+    samples: { fromAmount: '0.0035', fromAsset: 'BTC', toAmount: '505078.00', rate: '144308000.00' },
     label: 'Crypto sell',
     hint: 'Sent when a sale to naira completes.',
     group: 'Trading',
     variables: ['fromAmount', 'fromAsset', 'toAmount', 'rate', 'transactionId'],
     sentBy: 'TradesService / SettlementService on a SELL',
     subject: 'You sold {{fromAmount}} {{fromAsset}}',
+    frame: {
+      panel: { kind: 'done', label: 'You sold', value: '{{fromAmount}} {{fromAsset}}', sub: 'for ₦{{toAmount}}' },
+      details: [['You sold', '{{fromAmount}} {{fromAsset}}'], ['You got', '₦{{toAmount}}'], ['Rate', '₦{{rate}} per {{fromAsset}}'], ['Date', '{{date}}'], ['Reference', '{{transactionId}}']],
+    },
     body: html(`Hi {{firstName}},
 
-Your sale is complete.
-
-- **Sold:** {{fromAmount}} {{fromAsset}}
-- **Received:** ₦{{toAmount}}
-- **Rate:** ₦{{rate}} per unit
-
-Reference: {{transactionId}}
-${SIGN_OFF}`),
+Your sale is complete and the naira is in your balance.`),
   },
   {
     key: 'trade.swap.completed',
+    samples: { fromAmount: '50.00', fromAsset: 'USDT', toAmount: '0.00052', toAsset: 'BTC' },
     label: 'Coin swap',
     hint: 'Sent when a coin-to-coin swap settles.',
     group: 'Trading',
     variables: ['fromAmount', 'fromAsset', 'toAmount', 'toAsset', 'transactionId'],
     sentBy: 'SettlementService on a SWAP',
     subject: 'Your swap to {{toAsset}} is complete',
+    frame: {
+      panel: { kind: 'done', label: 'Swap complete', value: '{{toAmount}} {{toAsset}}', sub: 'from {{fromAmount}} {{fromAsset}}' },
+      details: [['You swapped', '{{fromAmount}} {{fromAsset}}'], ['You got', '{{toAmount}} {{toAsset}}'], ['Date', '{{date}}'], ['Reference', '{{transactionId}}']],
+    },
     body: html(`Hi {{firstName}},
 
-Your swap has settled.
-
-- **From:** {{fromAmount}} {{fromAsset}}
-- **To:** {{toAmount}} {{toAsset}}
-
-Reference: {{transactionId}}
-${SIGN_OFF}`),
+Your swap has settled and the {{toAsset}} is in your wallet.`),
   },
   {
     key: 'trade.failed',
@@ -539,16 +534,14 @@ ${SIGN_OFF}`),
     variables: ['reason', 'transactionId'],
     sentBy: 'SettlementService.reverse',
     subject: 'Your trade could not be completed',
+    frame: {
+      panel: { kind: 'problem', label: 'Trade not completed', value: 'Nothing was deducted' },
+      details: [['Reason', '{{reason}}'], ['Date', '{{date}}'], ['Reference', '{{transactionId}}']],
+    },
     body: html(`Hi {{firstName}},
 
-Your trade did not go through, and **nothing was deducted from your balance**.
-
-**Reason:** {{reason}}
-
-You are welcome to try again — the price will be quoted fresh.
-
-Reference: {{transactionId}}
-${SIGN_OFF}`),
+Your trade didn't go through, and **nothing was taken from your balance**.
+You're welcome to try again; the price will be quoted fresh.`),
   },
 
   // ── admin ─────────────────────────────────────────────────
@@ -560,19 +553,19 @@ ${SIGN_OFF}`),
     variables: ['inviteUrl', 'role', 'invitedBy', 'expiresIn'],
     sentBy: 'AdminsService.createAdmin',
     subject: 'You have been added to the {{companyName}} dashboard',
+    frame: {
+      panel: { kind: 'done', label: 'Admin dashboard', value: 'You’ve been invited', sub: 'as {{role}}' },
+      button: { label: 'Accept the invitation', url: '{{inviteUrl}}' },
+    },
     body: html(`Hi {{firstName}},
 
 {{invitedBy}} has added you to the {{companyName}} admin dashboard as
-**{{role}}**.
+**{{role}}**. Use the button below to set your password.
 
-Set your password to get in:
+The link works once and expires in {{expiresIn}}. If it runs out, use
+**Forgot password** on the sign-in page.
 
-[Set your password]({{inviteUrl}})
-
-The link works once and expires in {{expiresIn}}. If it runs out, use **Forgot
-password** on the sign-in page.
-
-If you were not expecting this, ignore it and tell {{supportEmail}}.
+Not expecting this? Ignore it and tell {{supportEmail}}.
 ${SIGN_OFF}`),
   },
   {
@@ -583,11 +576,11 @@ ${SIGN_OFF}`),
     variables: ['code', 'expiresIn'],
     sentBy: 'OtpService.requestReset',
     subject: 'Your {{companyName}} admin reset code',
-    body:
-      html('Hi {{firstName}},\n\nYour password reset code is:') +
-      codeBlock('code') +
-      html(`It expires in {{expiresIn}}. If you did not ask for it, ignore this email — your
-password has not changed.
+    frame: { panel: { kind: 'code', label: 'Admin reset code', value: '{{code}}', sub: 'Expires in {{expiresIn}}' }, button: NO_BUTTON },
+    body: html(`Hi {{firstName}},
+
+Enter the code above to choose a new admin password. If you didn't ask for it,
+ignore this email: your password hasn't changed.
 ${SIGN_OFF}`),
   },
   {
@@ -598,15 +591,18 @@ ${SIGN_OFF}`),
     variables: ['code', 'expiresIn', 'adminName', 'adminEmail'],
     sentBy: 'OtpService.requestReset',
     subject: 'Password reset requested for {{adminEmail}}',
+    frame: {
+      panel: { kind: 'security', label: 'Owner copy', value: 'Admin password reset', sub: '{{adminName}}' },
+      details: [['Admin', '{{adminName}}'], ['Email', '{{adminEmail}}'], ['Their code', '{{code}}'], ['Valid for', '{{expiresIn}}']],
+      status: false,
+      button: NO_BUTTON,
+    },
     body: html(`Hi {{firstName}},
 
-**{{adminName}}** ({{adminEmail}}) asked to reset their admin password.
+**{{adminName}}** asked to reset their admin password. You're copied because
+they are a sub-admin.
 
-Their code is **{{code}}**, valid for {{expiresIn}}.
-
-You are copied because they are a sub-admin. If they did not ask for this,
-deactivate the account from **Settings → Team** now.
-${SIGN_OFF}`),
+If they didn't ask for this, deactivate the account from **Settings → Team** now.`),
   },
   {
     key: 'admin.login_code',
@@ -616,11 +612,13 @@ ${SIGN_OFF}`),
     variables: ['code', 'expiresIn'],
     sentBy: 'AdminOtpService.issue (LOGIN)',
     subject: 'Your {{companyName}} admin sign-in code',
-    body:
-      html('Hi {{firstName}},\n\nYour sign-in code is:') +
-      codeBlock('code') +
-      html(`It expires in {{expiresIn}}. If you did not just sign in, someone has your password:
-change it now from **Settings**, and tell an owner.
+    frame: { panel: { kind: 'code', label: 'Admin sign-in code', value: '{{code}}', sub: 'Expires in {{expiresIn}}' }, button: NO_BUTTON },
+    body: html(`Hi {{firstName}},
+
+Enter the code above to finish signing in.
+
+If you didn't just sign in, someone has your password: change it now from
+**Settings**, and tell an owner.
 ${SIGN_OFF}`),
   },
   {
@@ -631,10 +629,12 @@ ${SIGN_OFF}`),
     variables: ['code', 'expiresIn'],
     sentBy: 'AdminOtpService.issue (TWO_STEP_CHANGE)',
     subject: 'Confirm your {{companyName}} two-step sign-in change',
-    body:
-      html('Hi {{firstName}},\n\nYour code to change two-step sign-in is:') +
-      codeBlock('code') +
-      html(`It expires in {{expiresIn}}. If you did not ask for this, change your password now and tell an owner.
+    frame: { panel: { kind: 'code', label: 'Two-step change code', value: '{{code}}', sub: 'Expires in {{expiresIn}}' }, button: NO_BUTTON },
+    body: html(`Hi {{firstName}},
+
+Enter the code above to confirm the change to your two-step sign-in.
+
+If you didn't ask for this, change your password now and tell an owner.
 ${SIGN_OFF}`),
   },
   {
@@ -645,12 +645,14 @@ ${SIGN_OFF}`),
     variables: ['left'],
     sentBy: 'AdminAuthController.verifyLogin',
     subject: 'A backup code was used to sign in to {{companyName}} admin',
+    frame: { panel: { kind: 'security', label: 'Security notice', value: 'A backup code was used', sub: '{{left}} left' }, button: NO_BUTTON },
     body: html(`Hi {{firstName}},
 
-One of your two-step backup codes was just used to sign in. You have **{{left}}** left.
+One of your two-step backup codes was just used to sign in. You have
+**{{left}}** left.
 
-If this was not you, change your password now and tell an owner. You can make a new set of
-backup codes from **Settings → Security**.
+If this wasn't you, change your password now and tell an owner. You can make a
+new set of backup codes from **Settings → Security**.
 ${SIGN_OFF}`),
   },
   {
@@ -661,11 +663,13 @@ ${SIGN_OFF}`),
     variables: [],
     sentBy: 'TwoStepService.disable',
     subject: 'Two-step sign-in was switched off for your {{companyName}} admin account',
+    frame: { panel: { kind: 'security', label: 'Security notice', value: 'Two-step sign-in is off' }, button: NO_BUTTON },
     body: html(`Hi {{firstName}},
 
-Two-step sign-in was just switched off for your admin account. Signing in now needs only your password.
+Two-step sign-in was just switched off for your admin account. Signing in now
+needs only your password.
 
-If this was not you, change your password now and tell an owner.
+If this wasn't you, change your password now and tell an owner.
 ${SIGN_OFF}`),
   },
   {
@@ -676,13 +680,14 @@ ${SIGN_OFF}`),
     variables: ['changedAt', 'method'],
     sentBy: 'AdminsService.applyNewPassword',
     subject: 'Your {{companyName}} admin password was changed',
+    frame: { panel: { kind: 'security', label: 'Security notice', value: 'Your admin password was changed', sub: '{{changedAt}}' }, button: NO_BUTTON },
     body: html(`Hi {{firstName}},
 
-The password on your admin account was changed on {{changedAt}} ({{method}}).
-Every other session has been signed out.
+The password on your admin account was changed ({{method}}). Every other
+session has been signed out.
 
-**If this was not you**, contact {{supportEmail}} immediately — an admin account
-can move money.
+**Wasn't you?** Contact {{supportEmail}} immediately: an admin account can move
+money.
 ${SIGN_OFF}`),
   },
 ];
@@ -723,6 +728,10 @@ export const SAMPLE_VALUES: Record<string, string> = {
   role: 'Sub-admin',
   invitedBy: 'Chidi Balogun',
   destination: 'GTBank ••••4471',
+  txHash: '3f1a9c0e5b7d2a4c6e8f0b1d3a5c7e9f1b3d5f7a9c1e3b5d7f9a1c3e5b7d9f1a',
+  adminName: 'Tunde Bello',
+  adminEmail: 'tunde@davochain.com',
+  left: '9',
 };
 
 export const EMAIL_TEMPLATE_KEYS: string[] = EMAIL_TEMPLATES.map((t) => t.key);

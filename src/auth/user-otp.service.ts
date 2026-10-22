@@ -139,6 +139,7 @@ export class UserOtpService {
           subject: rendered.subject,
           text: rendered.text,
           html: rendered.html,
+          attachments: rendered.attachments,
           templateKey: TEMPLATE[purpose],
         })
       : false;

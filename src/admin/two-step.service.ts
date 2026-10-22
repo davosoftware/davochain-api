@@ -318,7 +318,7 @@ export class TwoStepService {
     try {
       const all = { firstName: admin.name.split(' ')[0], ...vars };
       const msg = (await this.templates.render(key, all)) ?? (await this.templates.render(key, all, { ignoreActive: true }));
-      if (msg) await this.mail.send({ to: admin.email, subject: msg.subject, text: msg.text, html: msg.html, templateKey: key });
+      if (msg) await this.mail.send({ to: admin.email, subject: msg.subject, text: msg.text, html: msg.html, attachments: msg.attachments, templateKey: key });
     } catch (err) {
       this.log.warn(`Could not send ${key} to ${admin.email}: ${(err as Error).message}`);
     }
