@@ -1642,6 +1642,8 @@ model AdminInvite {
 /// Why a user was sent a one-time code.
 enum UserOtpPurpose {
   PASSWORD_RESET
+  /// H9: confirms a new customer owns their email address (needed before any money action).
+  EMAIL_VERIFY
 }
 
 /// A six-digit code emailed to a user who cannot sign in.

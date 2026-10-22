@@ -15,8 +15,15 @@ const MAX_ATTEMPTS = 5;
 /** One code at a time, and not a fresh one every second. */
 const RESEND_COOLDOWN_MS = 60_000;
 
+/** Which email each kind of code goes out with. */
+const TEMPLATE: Record<UserOtpPurpose, string> = {
+  [UserOtpPurpose.PASSWORD_RESET]: 'user.password_reset',
+  [UserOtpPurpose.EMAIL_VERIFY]: 'user.email_verify',
+};
+
 /**
- * Password reset for a user who cannot sign in.
+ * Six-digit codes for customers: password reset for a user who cannot sign in,
+ * and (H9) confirming a new customer owns their email address.
  *
  * Mirrors the admin flow, with one deliberate difference: an admin's reset is
  * copied to every owner, because an admin account can move the treasury and the
@@ -52,18 +59,30 @@ export class UserOtpService {
    * same way either way, because a different answer is a way to find out which
    * addresses are registered.
    */
-  async request(email: string): Promise<void> {
+  async request(email: string, purpose: UserOtpPurpose = UserOtpPurpose.PASSWORD_RESET): Promise<void> {
     const user = await this.prisma.user.findUnique({
       where: { email: email.trim().toLowerCase() },
       select: { id: true, email: true, firstName: true, status: true },
     });
+    if (user) await this.send(user, purpose);
+  }
 
+  /** H9: the signed-in customer asks for their email code. */
+  async requestForUser(userId: string, purpose: UserOtpPurpose): Promise<void> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, firstName: true, status: true },
+    });
+    if (user) await this.send(user, purpose);
+  }
+
+  private async send(user: { id: string; email: string; firstName: string; status: UserStatus }, purpose: UserOtpPurpose): Promise<void> {
     // A suspended or closed account gets no code. Resetting a password would
     // not let them in, and sending one implies it might.
-    if (!user || user.status !== UserStatus.ACTIVE) return;
+    if (user.status !== UserStatus.ACTIVE) return;
 
     const recent = await this.prisma.userOtp.findFirst({
-      where: { userId: user.id, purpose: UserOtpPurpose.PASSWORD_RESET, consumedAt: null },
+      where: { userId: user.id, purpose, consumedAt: null },
       orderBy: { createdAt: 'desc' },
     });
     if (recent && Date.now() - recent.createdAt.getTime() < RESEND_COOLDOWN_MS) {
@@ -79,14 +98,14 @@ export class UserOtpService {
     // Supersede anything outstanding: two live codes means a stolen older one
     // still works after somebody asked for a new one.
     await this.prisma.userOtp.updateMany({
-      where: { userId: user.id, purpose: UserOtpPurpose.PASSWORD_RESET, consumedAt: null },
+      where: { userId: user.id, purpose, consumedAt: null },
       data: { consumedAt: new Date() },
     });
 
     await this.prisma.userOtp.create({
       data: {
         userId: user.id,
-        purpose: UserOtpPurpose.PASSWORD_RESET,
+        purpose,
         codeHash: this.hash(code),
         expiresAt: new Date(Date.now() + TTL_MS),
       },
@@ -104,7 +123,7 @@ export class UserOtpService {
      * account, and a dashboard toggle must not be able to silence it.
      */
     const rendered = await this.templates.render(
-      'user.password_reset',
+      TEMPLATE[purpose],
       {
         firstName: user.firstName,
         email: user.email,
@@ -120,14 +139,14 @@ export class UserOtpService {
           subject: rendered.subject,
           text: rendered.text,
           html: rendered.html,
-          templateKey: 'user.password_reset',
+          templateKey: TEMPLATE[purpose],
         })
       : false;
 
     if (!sent && mayLogSecrets()) {
       // Without this no reset can be tested until SMTP exists. Guarded on the
       // environment: a production log is not a place for a live code.
-      this.log.warn(`SMTP not configured — reset code for ${user.email} is ${code}`);
+      this.log.warn(`SMTP not configured — ${purpose === UserOtpPurpose.EMAIL_VERIFY ? 'email' : 'reset'} code for ${user.email} is ${code}`);
     }
   }
 
@@ -137,9 +156,9 @@ export class UserOtpService {
    * Burnt once the attempts run out whether or not it was right, so six digits
    * can never be walked through.
    */
-  async consume(userId: string, code: string): Promise<void> {
+  async consume(userId: string, code: string, purpose: UserOtpPurpose = UserOtpPurpose.PASSWORD_RESET): Promise<void> {
     const otp = await this.prisma.userOtp.findFirst({
-      where: { userId, purpose: UserOtpPurpose.PASSWORD_RESET, consumedAt: null },
+      where: { userId, purpose, consumedAt: null },
       orderBy: { createdAt: 'desc' },
     });
     if (!otp) throw new BadRequestException('That code is not right.');

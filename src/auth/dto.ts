@@ -93,6 +93,13 @@ export class RequestPasswordResetDto {
   email!: string;
 }
 
+/** H9: the six-digit code emailed to confirm the customer's address. */
+export class VerifyEmailDto {
+  @IsString()
+  @Matches(/^[0-9]{6}$/, { message: 'The code is six digits' })
+  code!: string;
+}
+
 export class ResetPasswordDto {
   @IsEmail({}, { message: 'Enter a valid email address' })
   @MaxLength(254)

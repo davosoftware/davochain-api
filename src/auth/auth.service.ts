@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
-import { KycStatus, KycTier, Prisma, UserStatus } from '@prisma/client';
+import { KycStatus, KycTier, Prisma, UserOtpPurpose, UserStatus } from '@prisma/client';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -109,6 +109,12 @@ export class AuthService {
       .catch((err: Error) =>
         this.log.error(`Could not queue provisioning for ${user.id}: ${err.message}`),
       );
+
+    // H9: the code that confirms the email goes out at once. A mail failure never
+    // fails sign-up: the customer can ask for another code from the app.
+    await this.otps
+      .requestForUser(user.id, UserOtpPurpose.EMAIL_VERIFY)
+      .catch((err: Error) => this.log.error(`Could not send the email code for ${user.id}: ${err.message}`));
 
     this.log.log(`Registered ${user.id}`);
 
@@ -344,6 +350,24 @@ export class AuthService {
    * matched an account — a different answer is a way to find out which
    * addresses are registered here.
    */
+  /**
+   * H9: email a six-digit code that confirms the customer owns their address.
+   * Nothing is sent once it is confirmed; one code a minute, as for resets.
+   */
+  async sendEmailCode(userId: string): Promise<{ sent: true; alreadyVerified?: true }> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { emailVerifiedAt: true } });
+    if (user?.emailVerifiedAt) return { sent: true, alreadyVerified: true };
+    await this.otps.requestForUser(userId, UserOtpPurpose.EMAIL_VERIFY);
+    return { sent: true };
+  }
+
+  /** H9: the right code confirms the email (5 tries, 10 minutes, single use). */
+  async verifyEmail(userId: string, code: string): Promise<{ verified: true }> {
+    await this.otps.consume(userId, code, UserOtpPurpose.EMAIL_VERIFY);
+    await this.prisma.user.update({ where: { id: userId }, data: { emailVerifiedAt: new Date() } });
+    return { verified: true };
+  }
+
   async requestPasswordReset(email: string): Promise<void> {
     await this.otps.request(email);
   }

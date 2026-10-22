@@ -8,6 +8,7 @@ import {
   RegisterDto,
   RequestPasswordResetDto,
   ResetPasswordDto,
+  VerifyEmailDto,
 } from './dto';
 import { Public } from './public.decorator';
 import { RateLimit } from '../rate-limit/rate-limit.decorator';
@@ -87,6 +88,22 @@ export class AuthController {
   @HttpCode(204)
   async confirmReset(@Body() dto: ResetPasswordDto): Promise<void> {
     await this.auth.resetPassword(dto.email, dto.code, dto.newPassword);
+  }
+
+  /** H9: email (again) the six-digit code that confirms this customer's address. */
+  @RateLimit('auth.emailCode')
+  @Post('email/send-code')
+  @HttpCode(200)
+  sendEmailCode(@CurrentUser('sub') userId: string) {
+    return this.auth.sendEmailCode(userId);
+  }
+
+  /** H9: the code confirms the address; deposits, withdrawals, trades and verification then open. */
+  @RateLimit('auth.emailVerify')
+  @Post('email/verify')
+  @HttpCode(200)
+  verifyEmail(@CurrentUser('sub') userId: string, @Body() dto: VerifyEmailDto) {
+    return this.auth.verifyEmail(userId, dto.code);
   }
 
   @RateLimit('auth.changePassword')

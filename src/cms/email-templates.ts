@@ -144,6 +144,22 @@ changed, and nobody can use this code without your inbox.
 ${SIGN_OFF}`),
   },
   {
+    key: 'user.email_verify',
+    label: 'Email confirmation code',
+    hint: 'The six-digit code that confirms a new customer owns their email address. Needed before any deposit, withdrawal, trade or verification.',
+    group: 'Account',
+    variables: ['code', 'expiresIn'],
+    sentBy: 'AuthService.sendEmailCode',
+    subject: 'Your {{companyName}} email code',
+    body:
+      html('Hi {{firstName}},\n\nYour code to confirm this email address is:') +
+      codeBlock('code') +
+      html(`It expires in {{expiresIn}}. Enter it in the app.
+
+If you did not open a {{companyName}} account, ignore this email.
+${SIGN_OFF}`),
+  },
+  {
     key: 'user.password_changed',
     label: 'Password changed',
     hint: 'Sent after a password changes, by either route. A security notice, not a courtesy.',

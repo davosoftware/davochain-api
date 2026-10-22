@@ -12,6 +12,8 @@ export const POLICY_NAMES = [
   'auth.register',
   'auth.reset',
   'auth.resetConfirm',
+  'auth.emailCode',
+  'auth.emailVerify',
   'auth.refresh',
   'auth.changePassword',
   'kyc.basic',
@@ -50,6 +52,9 @@ export const DEFAULT_POLICIES: Readonly<Record<PolicyName, Policy>> = {
   'auth.reset': { name: 'auth.reset', limits: { ip: lim(10, H), acct: lim(3, H) }, failClosed: true },
   // acct: guesses at one account's code from many IPs (C5). Routes without an email (invites) skip it.
   'auth.resetConfirm': { name: 'auth.resetConfirm', limits: { ip: lim(20, H), acct: lim(10, H) }, failClosed: true },
+  // H9: each send is an email we pay for; each check is a guess at a six-digit code. Keyed on the signed-in customer.
+  'auth.emailCode': { name: 'auth.emailCode', limits: { ip: lim(20, H), user: lim(5, H) }, failClosed: true },
+  'auth.emailVerify': { name: 'auth.emailVerify', limits: { ip: lim(30, H), user: lim(10, H) }, failClosed: true },
   'auth.refresh': { name: 'auth.refresh', limits: { ip: lim(60, M) }, failClosed: true },
   'auth.changePassword': { name: 'auth.changePassword', limits: { user: lim(5, H) }, failClosed: true },
   // Each submit can buy a paid Dojah lookup; fail closed so a Redis outage cannot open the tap (spec §11).

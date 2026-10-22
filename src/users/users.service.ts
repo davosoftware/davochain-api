@@ -24,6 +24,8 @@ export class UsersService {
       lastName: user.lastName,
       phone: user.phone,
       status: user.status,
+      // H9: false until the emailed code is entered; deposits, withdrawals, trades and verification wait for it.
+      emailVerified: user.emailVerifiedAt !== null,
       kyc: {
         tier: user.kycTier,
         status: user.kycStatus,

@@ -199,6 +199,8 @@ export const envSchema = z
     PAYREP_MAIN_ACCOUNT: z.preprocess(emptyToUndefined, z.string().regex(/^\d{10}$/, 'PAYREP_MAIN_ACCOUNT is a 10-digit account number').optional()),
     PAYREP_WEBHOOK_SECRET: z.preprocess(emptyToUndefined, z.string().regex(/^[0-9a-f]{64}$/i, 'PAYREP_WEBHOOK_SECRET is 64 hexadecimal characters').optional()),
     NGN_DEPOSITS_ENABLED: bool(false),
+    /** H9: customers confirm their email before any money action. Switch off only if email (SMTP) is down. */
+    EMAIL_VERIFICATION_REQUIRED: bool(true),
     /** HMAC key for BVN/NIN hashes. Rotating it means users re-enter their number. */
     KYC_HASH_KEY: z.string().optional(),
     // ── Dojah (identity lookups and AML screening) ──
