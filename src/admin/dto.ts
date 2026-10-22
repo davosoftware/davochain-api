@@ -231,7 +231,7 @@ export class SetAvatarDto {
    * it is sent — which keeps a 40 MB phone photo off the wire entirely and
    * saves the API a resizing dependency.
    */
-  @IsString() @MaxLength(1_000_000) dataUrl!: string;
+  @IsString() @MaxLength(3_000_000) dataUrl!: string;
 }
 
 export class CreateAdminDto {
@@ -321,7 +321,7 @@ export class SiteSettingsDto {
 
 export class SiteLogoDto {
   /** A data URL. Same reasoning as the admin avatar — see SetAvatarDto. */
-  @IsString() @MaxLength(1_500_000) dataUrl!: string;
+  @IsString() @MaxLength(3_000_000) dataUrl!: string;
 }
 
 class LevelRuleDto {

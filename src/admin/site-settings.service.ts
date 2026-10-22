@@ -2,7 +2,8 @@ import { BadRequestException, Injectable, Logger, NotFoundException } from '@nes
 import { PrismaService } from '../prisma/prisma.service';
 
 /** 1 MB. A logo is a few KB; this only stops somebody uploading a poster. */
-const MAX_LOGO_BYTES = 1024 * 1024;
+/** C7: the site logo up to 2 MB. */
+const MAX_LOGO_BYTES = 2 * 1024 * 1024;
 
 /**
  * What a file *is*, not what it claims to be. SVG is accepted here and not for

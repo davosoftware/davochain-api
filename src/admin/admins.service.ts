@@ -33,7 +33,8 @@ export interface InviteResult {
  * 512 KB. The UI downscales to 256px before uploading, so a real avatar lands
  * around 20 KB — this cap only exists to stop a 40 MB camera original.
  */
-const MAX_AVATAR_BYTES = 512 * 1024;
+/** C7: profile pictures up to 2 MB (the request itself may be up to 8 MB, see common/large-body.ts). */
+const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 
 /**
  * What a file *is*, not what it claims to be. A declared content type is

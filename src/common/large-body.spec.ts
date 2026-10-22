@@ -3,10 +3,10 @@ import request from 'supertest';
 import { registerLargeBodyRoutes, LARGE_BODY_BYTES } from './large-body';
 
 /** The order main.ts uses: the large-body route first, then the global 1 MB parser. */
-function app(verify: (token: string) => Promise<boolean>) {
+function app(verify: (token: string) => Promise<boolean>, verifyAdmin: (token: string) => Promise<boolean> = async (t) => t === 'admin-token') {
   const a = express();
   const reached = jest.fn();
-  registerLargeBodyRoutes(a, { prefix: 'v1', verify });
+  registerLargeBodyRoutes(a, { prefix: 'v1', verify, verifyAdmin });
   a.use(express.json({ limit: '1mb' }));
   a.post('/v1/giftcards/trades', (req, res) => {
     reached(JSON.stringify(req.body).length);
@@ -56,6 +56,42 @@ describe('The large-body route (gift-card sale, up to 36 MB)', () => {
     const { a } = app(ok);
     const res = await request(a).post('/v1/other').set('authorization', 'Bearer good-token').set('content-type', 'application/json').send(body(2 * 1024 * 1024));
     expect(res.status).toBe(413);
+  });
+
+  describe('admin pictures (C7): logos, brand images, profile pictures, email images, up to 8 MB', () => {
+    const picture = (bytes: number) => JSON.stringify({ dataUrl: `data:image/png;base64,${'A'.repeat(bytes)}` });
+    const routes = ['/v1/admin/me/avatar', '/v1/admin/site-settings/logo', '/v1/admin/giftcards/brands', '/v1/admin/cms/email-templates/user.welcome/image'];
+    const withRoutes = () => {
+      const made = app(ok);
+      for (const r of routes) made.a.put(r, (_req, res) => res.status(200).json({ ok: true }));
+      made.a.put('/v1/admin/other', (_req, res) => res.status(200).json({ ok: true }));
+      return made.a;
+    };
+
+    it.each(routes)('%s takes a 3 MB picture with an admin sign-in', async (route) => {
+      const res = await request(withRoutes()).put(route).set('authorization', 'Bearer admin-token').set('content-type', 'application/json').send(picture(3 * 1024 * 1024));
+      expect(res.status).toBe(200);
+    });
+
+    it('a customer sign-in, or none, is refused', async () => {
+      for (const auth of ['Bearer good-token', '']) {
+        const r = request(withRoutes()).put('/v1/admin/me/avatar').set('content-type', 'application/json');
+        // A small body: the server answers before reading it and closes, which can reset a client still sending megabytes.
+        const res = await (auth ? r.set('authorization', auth) : r).send(picture(10));
+        expect(res.status).toBe(401);
+      }
+    });
+
+    it('over 8 MB is refused with 413 in plain words', async () => {
+      const res = await request(withRoutes()).put('/v1/admin/site-settings/logo').set('authorization', 'Bearer admin-token').set('content-type', 'application/json').send(picture(9 * 1024 * 1024));
+      expect(res.status).toBe(413);
+      expect(res.body.message).toMatch(/picture is too large/i);
+    });
+
+    it('other admin routes keep the normal 1 MB limit', async () => {
+      const res = await request(withRoutes()).put('/v1/admin/other').set('authorization', 'Bearer admin-token').set('content-type', 'application/json').send(picture(2 * 1024 * 1024));
+      expect(res.status).toBe(413);
+    });
   });
 
   it('does not apply to reading trades (GET), only to the sale (POST)', async () => {

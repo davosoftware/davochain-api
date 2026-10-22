@@ -40,15 +40,19 @@ async function bootstrap(): Promise<void> {
   // It must come before the global parser below, which then skips that body.
   const jwt = new JwtService();
   const jwtSecret = config.getOrThrow<string>('JWT_SECRET');
+  const adminJwtSecret = config.getOrThrow<string>('ADMIN_JWT_SECRET');
+  const tokenIs = async (token: string, secret: string, typ: string) => {
+    try {
+      return (await jwt.verifyAsync<{ typ?: string }>(token, { secret })).typ === typ;
+    } catch {
+      return false;
+    }
+  };
   registerLargeBodyRoutes(app, {
     prefix: config.get<string>('API_PREFIX') ?? 'v1',
-    verify: async (token) => {
-      try {
-        return (await jwt.verifyAsync<{ typ?: string }>(token, { secret: jwtSecret })).typ === 'access';
-      } catch {
-        return false;
-      }
-    },
+    verify: (token) => tokenIs(token, jwtSecret, 'access'),
+    // Admin pictures (C7): an admin token, on its own secret. Revocation is still checked by the admin guard.
+    verifyAdmin: (token) => tokenIs(token, adminJwtSecret, 'admin'),
   });
 
   // An admin avatar arrives as a base64 data URL, and base64 costs a third on
