@@ -8,7 +8,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { KycStatus, KycTier, Prisma, UserOtpPurpose, UserStatus } from '@prisma/client';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -158,7 +158,28 @@ export class AuthService {
 
   // ── login ───────────────────────────────────────────────────
 
-  async login(email: string, password: string, ctx: SessionContext = {}): Promise<AuthTokens> {
+  /**
+   * Racing identical sign-ins (a double tap, an app retrying on a slow network)
+   * share one password check and one session. The key is a keyed hash of the
+   * email, password, IP and device, under a secret made fresh at start-up, so
+   * the password is never kept and different devices are never merged. Entries
+   * live only while the first sign-in is running: nothing is cached.
+   */
+  private readonly loginsInFlight = new Map<string, Promise<AuthTokens>>();
+  private readonly loginKeySecret = randomBytes(32);
+
+  login(email: string, password: string, ctx: SessionContext = {}): Promise<AuthTokens> {
+    const key = createHmac('sha256', this.loginKeySecret)
+      .update(JSON.stringify([email.trim().toLowerCase(), password, ctx.ip ?? '', ctx.userAgent ?? '']))
+      .digest('hex');
+    const running = this.loginsInFlight.get(key);
+    if (running) return running;
+    const attempt = this.loginOnce(email, password, ctx).finally(() => this.loginsInFlight.delete(key));
+    this.loginsInFlight.set(key, attempt);
+    return attempt;
+  }
+
+  private async loginOnce(email: string, password: string, ctx: SessionContext): Promise<AuthTokens> {
     const user = await this.prisma.user.findUnique({
       where: { email: email.trim().toLowerCase() },
     });
