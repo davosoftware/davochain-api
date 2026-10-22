@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CredentialsService } from '../common/credentials.service';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { QuidaxClient } from './quidax.client';
 import { QuidaxError } from './quidax.errors';
 import { requiresTag, seedNetworksFor } from '../assets/chain-catalogue';
@@ -100,6 +100,8 @@ export class QuidaxMockClient extends QuidaxClient {
 
   private readonly wallets = new Map<string, Map<string, string>>();
   private readonly quotations = new Map<string, QuidaxSwapQuotation>();
+  /** Swaps by account, as Quidax lists them. A swap completes at once here; the webhook follows. */
+  private readonly swaps = new Map<string, QuidaxSwapTransaction[]>();
   private readonly addresses = new Map<string, QuidaxPaymentAddress>();
   private readonly withdrawals = new Map<string, { sender: string; data: QuidaxWithdrawal }>();
 
@@ -108,8 +110,11 @@ export class QuidaxMockClient extends QuidaxClient {
     { code: '100004', name: 'Paycom (Opay)', country: 'Nigeria', currency: 'NGN' },
   ];
 
-  constructor(config: ConfigService, credentials: CredentialsService) {
-    super(config, credentials);
+  constructor(
+    private readonly mockConfig: ConfigService,
+    private readonly mockCredentials: CredentialsService,
+  ) {
+    super(mockConfig, mockCredentials);
     this.mockLog.warn('QUIDAX_USE_MOCK=true — no live calls will be made');
     this.seedTreasury();
   }
@@ -371,7 +376,7 @@ export class QuidaxMockClient extends QuidaxClient {
     this.setBalance(userId, from, this.balance(userId, from) - Number(q.from_amount));
     this.setBalance(userId, to, this.balance(userId, to) + Number(q.to_amount));
 
-    return {
+    const swap: QuidaxSwapTransaction = {
       id: randomUUID(),
       from_currency: q.from_currency,
       to_currency: q.to_currency,
@@ -383,10 +388,37 @@ export class QuidaxMockClient extends QuidaxClient {
       updated_at: new Date().toISOString(),
       swap_quotation: { ...q, confirmed: true },
     };
+    // As Quidax does: the swap completes, its list says so, and a webhook follows.
+    const owner = QuidaxMockClient.key(userId);
+    this.swaps.set(owner, [...(this.swaps.get(owner) ?? []), { ...swap, status: 'completed' }]);
+    // Not from unit tests (Jest sets NODE_ENV=test): there is no server of ours to receive it.
+    if (process.env.NODE_ENV !== 'test') setTimeout(() => void this.sendSwapWebhook(swap.id), 300);
+    return swap;
   }
 
-  override async fetchSwapTransactions(): Promise<QuidaxSwapTransaction[]> {
-    return [];
+  override async fetchSwapTransactions(userId = 'me'): Promise<QuidaxSwapTransaction[]> {
+    return [...(this.swaps.get(QuidaxMockClient.key(userId)) ?? [])];
+  }
+
+  /**
+   * The "swap completed" webhook, to this same server. Our side never trusts it:
+   * it asks fetchSwapTransactions above before finishing the swap (A1). Signed
+   * when a Quidax webhook secret is set; with none, the mock's server accepts it.
+   */
+  private async sendSwapWebhook(id: string): Promise<void> {
+    const port = this.mockConfig.get<number>('PORT') ?? 3000;
+    const raw = JSON.stringify({ event: 'swap_transaction.complete', data: { id, status: 'completed' } });
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    try {
+      const secret = await this.mockCredentials.get('quidax.webhookSecret');
+      if (secret) {
+        const ts = Math.floor(Date.now() / 1000);
+        headers['quidax-signature'] = `timestamp=${ts},v1=${createHmac('sha256', secret).update(`${ts}.${raw}`).digest('hex')}`;
+      }
+      await fetch(`http://127.0.0.1:${port}/webhooks/quidax`, { method: 'POST', headers, body: raw });
+    } catch (err) {
+      this.mockLog.warn(`Mock swap webhook not delivered: ${(err as Error).message}`);
+    }
   }
 
   override async fetchBanks(): Promise<QuidaxBank[]> {

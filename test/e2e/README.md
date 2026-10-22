@@ -93,3 +93,34 @@ REDIS_PORT=6380 npm run start:e2e -- 3001
 API_URL=http://localhost:3001 E2E_ADMIN_EMAIL=… E2E_ADMIN_PASSWORD=… npm run test:e2e
 docker rm -f davochain-e2e-redis
 ```
+
+## Launch tests (22 Oct 2026)
+
+Three files were added for launch:
+
+| File | What it proves | Needs |
+|---|---|---|
+| `journey.e2e-spec.ts` | One customer, start to finish: sign up, confirm email, Basic verification, naira deposit account, ₦200,000 arrives, buy crypto, sell a gift card, withdraw naira, swap, sign out | `E2E_ADMIN_*` |
+| `races.e2e-spec.ts` | Requests fired at the same moment: identical sign-ins share one session, a wrong password raced 5 times counts once, refresh tokens are single use, one quote trades once, the same Idempotency-Key runs once, the balance never goes below zero, one deposit account per customer | nothing extra |
+| `rate-limits.e2e-spec.ts` | Every rate limit at its real default, one request over the limit each | its own run, below |
+
+Both `journey` and `races` run with the normal suite.
+
+### Rate limits: a separate run
+
+The normal test server raises some limits (so a full run doesn't trip them), so the limits get their own server with the real numbers. This uses up the limits for your computer's address for up to an hour, so run it last.
+
+```bash
+# 1. Clear old counters in the TEST Redis (port 6380), never your dev Redis
+docker exec davochain-e2e-redis sh -c "redis-cli --scan --pattern 'rl:*' | xargs -r redis-cli del"
+
+# 2. Start the test server with the real limits
+REDIS_PORT=6380 npm run start:e2e -- 3001 --real-limits
+
+# 3. In another terminal, run only the rate-limit file
+RATE_LIMIT_E2E=yes API_URL=http://localhost:3001 E2E_ADMIN_EMAIL=… E2E_ADMIN_PASSWORD=… npx jest --config test/jest-e2e.json test/e2e/rate-limits.e2e-spec.ts
+
+# 4. Afterwards: clear the counters again and restart the server without --real-limits
+```
+
+`--set-code` on `scripts/dev-verify-email.mjs` puts a known code on a customer's newest emailed code, so a test can type it into `POST /v1/auth/email/verify` like a customer.

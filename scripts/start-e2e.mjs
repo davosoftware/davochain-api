@@ -6,6 +6,9 @@
  *
  *   npm run start:e2e              (port 3000, the default the tests use)
  *   npm run start:e2e -- 3001      (another port; then run the tests with API_URL)
+ *   npm run start:e2e -- 3001 --real-limits
+ *                                  (the same, but every rate limit at its real default:
+ *                                   only for test/e2e/rate-limits.e2e-spec.ts)
  *   npm run start:e2e -- 3001 --payrep-sandbox
  *                                  (the same, but naira goes to Payrep's real SANDBOX, using the
  *                                   PAYREP_* keys in api/.env; everything else stays mocked)
@@ -50,6 +53,11 @@ const testSettings = {
   // The two-step suite changes its own settings more than 5 times in an hour.
   RATE_LIMIT_AUTH_CHANGE_PASSWORD_USER: '2000/1h',
 };
+
+// --real-limits: every rate limit at its real default (for test/e2e/rate-limits.e2e-spec.ts).
+if (args.includes('--real-limits')) {
+  for (const k of Object.keys(testSettings)) if (k.startsWith('RATE_LIMIT_')) delete testSettings[k];
+}
 
 console.log(`\n  Starting the API in e2e test mode on port ${port}:`);
 for (const [k, v] of Object.entries(testSettings)) console.log(`    ${k}=${v}`);
