@@ -34,6 +34,7 @@ Payrep confirmed that a customer's naira account doesn't need their BVN or NIN. 
 | **6.5 needs no body**; `bvn`/`nin` are ignored | 6.5 | Send `{}`, or nothing. Older builds keep working. |
 | **New push `ngn_account.ready`** "Your naira account is ready" | Appendix A | On tap, open the naira deposit screen (6.4). |
 | **`accountName`** is now like `DavoChain-ADA CHIOMA OBI` | 6.4 | Show it exactly as sent. |
+| **`tier` is the OLD name. Use `level`.** DavoChain's levels are **None, Basic and Advanced** | §0.6.1 | Read `level` (4.1), `level`/`levelName` (3.3) and `requiredLevel` (403s). Never show or branch on `TIER_0`…`TIER_3`. `tier`, `currentTier` and `requiredTier` are still sent only so older builds keep working, and will be removed once the app no longer reads them. |
 
 ## What changed for the app (23 October 2026): the journey guide, and session rules made clear
 
@@ -334,6 +335,24 @@ Right after approval the user's sessions are signed out on purpose, so the app's
 ```
 
 `requiredTier` is still sent with `NOT_ALLOWED_AT_LEVEL` so older app builds keep opening the verification screen.
+
+### 0.6.1 Levels, not tiers (read this)
+
+DavoChain has **three verification levels: None, Basic and Advanced.** Older responses also carry a **`tier`** field (`TIER_0`…`TIER_3`). That's the old name for the same thing, kept only so app builds written before 15 Oct don't break. **Build the app on `level`.**
+
+| `level` (use this) | Old `tier` (ignore) | Show the customer |
+| --- | --- | --- |
+| `NONE` | `TIER_0` | "Not verified" |
+| `BASIC` | `TIER_1` | "Basic" |
+| `ADVANCED_IN_PROGRESS` | `TIER_2` | "Advanced (in progress)": ID done, proof of address still to come; same limits as Basic |
+| `ADVANCED` | `TIER_3` | "Advanced" |
+
+**Rules**
+- **Show:** `levelName` from 3.3 (or the text above). Never show the word "Tier" or `TIER_…` to a customer.
+- **Decide:** with `level` from 4.1 or 3.3, and `requiredLevel` / `code` on a 403.
+- **One 403 still carries only `requiredTier`** (the "verify first" answer: `requiredTier`, `currentTier`, `kycStatus`). Treat its presence as "open the verification screen". Don't read the tier inside it.
+- **The `limits.tiers` list in 4.1** is keyed by the old names: `TIER_0` is None, `TIER_1` is Basic, `TIER_3` is Advanced.
+- `tier`, `currentTier` and `requiredTier` will be removed once the app team confirms the app no longer reads them. Building on `level` now means nothing breaks then.
 
 ## 0.7 Idempotency-Key
 
@@ -862,7 +881,7 @@ Authorization: Bearer eyJhbGciOi…
 | `firstName`, `lastName` | string | |
 | `phone` | string \| null | |
 | `status` | string | `ACTIVE` / `SUSPENDED` / `CLOSED` |
-| `kyc.tier` | string | Current verification level |
+| `kyc.tier` | string | **Old name, don't use.** `TIER_0`…`TIER_3`; read the level from 3.3 or `level` in 4.1 instead (§0.6.1) |
 | `kyc.status` | string | Current verification status |
 | `kyc.rejectionReason` | string \| null | Why KYC was rejected (show it) |
 | `kyc.submittedAt` | string \| null | When KYC was last submitted |
@@ -992,7 +1011,7 @@ Authorization: Bearer eyJhbGciOi…
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `tier` | string | Current level, `TIER_0`…`TIER_3` |
+| `tier` | string | **Old name, don't use.** Use `level` below (§0.6.1) |
 | `status` | string | `NOT_STARTED` / `PENDING` / `APPROVED` / `REJECTED` / `EXPIRED` |
 | `rejectionReason` | string \| null | Show when `REJECTED` |
 | `submittedAt` | string \| null | Last submission |

@@ -803,7 +803,7 @@ If Advanced is switched off by the admin, these answer 503. While one submission
 | `FAILED` | Didn't go through; the money is back in the balance | `reason` |
 | `RECONCILING` | The result isn't known yet; the money is held safely while we check with the provider | "We're confirming this with our provider. Your funds are safe." **No retry button, and never say "failed".** |
 
-**Verification:** `GET /v1/kyc` `level` is `NONE` → `BASIC` → `ADVANCED_IN_PROGRESS` → `ADVANCED`. `tier` is `TIER_0` to `TIER_3`. Each step's `state` is `NONE`, `CHECKING`, `IN_REVIEW`, `APPROVED` or `REJECTED`.
+**Verification:** `GET /v1/kyc` `level` is `NONE` → `BASIC` → `ADVANCED_IN_PROGRESS` → `ADVANCED`. **Use `level`.** DavoChain's levels are None, Basic and Advanced. The `tier` field (`TIER_0` to `TIER_3`) is the **old name for the same thing**, still sent only so older app builds don't break, and it will be removed later. Never show it or build on it (`FLUTTER_API.md` §0.6.1). Each step's `state` is `NONE`, `CHECKING`, `IN_REVIEW`, `APPROVED` or `REJECTED`.
 
 **Crypto deposit address:** `PENDING` (wait) → `ACTIVE` with `usable: true` (show it).
 
