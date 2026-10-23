@@ -4,7 +4,7 @@
 | --- | --- |
 | **For** | The Flutter developer building the DavoChain mobile app |
 | **API version** | `v1` |
-| **Last verified** | 2 October 2026, against the API source (`api/src/`) and a running local instance. Rate limiting (0.4.1, 2.x errors) added 12 October 2026. Basic verification (4.2, 4.4, §0.6) added 14 October 2026. Bug fixes and maintenance enforcement (Appendix F) 15 October 2026. |
+| **Last verified** | 2 October 2026, against the API source (`api/src/`) and a running local instance. Rate limiting (0.4.1, 2.x errors) added 12 October 2026. Basic verification (4.2, 4.4, §0.6) added 14 October 2026. Bug fixes and maintenance enforcement (Appendix F) 15 October 2026. **Checked again on 23 October 2026 against a real run of the whole customer journey (91 calls)**: sessions (§0.5) and local testing (Appendix E) updated. |
 | **Source of truth** | The API code. If this guide and the API disagree, tell the backend team so the guide gets fixed. |
 | **Replaces** | `admin/docs/FLUTTER.md` |
 
@@ -21,6 +21,20 @@
 3. Use **Part 2, Appendices** for push notifications, enum values, ready-made Dart code, testing on the local backend, and known limitations.
 
 **New (23 Oct 2026): start with the walk-through.** [`CUSTOMER_JOURNEY_API_GUIDE.md`](CUSTOMER_JOURNEY_API_GUIDE.md) takes one customer through the whole app in order, with real responses: register, email code, Basic verification, the naira account number, deposits, buy, sell, swap, withdrawals, gift cards, Advanced verification and sign-out. It also covers exactly when and how to refresh tokens. A ready-to-import Postman collection that refreshes tokens by itself is in [`postman/`](postman/DavoChain-Customer-Journey.postman_collection.json).
+
+## What changed for the app (23 October 2026): the journey guide, and session rules made clear
+
+**No endpoint, request or response changed.** This update makes the documents match how the API really behaves, checked by running one customer through the whole app.
+
+| What | Where | What the app must do |
+| --- | --- | --- |
+| **New walk-through with real responses**, in journey order, plus a Postman collection that refreshes tokens by itself | [`CUSTOMER_JOURNEY_API_GUIDE.md`](CUSTOMER_JOURNEY_API_GUIDE.md), [`postman/`](postman/DavoChain-Customer-Journey.postman_collection.json) | Use it to test each screen's calls in order before wiring them up. |
+| **Automatic approval also signs the customer out**, not only an admin's decision: a Basic verification that passes at once (4.2), and an Advanced step that passes (4.6) | §0.5 | After `APPROVED`, show "You're verified, please sign in again", clear the tokens, go to sign-in. A refresh at this point answers `401 "Session expired. Please sign in again."`. That is expected, not a bug. |
+| **Refresh: save BOTH new tokens, every time** | §0.5, 2.3 | The most common cause of "I keep getting logged out" is keeping the old refresh token. It works once only. |
+| **Two refreshes at the same moment**: one wins; the other gets `401` without signing anyone out. **Reusing an already-used refresh token later** signs out that whole session. | §0.5 | Keep running one refresh at a time (Appendix D.2 already does). |
+| **A new crypto deposit address starts `PENDING` with `address: null`** | 6.1 | Already documented: show a spinner and ask again every 3–5 s until `usable: true`. Never show an empty address or QR code. |
+| **"Virtual account"** in some field and error names (e.g. `code: "NO_VIRTUAL_ACCOUNT"`) | 6.4, 6.5 | An old name from Flutterwave. It's the customer's **Payrep account**. Keep reading the codes as they are; nothing to change. |
+| **Local testing** is easier and more complete | Appendix E | Updated to what works on the pretend providers today. |
 
 ## What changed for the app (22 October 2026): confirm email
 
@@ -253,7 +267,7 @@ Every endpoint has a request limit. Going over it returns **`429`** with a `Retr
 
 Store both in **`flutter_secure_storage`**. Never use `SharedPreferences`.
 
-**Refreshing: ONE refresh at a time.** Each refresh returns a **new** refresh token and kills the old one. If two refreshes run at once with the same token, the server thinks it was stolen and **signs the user out everywhere**. So:
+**Refreshing: ONE refresh at a time.** Each refresh returns a **new** refresh token and kills the old one. If two refreshes run at once with the same token, only one gets new tokens; the other gets `401`. If a refresh token that was **already used** is sent again later, the server treats it as stolen and **signs out that whole session** (every token that came from the same sign-in). So:
 
 1. A request gets `401`.
 2. If a refresh is already running, **wait for that one**. Otherwise start it (call 2.3).
@@ -268,7 +282,9 @@ Store both in **`flutter_secure_storage`**. Never use `SharedPreferences`.
 
 | Event | What happens | What the app does |
 | --- | --- | --- |
-| Admin **approves or rejects KYC** | All refresh tokens revoked. The access token still works (with the *old* verification level) for up to 15 min. | When 4.1 shows `APPROVED`, show "You're verified, please sign in again", then clear tokens and go to sign-in |
+| **Basic verification passes at once** (4.2 answers `state: "APPROVED"`) | All refresh tokens revoked. The access token still works (with the *old* verification level) for up to 15 min. A refresh answers `401 "Session expired. Please sign in again."`. | Show "You're verified, please sign in again", then clear tokens and go to sign-in |
+| **An Advanced step passes** (4.6: `identity` or `address` becomes `APPROVED` in 4.1) | The same | The same |
+| Admin **approves or rejects KYC** by hand | The same | When 4.1 shows the change, the same |
 | User **changes password** (2.5) | All refresh tokens revoked, **including this phone's** | After success, clear tokens and go to sign-in |
 | User **resets password** (2.7) | All refresh tokens revoked | Go to sign-in |
 | Admin **suspends** the user | Refresh tokens revoked; login returns `ACCOUNT_SUSPENDED` | Show the blocked screen with `message` |
@@ -3457,30 +3473,31 @@ void startCountdown(Map q, void Function(int left) onTick) {
 
 ## Appendix E: Testing on the local backend
 
-Locally the API uses a **fake ("mock") version of Quidax**, the crypto provider. No real money, no real blockchain.
+Locally the API uses **pretend ("mock") versions of every provider**: Quidax (crypto), Payrep (naira) and Dojah (identity checks). No real money, no real blockchain, no real BVN lookups. The quickest way to start one with everything switched on is `npm run start:e2e` in `api/`. The full walk-through, with the Postman collection, is [`CUSTOMER_JOURNEY_API_GUIDE.md`](CUSTOMER_JOURNEY_API_GUIDE.md) (its section 6 lists the settings).
 
-**Getting a test account ready (ask the backend team):**
-1. Register in the app (2.1).
-2. A backend dev **approves your KYC** in the admin dashboard. Then **sign in again**.
-3. A backend dev **adds test naira** with `npm run dev-credit -- --email you@example.com --asset ngn --amount 500000`. There's no in-app top-up yet.
-4. For naira limits, a backend dev sets them in admin → **System → KYC limits**. They start at ₦0.
-5. Reset codes (2.6) are printed in the API log if email isn't set up. Ask a backend dev.
+**Getting a test account ready (updated 23 Oct 2026):**
+1. Register in the app (2.1) with an inbox you can open, and a phone number no other account uses.
+2. **Confirm the email** with the emailed code (2.10). If email isn't set up locally, a backend dev can set a known code: `node scripts/dev-verify-email.mjs --email you@example.com --set-code 424242`.
+3. **Basic verification passes by itself** (4.2) with a test BVN: `333` + any 8 digits, first name `Someone`, last name `Clean`, date of birth `1995-03-03`. Each number verifies one account only, so change the digits for each tester. Then **sign in again** (§0.5).
+4. **Naira in:** open the naira account (6.5); a backend dev sends money into it with `POST /v1/admin/dev/payrep/simulate-deposit`. Or a backend dev adds test balance with `npm run dev-credit -- --email you@example.com --asset ngn --amount 500000`.
+5. **Limits:** naira limits start at ₦0. A backend dev raises them in the admin dashboard → **System → Verification levels**, and switches naira payouts on (**System → Withdrawals**).
+6. Reset codes (2.6) arrive by email; without email, ask a backend dev.
 
-**What works on the mock**
+**What works on the pretend providers** (checked 23 Oct 2026)
 
 | Flow | Result |
 | --- | --- |
-| Register, login, refresh, reset | ✅ |
-| KYC submit + admin approval | ✅ |
-| Deposit address | ✅ becomes `usable` after **~15 seconds** |
-| Quote + **buy** | ✅ `COMPLETED` immediately |
-| **Sell** | ✅ but only for coins **bought** since the API last restarted. Coins added with `dev-credit` can't be sold (you get a 400). |
-| **Swap** | ⚠️ stays **`PROCESSING` forever**. Test the progress UI; ask the backend to simulate completion. |
-| **Crypto withdrawal** | ⚠️ stays **`PROCESSING` forever** (same reason) |
-| Incoming crypto deposit | ⚠️ can't happen; the backend can simulate one |
-| Naira withdrawal | ⚠️ off unless `NGN_WITHDRAWALS_ENABLED=true` in `api/.env`, or an owner switches it on in the admin dashboard (System → Withdrawals). On the pretend Payrep, an amount ending in `.51` is refused (refunded at once), and `.99` or `.77` stays `RECONCILING` (money still locked) |
-| Naira deposit account + incoming naira | ⚠️ off unless `NGN_DEPOSITS_ENABLED=true`. Then 6.5 opens an account on the pretend Payrep, and a backend dev can send money into it with `POST /v1/admin/dev/payrep/simulate-deposit` (development only) |
-| Gift cards, referrals, in-app notifications | ✅ |
+| Register, email code, login, refresh, reset, sign out | ✅ |
+| Basic verification (4.2) with a `333…` BVN | ✅ `APPROVED` at once; then sign in again |
+| Advanced verification (4.6) | ✅ with `KYC_ADVANCED_ENABLED=true`: identity and address each go `CHECKING` → `APPROVED` within a few seconds |
+| Naira deposit account (6.5) + simulated incoming naira | ✅ with `NGN_DEPOSITS_ENABLED=true`; the balance updates within seconds |
+| Crypto deposit address (6.1) | ✅ starts `PENDING` with no address, becomes `usable` within seconds (address looks like `mock_usdt_…`) |
+| Quote + **buy**, **sell** | ✅ `COMPLETED` immediately |
+| **Swap** | ✅ starts `PROCESSING`, becomes `COMPLETED` within about a second: poll 7.4 |
+| **Crypto withdrawal** | ⚠️ stays `PROCESSING` (the pretend Quidax never confirms it). Test the progress UI. |
+| Incoming crypto deposit | ⚠️ can't happen on its own; the backend can simulate one |
+| Naira withdrawal | ✅ once payouts are on: `PROCESSING`, money locked. On the pretend Payrep, an amount ending in `.51` is refused (refunded at once), and `.99` or `.77` stays `RECONCILING` (money still locked) |
+| Gift cards (an admin approves in the dashboard), referrals, in-app notifications | ✅ |
 | Push | ⚠️ only if the backend set up Firebase |
 
 **Images from the Android emulator:** brand and social icon URLs are built from the server's `PUBLIC_API_URL`, which defaults to `http://localhost:3000`, unreachable from the emulator. Ask the backend to set `PUBLIC_API_URL=http://10.0.2.2:3000` (or the laptop's LAN IP).
