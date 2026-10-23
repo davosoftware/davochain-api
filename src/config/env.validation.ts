@@ -201,6 +201,8 @@ export const envSchema = z
     PAYREP_ACCOUNT_NAME_PREFIX: z.preprocess(emptyToUndefined, z.string().max(40).optional()),
     PAYREP_WEBHOOK_SECRET: z.preprocess(emptyToUndefined, z.string().regex(/^[0-9a-f]{64}$/i, 'PAYREP_WEBHOOK_SECRET is 64 hexadecimal characters').optional()),
     NGN_DEPOSITS_ENABLED: bool(false),
+    /** The background opener: verified customers get their naira account without asking (spec 2026-10-23). Leave on. */
+    NGN_ACCOUNT_AUTO_OPEN: bool(true),
     /** H9: customers confirm their email before any money action. Switch off only if email (SMTP) is down. */
     EMAIL_VERIFICATION_REQUIRED: bool(true),
     /** HMAC key for BVN/NIN hashes. Rotating it means users re-enter their number. */

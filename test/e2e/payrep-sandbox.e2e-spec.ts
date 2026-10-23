@@ -49,13 +49,15 @@ describeSandbox('naira on the real Payrep sandbox', () => {
     expect(r.body.canCreateAccounts).toBe(true);
   });
 
-  it('a verified customer opens a real Payrep sandbox account', async () => {
-    const r = await call('POST', '/deposits/ngn/account', { token: user.token, body: { bvn: user.bvn } });
-    expect(r.status).toBe(201);
+  it('a verified customer gets a real Payrep sandbox account, opened with create_account and no BVN', async () => {
+    const r = await call('POST', '/deposits/ngn/account', { token: user.token, body: {} });
+    expect([200, 201]).toContain(r.status);
+    // Named from the ID record (the sandbox adds no prefix; live adds "DavoChain-").
+    expect(r.body.accountName).toMatch(/Someone Clean$/);
     expect(r.body.accountNumber).toMatch(/^\d{10}$/);
     expect(r.body.status).toBe('ACTIVE');
     expect(typeof r.body.bankName).toBe('string');
-    const again = await call('POST', '/deposits/ngn/account', { token: user.token, body: { bvn: user.bvn } });
+    const again = await call('POST', '/deposits/ngn/account', { token: user.token, body: {} });
     expect(again.status).toBe(200);
     expect(again.body.accountNumber).toBe(r.body.accountNumber);
   });

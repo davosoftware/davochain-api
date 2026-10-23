@@ -43,15 +43,22 @@ afterAll(async () => {
 });
 
 describeAdmin('naira deposits through Payrep', () => {
-  it('a verified customer opens a Payrep deposit account; asking again hands back the same one', async () => {
-    const r = await call('POST', '/deposits/ngn/account', { token: user.token, body: { bvn: user.bvn } });
-    expect(r.status).toBe(201);
-    expect(r.body).toMatchObject({ accountNumber: expect.stringMatching(/^20\d{8}$/), bankName: 'Payrep MFB', status: 'ACTIVE' });
+  it('a verified customer gets a Payrep account with no BVN, named from their ID; asking again hands back the same one', async () => {
+    // 201 when this call opens it; 200 when the background opener got there first.
+    const r = await call('POST', '/deposits/ngn/account', { token: user.token, body: {} });
+    expect([200, 201]).toContain(r.status);
+    expect(r.body).toMatchObject({ accountNumber: expect.stringMatching(/^\d{10}$/), accountName: 'DavoChain-Someone Clean', bankName: 'Payrep MFB', status: 'ACTIVE' });
     accountNumber = r.body.accountNumber;
-    const again = await call('POST', '/deposits/ngn/account', { token: user.token, body: { bvn: user.bvn } });
+    const again = await call('POST', '/deposits/ngn/account', { token: user.token, body: {} });
     expect(again.status).toBe(200);
     expect(again.body.accountNumber).toBe(accountNumber);
     expect((await call('GET', '/deposits/ngn/account', { token: user.token })).body.accountNumber).toBe(accountNumber);
+  });
+
+  it('an older app that still sends a BVN keeps working: the number is ignored', async () => {
+    const r = await call('POST', '/deposits/ngn/account', { token: user.token, body: { bvn: user.bvn } });
+    expect(r.status).toBe(200);
+    expect(r.body.accountNumber).toBe(accountNumber);
   });
 
   it('a deposit is credited once, even when Payrep sends the webhook again', async () => {

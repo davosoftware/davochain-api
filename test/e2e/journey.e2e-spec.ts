@@ -103,12 +103,19 @@ describeAdmin('the whole customer journey, start to finish', () => {
     expect((await call('GET', '/kyc', { token: user.token })).body).toMatchObject({ level: 'BASIC', tier: 'TIER_1', status: 'APPROVED' });
   });
 
-  it('4. opens a naira deposit account (Payrep), and asking again returns the same one', async () => {
-    const r = await call('POST', '/deposits/ngn/account', { token: user.token, body: { bvn } });
-    expect(r.status).toBe(201);
-    expect(r.body).toMatchObject({ accountNumber: expect.stringMatching(/^\d{10}$/), bankName: 'Payrep MFB', status: 'ACTIVE' });
-    const again = await call('POST', '/deposits/ngn/account', { token: user.token, body: { bvn } });
+  it('4. gets the naira account number (Payrep, no BVN), opened from their ID name; asking again returns the same one', async () => {
+    // GET opens it for a verified customer (or the background opener already did).
+    let r = await call('GET', '/deposits/ngn/account', { token: user.token });
+    for (let i = 0; i < 20 && r.status === 202; i++) {
+      await new Promise((res) => setTimeout(res, 500));
+      r = await call('GET', '/deposits/ngn/account', { token: user.token });
+    }
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ accountNumber: expect.stringMatching(/^\d{10}$/), accountName: 'DavoChain-Someone Clean', bankName: 'Payrep MFB', status: 'ACTIVE' });
+    const again = await call('POST', '/deposits/ngn/account', { token: user.token, body: {} });
+    expect(again.status).toBe(200);
     expect(again.body.accountNumber).toBe(r.body.accountNumber);
+    void bvn;
   });
 
   it('5. a ₦200,000 bank transfer arrives and is credited once', async () => {

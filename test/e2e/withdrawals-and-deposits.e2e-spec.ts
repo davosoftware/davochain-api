@@ -83,10 +83,16 @@ describe('deposits', () => {
     expect(Array.isArray((await call('GET', '/withdrawals', { token: verified.token })).body)).toBe(true);
   });
 
-  it('with no naira account yet, GET /v1/deposits/ngn/account is 404 NO_VIRTUAL_ACCOUNT, with a reason when not eligible', async () => {
-    const r = await call('GET', '/deposits/ngn/account', { token: verified.token });
+  it('GET /v1/deposits/ngn/account: 404 NO_VIRTUAL_ACCOUNT with a reason for someone not verified', async () => {
+    const r = await call('GET', '/deposits/ngn/account', { token: user.token });
     expect(r.status).toBe(404);
-    expect(r.body).toMatchObject({ code: 'NO_VIRTUAL_ACCOUNT', eligible: expect.any(Boolean) });
-    expect(r.body.reason === null).toBe(r.body.eligible);
+    expect(r.body).toMatchObject({ code: 'NO_VIRTUAL_ACCOUNT', eligible: false, reason: expect.any(String) });
+  });
+
+  it('GET /v1/deposits/ngn/account for a verified customer opens it (or says it is on its way): no BVN needed', async () => {
+    const r = await call('GET', '/deposits/ngn/account', { token: verified.token });
+    expect([200, 202]).toContain(r.status);
+    if (r.status === 200) expect(r.body).toMatchObject({ accountNumber: expect.stringMatching(/^\d{10}$/), status: 'ACTIVE' });
+    else expect(r.body).toEqual({ status: 'PENDING', message: expect.any(String) });
   });
 });

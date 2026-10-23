@@ -42,6 +42,9 @@ const testSettings = {
   PAYREP_USE_MOCK: payrepSandbox ? 'false' : 'true',
   // Naira deposit accounts on.
   NGN_DEPOSITS_ENABLED: 'true',
+  // The background opener would open an account for every verified test customer in the database:
+  // fine on the pretend Payrep, never on Payrep's real sandbox (there, accounts open on GET or a tap).
+  NGN_ACCOUNT_AUTO_OPEN: payrepSandbox ? 'false' : 'true',
   // Files go to the in-memory store, never the real R2 bucket.
   STORAGE_DRIVER: 'memory',
   ALERT_DEFAULT_RECIPIENTS: process.env.ALERT_DEFAULT_RECIPIENTS ?? 'ops@davochain.invalid',

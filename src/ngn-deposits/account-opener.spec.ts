@@ -1,7 +1,7 @@
 import { AccountOpenerService } from './account-opener.service';
 
 /** The background opener (spec 2026-10-23 §4.1): verified customers get their naira account without asking. */
-function build(o: { users?: string[]; blocked?: Array<Record<string, unknown>>; ready?: boolean } = {}) {
+function build(o: { users?: string[]; blocked?: Array<Record<string, unknown>>; ready?: boolean; autoOpen?: boolean } = {}) {
   const prisma = {
     user: { findMany: jest.fn(async () => (o.users ?? []).map((id) => ({ id }))) },
     virtualAccountRequest: { findMany: jest.fn(async () => o.blocked ?? []) },
@@ -9,7 +9,8 @@ function build(o: { users?: string[]; blocked?: Array<Record<string, unknown>>; 
   const accounts = { ensure: jest.fn(async () => ({ httpStatus: 201 })) };
   const readiness = { report: jest.fn(async () => ({ depositsEnabled: o.ready ?? true, canCreateAccounts: o.ready ?? true })) };
   const leases = { run: jest.fn(async (_n: string, _t: number, fn: () => Promise<unknown>) => ({ ran: true, result: await fn() })) };
-  const svc = new AccountOpenerService(prisma as never, accounts as never, readiness as never, leases as never, { pauseMs: 0 });
+  const config = { get: (k: string) => (k === 'NGN_ACCOUNT_AUTO_OPEN' ? (o.autoOpen ?? true) : undefined) };
+  const svc = new AccountOpenerService(prisma as never, accounts as never, readiness as never, leases as never, { pauseMs: 0 }, config as never);
   return { svc, prisma, accounts, readiness, leases };
 }
 
@@ -32,6 +33,13 @@ describe('AccountOpenerService', () => {
 
   it('does nothing while naira deposits are off or not ready', async () => {
     const { svc, prisma, accounts } = build({ users: ['u1'], ready: false });
+    expect(await svc.run()).toEqual({ tried: 0 });
+    expect(prisma.user.findMany).not.toHaveBeenCalled();
+    expect(accounts.ensure).not.toHaveBeenCalled();
+  });
+
+  it('NGN_ACCOUNT_AUTO_OPEN=false switches the background opener off (a GET or a tap still opens one)', async () => {
+    const { svc, prisma, accounts } = build({ users: ['u1'], autoOpen: false });
     expect(await svc.run()).toEqual({ tried: 0 });
     expect(prisma.user.findMany).not.toHaveBeenCalled();
     expect(accounts.ensure).not.toHaveBeenCalled();

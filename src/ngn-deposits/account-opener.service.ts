@@ -1,4 +1,5 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Cron } from '@nestjs/schedule';
 import { KycStatus, KycTier, UserStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -36,6 +37,7 @@ export class AccountOpenerService {
     private readonly readiness: ReadinessService,
     private readonly leases: JobLeaseService,
     @Optional() @Inject(OPENER_OPTIONS) opts?: { pauseMs?: number },
+    @Optional() private readonly config?: ConfigService,
   ) {
     this.pauseMs = opts?.pauseMs ?? 500;
   }
@@ -50,6 +52,8 @@ export class AccountOpenerService {
   }
 
   async run(): Promise<{ tried: number }> {
+    // Off only on purpose (e.g. a test server pointed at Payrep's sandbox and a database full of test customers).
+    if (this.config?.get<boolean>('NGN_ACCOUNT_AUTO_OPEN') === false) return { tried: 0 };
     const ready = await this.readiness.report();
     if (!ready.depositsEnabled || !ready.canCreateAccounts) return { tried: 0 };
 

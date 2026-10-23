@@ -102,12 +102,18 @@ describe('racing money requests', () => {
 
   it('opening the naira deposit account 3 times at once gives ONE account', async () => {
     const u = await verifyBasic(await newUser());
-    const rs = await together(3, () => call('POST', '/deposits/ngn/account', { token: u.token, body: { bvn: u.bvn } }));
-    expect(rs.every((r) => r.status === 200 || r.status === 201 || r.status === 409)).toBe(true);
-    const mine = await call('GET', '/deposits/ngn/account', { token: u.token });
-    const numbers = new Set(rs.filter((r) => r.status < 300).map((r) => r.body.accountNumber));
-    expect(numbers.size).toBe(1);
-    expect(numbers.has(mine.body.accountNumber)).toBe(true);
+    const rs = await together(3, () => call('POST', '/deposits/ngn/account', { token: u.token, body: {} }));
+    // 201 for the one that opened it, 200 for "already had one", 202 for "being opened right now".
+    expect(rs.every((r) => [200, 201, 202].includes(r.status))).toBe(true);
+    let mine = await call('GET', '/deposits/ngn/account', { token: u.token });
+    for (let i = 0; i < 20 && mine.status === 202; i++) {
+      await new Promise((res) => setTimeout(res, 500));
+      mine = await call('GET', '/deposits/ngn/account', { token: u.token });
+    }
+    expect(mine.status).toBe(200);
+    const numbers = new Set(rs.filter((r) => r.body.accountNumber).map((r) => r.body.accountNumber));
+    expect(numbers.size).toBeLessThanOrEqual(1);
+    for (const n of numbers) expect(n).toBe(mine.body.accountNumber);
   });
 });
 
