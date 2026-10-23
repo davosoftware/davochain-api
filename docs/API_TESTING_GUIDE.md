@@ -9,6 +9,7 @@ A hands-on guide for testing the API yourself from a terminal, using `curl` (Git
 | File | What it gives you |
 |---|---|
 | [`ROUTE_INVENTORY.md`](ROUTE_INVENTORY.md) | **All 186 routes**, generated from the code. For each: method, path, who may call it, KYC, admin permission, rate limit, whether it pauses in maintenance, and every request-body field with its validation rules. Regenerate with `npx ts-node --transpile-only --compiler-options '{"module":"CommonJS"}' scripts/route-inventory.ts > docs/ROUTE_INVENTORY.md`. |
+| [`CUSTOMER_JOURNEY_API_GUIDE.md`](CUSTOMER_JOURNEY_API_GUIDE.md) | **New 23 Oct:** the whole customer journey in order, with real responses, token refresh, and a Postman collection (`postman/`) that refreshes tokens by itself |
 | [`FLUTTER_API.md`](FLUTTER_API.md) | The app team's guide: every user endpoint in depth, with every error message |
 | `http://localhost:3000/docs` | Swagger, when the server runs outside production: try requests in the browser |
 | `npm run test:e2e` | Automated versions of the checks below (section 10) |

@@ -20,6 +20,8 @@
    - **Integration notes:** UX rules and gotchas
 3. Use **Part 2, Appendices** for push notifications, enum values, ready-made Dart code, testing on the local backend, and known limitations.
 
+**New (23 Oct 2026): start with the walk-through.** [`CUSTOMER_JOURNEY_API_GUIDE.md`](CUSTOMER_JOURNEY_API_GUIDE.md) takes one customer through the whole app in order, with real responses: register, email code, Basic verification, the naira account number, deposits, buy, sell, swap, withdrawals, gift cards, Advanced verification and sign-out. It also covers exactly when and how to refresh tokens. A ready-to-import Postman collection that refreshes tokens by itself is in [`postman/`](postman/DavoChain-Customer-Journey.postman_collection.json).
+
 ## What changed for the app (22 October 2026): confirm email
 
 New customers must **confirm their email address** before money moves. After sign-up we email a six-digit code. Until they enter it, they can sign in and look around, but they cannot deposit, withdraw, trade, sell gift cards, start verification (KYC) or open a naira deposit account.
