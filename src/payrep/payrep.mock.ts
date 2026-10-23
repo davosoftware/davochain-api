@@ -6,7 +6,7 @@ import { MOCK_WEBHOOK_SECRET } from './payrep.config';
 import type { StatusAnswer, TransferAnswer } from './payrep.classify';
 import { PayrepError } from './payrep.errors';
 import { payrepSignature } from './webhook-signature';
-import type { PayrepAccount, PayrepBank, PayrepCollection, PayrepCustomerAccount, PayrepNameEnquiry, PayrepTransferInput } from './payrep.types';
+import type { PayrepAccount, PayrepBank, PayrepCollection, PayrepCustomerAccount, PayrepNameEnquiry, PayrepTransferInput, PayrepRecentAccount } from './payrep.types';
 
 const BANKS: PayrepBank[] = [
   { name: 'Access Bank', code: '000014', cbnCode: '044' },
@@ -30,6 +30,8 @@ export class PayrepMock extends PayrepApi {
   private readonly log = new Logger('PayrepMock');
   private readonly transfers = new Map<string, { amount: string; status: 'NEW' | 'SUCCESSFUL' | 'FAILED' }>();
   private readonly credits: StoredCredit[] = [];
+  /** Accounts opened with createAccount, oldest first. */
+  private readonly opened: PayrepRecentAccount[] = [];
 
   constructor(private readonly cfg: { port: number }) {
     super();
@@ -86,6 +88,25 @@ export class PayrepMock extends PayrepApi {
     // The same identity always gets the same number, like a real static account.
     const n = parseInt(createHash('sha256').update(id).digest('hex').slice(0, 12), 16) % 100_000_000;
     return { accountNumber: `20${String(n).padStart(8, '0')}`, accountName: 'DAVOCHAIN/MOCK CUSTOMER', bankName: 'Payrep MFB', status: 'active', providerRef: `mock-${id.slice(-4)}` };
+  }
+
+  /**
+   * Like live create_account: a new number on every call (Payrep doesn't stop
+   * duplicates), named with our business prefix. A name containing ANSWER LOST
+   * opens the account and then answers UNCLEAR, for the lost-answer drill.
+   */
+  async createAccount(i: { accountName: string; poolAccountNumber: string }): Promise<PayrepCustomerAccount> {
+    let accountNumber: string;
+    do accountNumber = String(Math.floor(1_000_000_000 + Math.random() * 8_999_999_999));
+    while (this.opened.some((a) => a.accountNumber === accountNumber));
+    const accountName = `DavoChain-${i.accountName}`;
+    this.opened.push({ accountNumber, accountName, createdAt: new Date() });
+    if (/ANSWER LOST/i.test(i.accountName)) throw new PayrepError('UNCLEAR', 'mock: the answer was lost (the account was opened)', 0, null);
+    return { accountNumber, accountName, bankName: 'Payrep MFB', status: 'active', providerRef: null };
+  }
+
+  async recentAccounts(i: { since: Date }): Promise<PayrepRecentAccount[] | null> {
+    return this.opened.filter((a) => a.createdAt >= i.since).reverse();
   }
 
   async fetchCredits(f: { accountNumber?: string; referenceNumber?: string; startDate: string; endDate: string }) {

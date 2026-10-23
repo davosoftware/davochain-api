@@ -29,6 +29,13 @@ export interface PayrepCustomerAccount {
   providerRef: string | null;
 }
 
+/** One row of Payrep's newest-first account list (fetch_account_summaries). */
+export interface PayrepRecentAccount {
+  accountNumber: string;
+  accountName: string;
+  createdAt: Date;
+}
+
 export interface PayrepTransferInput {
   reference: string;
   sourceAccountNumber: string;

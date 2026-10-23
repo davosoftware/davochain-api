@@ -99,3 +99,22 @@ export function classifyCreateAccount<T = unknown>(httpStatus: number, body: unk
   if (['83', '01', '02'].includes(e.code) || (httpStatus === 400 && e.code === 'invalid')) return fail('REFUSED');
   return fail('UNCLEAR');
 }
+
+/**
+ * create_account (spec 2026-10-23 §4.3): opening an account with no BVN or NIN.
+ * Payrep opens a new account every time it is asked, so anything that is not a
+ * clear yes or a clear "our setup is wrong" is UNCLEAR, and the caller looks in
+ * the account list before ever sending again. 83 ("Failed to create account in
+ * core banking") is UNCLEAR too: nothing says no account was made.
+ */
+export function classifyOpenAccount<T = unknown>(httpStatus: number, body: unknown): ReadAnswer<T> {
+  const e = envelope(body);
+  const fail = failWith(e, httpStatus);
+  if (httpStatus === 401) return fail('TOKEN');
+  if (!e.b || unclearHttp(httpStatus)) return fail('UNCLEAR');
+  if (isOk(httpStatus) && e.status === true && e.code === '00' && obj(e.data)) return { ok: true, data: e.data as T };
+  if (e.code === '42' && /token/i.test(e.message)) return fail('TOKEN');
+  // 42: the pool account is wrong; 60: our business customer is not active; 41/43: our keys.
+  if (['41', '42', '43', '60'].includes(e.code)) return fail('CONFIG');
+  return fail('UNCLEAR');
+}

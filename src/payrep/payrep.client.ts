@@ -2,16 +2,18 @@ import { Logger } from '@nestjs/common';
 import { request } from 'undici';
 import { parseJsonExact } from '../common/exact-json';
 import { PayrepApi } from './payrep.api';
-import { classifyCreateAccount, classifyRead, classifyTransfer, type StatusAnswer, type TransferAnswer } from './payrep.classify';
+import { classifyCreateAccount, classifyOpenAccount, classifyRead, classifyTransfer, type StatusAnswer, type TransferAnswer } from './payrep.classify';
 import { PayrepError } from './payrep.errors';
 import { listOf, nextCursorOf, parseCollection } from './payrep.parse';
-import type { PayrepAccount, PayrepBank, PayrepCollection, PayrepCursor, PayrepCustomerAccount, PayrepNameEnquiry, PayrepTransferInput } from './payrep.types';
+import type { PayrepAccount, PayrepBank, PayrepCollection, PayrepCursor, PayrepCustomerAccount, PayrepNameEnquiry, PayrepRecentAccount, PayrepTransferInput } from './payrep.types';
 import type { PayrepConfig } from './payrep.config';
 
 type Obj = Record<string, unknown>;
 type Reply = { status: number; body: unknown };
 const PREFIX = '/api/v1';
 const PAGE = 50;
+/** Enough for a few hours of account openings at launch volumes; more means the list is unreadable. */
+const MAX_ACCOUNT_PAGES = 20;
 /** How far back a transfer is looked for by its reference. Payouts and Treasury moves are finished well within this. */
 const STATUS_LOOKBACK_DAYS = 35;
 
@@ -155,6 +157,68 @@ export class PayrepClient extends PayrepApi {
       status: str(a.data.status).toLowerCase(),
       providerRef: str(a.data.shinobi_customer_id) || null,
     };
+  }
+
+  async createAccount(i: { accountName: string; poolAccountNumber: string }): Promise<PayrepCustomerAccount> {
+    const body: Obj = {
+      account_name: i.accountName,
+      is_pool: true,
+      pool_account_number: i.poolAccountNumber,
+      // Payrep's default: our business name is put in front of the customer's name.
+      is_enabled_business_prefix: true,
+    };
+    let r: Reply;
+    try {
+      r = await this.post('/account/api/create_account', body);
+    } catch (err) {
+      if (err instanceof PausedError) throw new PayrepError('BUSY', err.message, 429, '94');
+      throw new PayrepError('UNCLEAR', (err as Error).message, 0, null);
+    }
+    const a = classifyOpenAccount<Obj>(r.status, r.body);
+    if (!a.ok) throw new PayrepError(a.kind === 'TOKEN' ? 'UNCLEAR' : a.kind, a.message, r.status, a.code);
+    const accountNumber = str(a.data.account_number);
+    // A yes without a real number is not a yes we can act on: look before sending again.
+    if (!/^\d{10}$/.test(accountNumber)) throw new PayrepError('UNCLEAR', 'Payrep said the account was created but gave no 10-digit number', r.status, '00');
+    return {
+      accountNumber,
+      accountName: str(a.data.account_name),
+      bankName: str(a.data.bank_name) || 'Payrep MFB',
+      status: str(a.data.status).toLowerCase() || 'active',
+      providerRef: null,
+    };
+  }
+
+  async recentAccounts(i: { since: Date }): Promise<PayrepRecentAccount[] | null> {
+    const out: PayrepRecentAccount[] = [];
+    let cursor: { createdAt: string; id: string } | null = null;
+    try {
+      for (let page = 0; page < MAX_ACCOUNT_PAGES; page++) {
+        const data: unknown = await this.read<unknown>('/account/api/fetch_account_summaries', {
+          limit: PAGE,
+          ...(cursor ? { cursor_created_at: cursor.createdAt, cursor_id: cursor.id } : {}),
+        });
+        const items = listOf(data);
+        if (!items) return null;
+        let older = false;
+        for (const raw of items) {
+          const o = (raw ?? {}) as Obj;
+          const createdAt = new Date(str(o.created_at));
+          const accountNumber = str(o.account_number);
+          if (!/^\d{10}$/.test(accountNumber) || Number.isNaN(createdAt.getTime())) return null;
+          if (createdAt < i.since) {
+            older = true;
+            continue;
+          }
+          out.push({ accountNumber, accountName: str(o.account_name), createdAt });
+        }
+        cursor = nextCursorOf(data);
+        if (older || !cursor || items.length === 0) return out;
+      }
+      // Ran out of pages before reaching "since": the answer is incomplete, so unreadable.
+      return null;
+    } catch {
+      return null;
+    }
   }
 
   async fetchCredits(
