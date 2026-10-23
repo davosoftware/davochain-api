@@ -408,33 +408,34 @@ After success, `GET /v1/me` shows `"emailVerified": true`. No new sign-in is nee
 
 Each customer gets their own Payrep account number. Money sent to it from any Nigerian bank lands in their DavoChain naira balance.
 
-**1. Is there one already?** `GET /v1/deposits/ngn/account`
+**Updated 23 Oct 2026 (afternoon): no BVN or NIN is needed.** Once Basic verification is approved, DavoChain opens the account at Payrep **by itself**, named after the customer exactly as their ID shows it, with DavoChain's name in front. A background job does it within a minute, and the first `GET` below does it straight away. The app never asks for the BVN again.
 
-Not yet, **404**:
+**Just ask for it:** `GET /v1/deposits/ngn/account` (after signing in again, step 7)
+
+**200** (the first GET after approval opened it there and then; real answer, pretend Payrep):
 ```json
-{ "statusCode": 404, "code": "NO_VIRTUAL_ACCOUNT", "eligible": true, "reason": null, "message": "You have no naira deposit account yet." }
+{ "accountNumber": "6510958022", "accountName": "DavoChain-Someone Clean", "bankName": "Payrep MFB", "status": "ACTIVE" }
 ```
-`eligible: true` means they can open one now. If it's `false`, show `reason` (for example, Basic verification is needed first).
+Every later `GET` returns the same account.
 
-**2. Open it:** `POST /v1/deposits/ngn/account`
-
+**202** while it's being opened:
 ```json
-{ "bvn": "33312345678" }
+{ "status": "PENDING", "message": "We're setting up your account. Try again in a few minutes." }
 ```
-Send the same BVN they verified with (or `{ "nin": "…" }` if they verified with NIN). Payrep needs it to open the account; DavoChain doesn't keep it.
+Show "Setting up your account…" and ask again every 3–5 seconds. It's usually ready in seconds. If Payrep was slow to answer, DavoChain checks Payrep's list before ever trying again, so a customer can never end up with two accounts. A push **`ngn_account.ready`** ("Your naira account is ready") arrives when it's done.
 
-**201** (new):
+**404**: only for someone who may not have one yet, with the reason:
 ```json
-{ "accountNumber": "2023091290", "accountName": "DAVOCHAIN/MOCK CUSTOMER", "bankName": "Payrep MFB", "status": "ACTIVE" }
+{ "statusCode": 404, "code": "NO_VIRTUAL_ACCOUNT", "eligible": false, "reason": "Verify your identity (Tier 1) to get a naira account.", "message": "You have no naira deposit account yet." }
 ```
 
-Calling it again returns the **same** account with **200**, so a double tap is safe. From then on, `GET /v1/deposits/ngn/account` returns it with 200.
-
-**202** `{ "status": "PENDING", "message": "We're setting up your account. Try again in a few minutes." }` means Payrep is slow. Ask again in a few minutes.
+**The "open it now" button (optional):** `POST /v1/deposits/ngn/account` with an **empty body** `{}`. It answers `201` (opened now), `200` (already had one) or `202` (on its way). An older app that still sends `{ "bvn": "…" }` gets the same answer: the number is ignored, never sent to Payrep and never stored.
 
 **What to show:** the account number (with a copy button), the bank name and the account name: "Send money to this account from any bank app."
 
-> The code calls this a "virtual account" in places. That's an old name from Flutterwave. It is a Payrep customer account.
+**How it works behind the scenes:** DavoChain calls Payrep's `create_account` with only `{ "account_name": "<name on the ID>", "is_pool": true, "pool_account_number": "<DavoChain's main account>" }`. Payrep adds the "DavoChain-" prefix on live. (On Payrep's sandbox the prefix isn't added; there a test account comes back as just "Ada Chioma Obi".)
+
+> The code calls this a "virtual account" in places. That's an old name from Flutterwave. It is a Payrep account under DavoChain's business.
 
 ### Step 9 · Money arrives in the naira account
 
@@ -826,7 +827,8 @@ If Advanced is switched off by the admin, these answer 503. While one submission
 | 403 | `code: "VERIFICATION_PENDING"` or `"ACCOUNT_UNDER_REVIEW"` | Being checked | Show `message` exactly as sent |
 | 400 | `message` is a list | Form errors | Show each under its field |
 | 400 | `"Idempotency-Key header is required for this request"` | Missing header on a money request | Add a UUID |
-| 404 | `code: "NO_VIRTUAL_ACCOUNT"` | No naira account yet | Offer "Open account" (step 8) |
+| 404 | `code: "NO_VIRTUAL_ACCOUNT"` | May not have a naira account yet (`eligible: false`) | Show `reason` (step 8) |
+| 202 | `status: "PENDING"` (naira account) | The account is being opened | Show "Setting up…" and ask again in a few seconds (step 8) |
 | 409 | | Already in progress (e.g. a second Advanced submission) | Show `message` |
 | 429 | `Retry-After` header | Too many requests | Wait that many seconds. **Never auto-retry sign-in, sign-up, reset or password change.** |
 | 503 | `maintenance` or a provider is down | Temporarily unavailable | Show `message`, try later |
@@ -874,7 +876,6 @@ Then send `{ "code": "424242" }` to `POST /v1/auth/email/verify`.
 | What | Value |
 |---|---|
 | BVN or NIN that verifies | `333` + any 8 digits, with first name `Someone`, last name `Clean`, date of birth `1995-03-03` |
-| BVN refused when opening a naira account | `11111111111` |
 | Bank for withdrawals | Pick from `GET /v1/withdrawals/ngn/banks`; any 10-digit account number, named `MOCK ACCOUNT <last 4>` |
 | An ERC-20 address that passes the format check | `0x52908400098527886E0F7030069857D2E4169EE7` |
 | Naira payout outcomes | The last two digits of the amount pick the outcome: `.51` refused, `.99` answer lost but paid, `.98` status unknown (see `Reports/PAYREP_PAYMENT_TESTING_GUIDE.md`) |
@@ -893,7 +894,7 @@ Then send `{ "code": "424242" }` to `POST /v1/auth/email/verify`.
    - **0. Setup:** admin log in, once.
    - **2. Account › Register**, then put the emailed code in `emailCode` and run **3. Confirm the email › Confirm with the code**.
    - **4. Basic verification**, then **2. Account › Log in again** (approval ends the session).
-   - **5. Naira account number:** open it, then **Simulate a ₦200,000 bank transfer in**.
+   - **5. Naira account number:** "Get my naira account" (it opens by itself, no BVN), then **Simulate a ₦200,000 bank transfer in**.
    - Then folders **6 to 15**. The gift-card approval helper sits inside folder 11. For folder 12, choose a picture in each upload's Body › form-data.
 4. IDs flow from one request to the next by themselves (`quoteId`, `savedBankAccountId`, `giftcardTradeId`, …). Tokens refresh by themselves (section 2.6).
 5. Open **View → Show Postman Console** to see the messages ("Access token refreshed automatically", "Sign in again", "Verified!").
@@ -925,7 +926,7 @@ With the server running outside production, `http://localhost:3000/docs` lists e
 | GET | `/v1/kyc` | | 6 |
 | POST | `/v1/kyc/basic` | Email | 6 |
 | GET | `/v1/me/level` | | 7 |
-| GET/POST | `/v1/deposits/ngn/account` | POST: email | 8 |
+| GET/POST | `/v1/deposits/ngn/account` | GET opens it if needed; POST: email, no body | 8 |
 | GET | `/v1/wallets` | | 9 |
 | GET | `/v1/deposits?limit=` | | 9 |
 | POST | `/v1/deposits/address` | Email, Level | 10 |

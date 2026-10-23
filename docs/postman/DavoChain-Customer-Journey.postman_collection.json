@@ -637,10 +637,10 @@
     },
     {
       "name": "5. Naira account number",
-      "description": "",
+      "description": "No BVN needed (since 23 Oct): the account opens by itself after Basic approval. Run Get, then the simulator.",
       "item": [
         {
-          "name": "Get my naira account (404 if none yet)",
+          "name": "Get my naira account number (opens it if needed, no BVN)",
           "event": [],
           "request": {
             "method": "GET",
@@ -657,11 +657,11 @@
                 "account"
               ]
             },
-            "description": ""
+            "description": "200 with the number; 202 PENDING for a few seconds while it opens (send again); 404 with reason if not verified yet."
           }
         },
         {
-          "name": "Open my naira account",
+          "name": "Open it now (optional, empty body)",
           "event": [],
           "request": {
             "method": "POST",
@@ -683,10 +683,10 @@
                 "account"
               ]
             },
-            "description": "",
+            "description": "Usually not needed: the account opens by itself after Basic approval. 201 opened now, 200 already had one, 202 on its way.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"bvn\": \"{{bvn}}\"\n}",
+              "raw": "{}",
               "options": {
                 "raw": {
                   "language": "json"

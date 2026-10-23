@@ -22,6 +22,19 @@
 
 **New (23 Oct 2026): start with the walk-through.** [`CUSTOMER_JOURNEY_API_GUIDE.md`](CUSTOMER_JOURNEY_API_GUIDE.md) takes one customer through the whole app in order, with real responses: register, email code, Basic verification, the naira account number, deposits, buy, sell, swap, withdrawals, gift cards, Advanced verification and sign-out. It also covers exactly when and how to refresh tokens. A ready-to-import Postman collection that refreshes tokens by itself is in [`postman/`](postman/DavoChain-Customer-Journey.postman_collection.json).
 
+## What changed for the app (23 October 2026, later): naira account without BVN
+
+Payrep confirmed that a customer's naira account doesn't need their BVN or NIN. DavoChain already verified them with Dojah. **The account is now opened automatically after Basic verification**, named after the customer as their ID shows it.
+
+| Change | Where | What the app must do |
+| --- | --- | --- |
+| **No more "enter your BVN to get an account number" step** | 6.4, 6.5 | Remove that screen. After Basic approval (and signing in again), call **6.4**. It answers `200` with the number, or `202` for a few seconds while it opens. |
+| **6.4 can answer `202 { status: "PENDING" }`** | 6.4 | Show "Setting up your account…" and call 6.4 again every 3–5 s (stop after ~2 min). |
+| **6.4's 404 now always has `eligible: false`** | 6.4 | Show `reason`. An eligible customer never gets a 404; their account is opened instead. |
+| **6.5 needs no body**; `bvn`/`nin` are ignored | 6.5 | Send `{}`, or nothing. Older builds keep working. |
+| **New push `ngn_account.ready`** "Your naira account is ready" | Appendix A | On tap, open the naira deposit screen (6.4). |
+| **`accountName`** is now like `DavoChain-ADA CHIOMA OBI` | 6.4 | Show it exactly as sent. |
+
 ## What changed for the app (23 October 2026): the journey guide, and session rules made clear
 
 **No endpoint, request or response changed.** This update makes the documents match how the API really behaves, checked by running one customer through the whole app.
@@ -1486,10 +1499,12 @@ Authorization: Bearer eyJhbGciOi…
 
 ### 6.4 Get my naira deposit account
 
-**Endpoint:** `GET /v1/deposits/ngn/account` · **Auth:** **Bearer** · **KYC:** none (see `eligible`) · **Success:** `200`
+**Endpoint:** `GET /v1/deposits/ngn/account` · **Auth:** **Bearer** · **KYC:** none (see `eligible`) · **Success:** `200` or `202`
 
 **What it does**
 Returns the user's permanent naira account number. A bank transfer into it from any Nigerian bank lands in their naira balance, usually within a minute. A user has at most one, and it doesn't expire.
+
+**Since 23 Oct 2026 the account is opened automatically, with no BVN or NIN.** Once Basic verification (4.2) is approved, DavoChain opens it at Payrep, named after the customer exactly as their ID shows it. A background job does this within a minute; this call also opens it straight away if it hasn't been yet. So for a verified customer, this call answers `200` with the number, or `202` for the few seconds while it's being opened. There is no "enter your BVN" step any more.
 
 **Request**
 ```http
@@ -1499,27 +1514,33 @@ Authorization: Bearer eyJhbGciOi…
 
 **Response** `200`
 ```json
-{ "accountNumber": "2070174481", "accountName": "DAVOCHAIN/ADA OBI", "bankName": "Payrep MFB", "status": "ACTIVE" }
+{ "accountNumber": "7356147005", "accountName": "DavoChain-ADA CHIOMA OBI", "bankName": "Payrep MFB", "status": "ACTIVE" }
 ```
 
 | Field | Type | Description |
 | --- | --- | --- |
 | `accountNumber` | string | 10 digits. Show it with a copy button. |
-| `accountName` | string | The name the sender's banking app shows when they type the number |
-| `bankName` | string | The bank to pick in the sender's app |
+| `accountName` | string | The name the sender's banking app shows when they type the number: DavoChain's name, then the customer's name as on their ID |
+| `bankName` | string | The bank to pick in the sender's app ("Payrep MFB") |
 | `status` | string | `ACTIVE`, or `INACTIVE` while the account is switched off (for example during a suspension). Never show an `INACTIVE` number as something to pay into: money sent to it is held for an admin, not credited. |
+
+**Response** `202` (being opened right now)
+```json
+{ "status": "PENDING", "message": "We're setting up your account. Try again in a few minutes." }
+```
+Show "Setting up your account…" and call 6.4 again every 3–5 seconds. It's usually ready within seconds. Stop after about 2 minutes and show `message`; a push `ngn_account.ready` arrives when it's done. A `202` can last longer if Payrep was slow to answer: we check with Payrep before ever trying again, so a customer never ends up with two accounts.
 
 **Errors**
 
 | Status | `code` | Meaning |
 | --- | --- | --- |
-| 404 | `NO_VIRTUAL_ACCOUNT` | No account yet. `eligible` says whether 6.5 will work; `reason` says why not. |
+| 404 | `NO_VIRTUAL_ACCOUNT` | The user may not have one yet; `reason` says why (always `eligible: false` now) |
 
 ```json
 { "statusCode": 404, "code": "NO_VIRTUAL_ACCOUNT", "eligible": false, "reason": "Verify your identity (Tier 1) to get a naira account.", "message": "You have no naira deposit account yet." }
 ```
 
-Possible `reason` values when `eligible` is `false`:
+Possible `reason` values:
 
 | `reason` | Meaning |
 | --- | --- |
@@ -1530,7 +1551,8 @@ Possible `reason` values when `eligible` is `false`:
 | `"Naira deposits are not available yet."` / `"Naira deposits are temporarily unavailable. Try again later."` | Switched off, or the provider is down |
 
 **Integration notes**
-- Call it when the naira deposit screen opens. On 404 with `eligible: true`, offer "Get my account number" (6.5). With `eligible: false`, show `reason`.
+- Call it when the naira deposit screen opens. `200`: show the number. `202`: show "Setting up…" and poll. `404`: show `reason` (and a "Verify" button when it's about verification).
+- Right after Basic approval the customer must sign in again (§0.5). Then simply call 6.4.
 - A deposit shows up in 6.3 and as a `deposit.credited` push. A deposit over the user's limit, or into an account that is switched off, shows as `ON_HOLD` (push `deposit.on_hold`) until an admin reviews it.
 
 ---
@@ -1540,50 +1562,36 @@ Possible `reason` values when `eligible` is `false`:
 **Endpoint:** `POST /v1/deposits/ngn/account` · **Auth:** **Bearer** · **KYC:** Basic (`TIER_1`) approved **and** not under review (checked server-side) · **Success:** `201`, `200` or `202`
 
 **What it does**
-Creates the user's permanent naira account at Payrep MFB, DavoChain's naira provider. The user re-enters the BVN or NIN they verified with in 4.2. It is checked against what DavoChain holds, sent once to Payrep, and never stored.
+Asks for the account to be opened now. **You usually don't need it:** the account opens by itself after Basic approval, and 6.4 opens it too. Use it for a "Get my account number" or "Try again" button.
 
-**Request**
-
-| Field | In | Type | Required | Rules |
-| --- | --- | --- | --- | --- |
-| `bvn` | body | string | one of the two | Exactly 11 digits |
-| `nin` | body | string | one of the two | Exactly 11 digits |
-
-Send exactly one, and the same kind the user verified with in 4.2.
+**No body is needed.** Older app builds that still send `{ "bvn": … }` or `{ "nin": … }` keep working: the number is ignored, never sent to Payrep and never stored. **New builds must not ask the customer for their BVN here.**
 
 ```http
 POST /v1/deposits/ngn/account
 Authorization: Bearer eyJhbGciOi…
 Content-Type: application/json
 
-{ "bvn": "22222223883" }
+{}
 ```
 
 **Responses**
 
 | Status | Body | Meaning |
 | --- | --- | --- |
-| `201` | the 6.4 object | Created |
-| `200` | the 6.4 object | The user already had one; nothing new was created |
-| `202` | `{ "status": "PENDING", "message": "We're setting up your account. Try again in a few minutes." }` | Payrep didn't confirm in time. Poll 6.4 every 30 seconds for a few minutes. If it still answers 404, let the user try 6.5 again. |
+| `201` | the 6.4 object | Opened now |
+| `200` | the 6.4 object | The user already had one (for example the background job opened it a moment ago); nothing new was opened |
+| `202` | `{ "status": "PENDING", "message": "We're setting up your account. Try again in a few minutes." }` | Being opened, or Payrep's answer is being checked. Poll 6.4 as above. |
 
 **Errors**
 
 | Status | `code` | Meaning |
 | --- | --- | --- |
-| 400 | — | A field isn't 11 digits. `message` is an array of validation messages, as everywhere (0.4). |
-| 400 | `ONE_IDENTITY_NUMBER` | Both or neither were sent |
-| 400 | `IDENTITY_TYPE_MISMATCH` | The user verified with the other kind of number |
-| 400 | `IDENTITY_MISMATCH` | Not the number the user verified with |
-| 400 | `PROVIDER_REJECTED` | Payrep refused the number (it could not verify it) |
 | 403 | `NOT_ELIGIBLE` | Show `message` (the same text as `reason` in 6.4) |
-| 409 | `ALREADY_CREATING` | A request is already in progress (wait a minute), or the last try got no clear answer from Payrep (202) and is being checked: the customer can try again after 30 minutes. Show `message`. |
+| 403 | `EMAIL_NOT_VERIFIED` | Email not confirmed yet (2.10) |
 | 429 | `TOO_MANY_ATTEMPTS` | Five attempts in 24 hours; try tomorrow |
-| 503 | `DEPOSITS_UNAVAILABLE` | Temporarily unavailable; try later |
+| 503 | `DEPOSITS_UNAVAILABLE` | Temporarily unavailable; try later (the background job keeps trying) |
 
-**Integration notes**
-- Never keep the BVN or NIN on the device. Send it once and clear the field.
-- Every attempt counts toward the five a day, including a wrong number.
+The old `400` codes `ONE_IDENTITY_NUMBER`, `IDENTITY_TYPE_MISMATCH`, `IDENTITY_MISMATCH` and `PROVIDER_REJECTED`, and the `409 ALREADY_CREATING`, are no longer sent; "already being opened" is now a `202`.
 
 ---
 
@@ -3186,6 +3194,7 @@ Push uses **Firebase Cloud Messaging** and is **off until the backend adds Fireb
 | `data.type` | Sent when | `transactionId`? | On tap open |
 | --- | --- | --- | --- |
 | `address.ready` | Deposit address finished generating | no | Deposit screen |
+| `ngn_account.ready` | The naira account number is ready (opened after Basic approval) | no | Naira deposit screen (6.4) |
 | `deposit.detected` | Crypto deposit seen, waiting for confirmations. **Also: gift card submitted.** | crypto: yes / gift card: no | Activity / gift-card history |
 | `deposit.credited` | Deposit credited, held deposit released, referral reward paid. **Also: gift card paid** (`transactionId` type `GIFT_CARD`). | yes | Transaction (7.4); for `GIFT_CARD`, gift-card history |
 | `deposit.on_hold` | Naira deposit held for review | yes | Activity |
@@ -3479,7 +3488,7 @@ Locally the API uses **pretend ("mock") versions of every provider**: Quidax (cr
 1. Register in the app (2.1) with an inbox you can open, and a phone number no other account uses.
 2. **Confirm the email** with the emailed code (2.10). If email isn't set up locally, a backend dev can set a known code: `node scripts/dev-verify-email.mjs --email you@example.com --set-code 424242`.
 3. **Basic verification passes by itself** (4.2) with a test BVN: `333` + any 8 digits, first name `Someone`, last name `Clean`, date of birth `1995-03-03`. Each number verifies one account only, so change the digits for each tester. Then **sign in again** (§0.5).
-4. **Naira in:** open the naira account (6.5); a backend dev sends money into it with `POST /v1/admin/dev/payrep/simulate-deposit`. Or a backend dev adds test balance with `npm run dev-credit -- --email you@example.com --asset ngn --amount 500000`.
+4. **Naira in:** the naira account opens by itself after step 3 (call 6.4 to see it); a backend dev sends money into it with `POST /v1/admin/dev/payrep/simulate-deposit`. Or a backend dev adds test balance with `npm run dev-credit -- --email you@example.com --asset ngn --amount 500000`.
 5. **Limits:** naira limits start at ₦0. A backend dev raises them in the admin dashboard → **System → Verification levels**, and switches naira payouts on (**System → Withdrawals**).
 6. Reset codes (2.6) arrive by email; without email, ask a backend dev.
 
@@ -3490,7 +3499,7 @@ Locally the API uses **pretend ("mock") versions of every provider**: Quidax (cr
 | Register, email code, login, refresh, reset, sign out | ✅ |
 | Basic verification (4.2) with a `333…` BVN | ✅ `APPROVED` at once; then sign in again |
 | Advanced verification (4.6) | ✅ with `KYC_ADVANCED_ENABLED=true`: identity and address each go `CHECKING` → `APPROVED` within a few seconds |
-| Naira deposit account (6.5) + simulated incoming naira | ✅ with `NGN_DEPOSITS_ENABLED=true`; the balance updates within seconds |
+| Naira deposit account (6.4, opened automatically, no BVN) + simulated incoming naira | ✅ with `NGN_DEPOSITS_ENABLED=true`; the account is named `DavoChain-Someone Clean`, and the balance updates within seconds |
 | Crypto deposit address (6.1) | ✅ starts `PENDING` with no address, becomes `usable` within seconds (address looks like `mock_usdt_…`) |
 | Quote + **buy**, **sell** | ✅ `COMPLETED` immediately |
 | **Swap** | ✅ starts `PROCESSING`, becomes `COMPLETED` within about a second: poll 7.4 |
@@ -3555,8 +3564,8 @@ Locally the API uses **pretend ("mock") versions of every provider**: Quidax (cr
 | 6.1 | POST | `/v1/deposits/address` | ✅ | TIER_1 | — | 201 |
 | 6.2 | GET | `/v1/deposits/addresses` | ✅ | — | — | 200 |
 | 6.3 | GET | `/v1/deposits?limit=` | ✅ | — | — | 200 |
-| 6.4 | GET | `/v1/deposits/ngn/account` | ✅ | — | — | 200 |
-| 6.5 | POST | `/v1/deposits/ngn/account` | ✅ | TIER_1 | — | 201 |
+| 6.4 | GET | `/v1/deposits/ngn/account` | ✅ | — | — | 200 / 202 |
+| 6.5 | POST | `/v1/deposits/ngn/account` (no body) | ✅ | TIER_1 | — | 201 / 200 / 202 |
 | 7.1 | POST | `/v1/quotes` | ✅ | TIER_1 | — | 201 |
 | 7.2 | POST | `/v1/trades` | ✅ | TIER_1 | **required** | 201 |
 | 7.3 | GET | `/v1/trades?limit=` | ✅ | — | — | 200 |
