@@ -197,6 +197,8 @@ export const envSchema = z
     PAYREP_CLIENT_ID: z.preprocess(emptyToUndefined, z.string().optional()),
     PAYREP_CLIENT_SECRET: z.preprocess(emptyToUndefined, z.string().optional()),
     PAYREP_MAIN_ACCOUNT: z.preprocess(emptyToUndefined, z.string().regex(/^\d{10}$/, 'PAYREP_MAIN_ACCOUNT is a 10-digit account number').optional()),
+    /** Put in front of the customer's name on a new naira account. Empty: Payrep adds our business name itself. */
+    PAYREP_ACCOUNT_NAME_PREFIX: z.preprocess(emptyToUndefined, z.string().max(40).optional()),
     PAYREP_WEBHOOK_SECRET: z.preprocess(emptyToUndefined, z.string().regex(/^[0-9a-f]{64}$/i, 'PAYREP_WEBHOOK_SECRET is 64 hexadecimal characters').optional()),
     NGN_DEPOSITS_ENABLED: bool(false),
     /** H9: customers confirm their email before any money action. Switch off only if email (SMTP) is down. */

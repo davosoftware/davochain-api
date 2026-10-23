@@ -47,6 +47,15 @@ export class PayrepConfig {
     return blank(this.config.get<string>('PAYREP_MAIN_ACCOUNT')) ?? (this.useMock ? MOCK_MAIN_ACCOUNT : null);
   }
 
+  /**
+   * Put in front of the customer's name when opening an account (spec 2026-10-23
+   * §4.2). Empty by default: live Payrep adds our business name itself. Set it to
+   * "DavoChain-" only if Payrep stops doing that.
+   */
+  get accountNamePrefix(): string {
+    return this.config.get<string>('PAYREP_ACCOUNT_NAME_PREFIX') ?? '';
+  }
+
   /** The key pair in force. Refused if missing or the wrong mode for this environment; never names a key. */
   async credentials(): Promise<{ clientId: string; clientSecret: string }> {
     const [id, secret] = await Promise.all([this.creds.get('payrep.clientId'), this.creds.get('payrep.clientSecret')]);

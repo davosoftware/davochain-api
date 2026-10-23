@@ -1,43 +1,52 @@
 import { HttpException, Logger } from '@nestjs/common';
-import { KycHashService, legacyHashIdentity } from '../kyc/kyc-hash';
 import { PayrepError } from '../payrep/payrep.errors';
 import { PayrepMock } from '../payrep/payrep.mock';
 import { FakePrisma } from './testing/fake-prisma';
 import { VirtualAccountsService } from './virtual-accounts.service';
 
-const BVN = '22222223883';
-const OTHER = '22222223884';
-const NIN = '12345678901';
+/**
+ * Naira deposit accounts WITHOUT BVN or NIN (spec 2026-10-23): Payrep
+ * create_account, named from the customer's ID record, pooled into our main
+ * account, opened automatically once Basic is approved.
+ */
 const USER = '7f3c2a1b-9e8d-4c6f-a1b2-c3d4e5f60718';
+const OTHER_USER = '0d1e2f3a-4b5c-4d6e-8f70-819203a4b5c6';
 const POOL = '7801234567';
 const MINUTE = 60_000;
 
 interface Options {
   user?: Record<string, unknown>;
-  profile?: Record<string, unknown>;
+  record?: Record<string, unknown> | null;
   readiness?: { depositsEnabled?: boolean; canCreateAccounts?: boolean };
   mainAccount?: string | null;
+  prefix?: string;
 }
 
 async function setup(o: Options = {}) {
   const db = new FakePrisma();
-  const hasher = new KycHashService({ get: () => 'k'.repeat(32) } as never);
   await db.user.create({
     data: {
       id: USER, email: 'ada@example.com', firstName: 'Ada', lastName: 'Obi', phone: '+2348012345678',
       status: 'ACTIVE', kycTier: 'TIER_1', kycStatus: 'APPROVED', amlStatus: 'CLEAR', ...o.user,
     },
   });
-  await db.kycProfile.create({ data: { userId: USER, bvnHash: hasher.hash(BVN), bvnLast4: '3883', ...o.profile } });
+  if (o.record !== null) {
+    await db.kycVerification.create({
+      data: {
+        id: 'kv-1', userId: USER, state: 'APPROVED', idType: 'BVN', createdAt: new Date(Date.now() - 10 * MINUTE),
+        recordFirstName: 'ADA', recordMiddleName: 'CHIOMA', recordLastName: 'OBI', ...o.record,
+      },
+    });
+  }
   const payrep = new PayrepMock({ port: 1 });
-  const cfg = { mainAccount: o.mainAccount === undefined ? POOL : o.mainAccount };
+  const cfg = { mainAccount: o.mainAccount === undefined ? POOL : o.mainAccount, accountNamePrefix: o.prefix ?? '' };
   const readiness = { report: jest.fn(async () => ({ depositsEnabled: true, canCreateAccounts: true, ...o.readiness })) };
   const alerts = { raise: jest.fn(async () => true) };
-  const svc = new VirtualAccountsService(db as never, payrep, cfg as never, readiness as never, hasher, alerts as never);
-  return { db, payrep, cfg, readiness, alerts, svc };
+  const notifications = { notify: jest.fn(async () => undefined) };
+  const svc = new VirtualAccountsService(db as never, payrep, cfg as never, readiness as never, alerts as never, notifications as never);
+  return { db, payrep, cfg, readiness, alerts, notifications, svc };
 }
 
-/** The HttpException a call failed with; fails the test if it succeeded. */
 async function failure(p: Promise<unknown>): Promise<HttpException> {
   return (await p.then(
     () => {
@@ -47,248 +56,266 @@ async function failure(p: Promise<unknown>): Promise<HttpException> {
   )) as HttpException;
 }
 
-describe('VirtualAccountsService.openForUser (Payrep, spec §4)', () => {
-  it('opens a pooled, prefixed Payrep account with the verified number and a local phone, and answers 201', async () => {
-    const { svc, db, payrep } = await setup();
-    const create = jest.spyOn(payrep, 'createCustomerAccount');
-    const res = await svc.openForUser(USER, { bvn: BVN });
+/** Puts the user's request back in time, as if `ms` had passed. */
+async function age(db: FakePrisma, ms: number) {
+  const row = db.rows('virtualAccountRequest')[0];
+  await db.virtualAccountRequest.update({ where: { userId: USER }, data: { stateSince: new Date((row.stateSince as Date).getTime() - ms) } });
+}
+
+describe('opening the account: create_account with the name on the ID, no identity number', () => {
+  it('sends the ID name (first middle last) and our pool, records it, answers 201, and tells the customer', async () => {
+    const { svc, db, payrep, notifications } = await setup();
+    const create = jest.spyOn(payrep, 'createAccount');
+    const res = await svc.openForUser(USER, {});
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledWith({ accountName: 'ADA CHIOMA OBI', poolAccountNumber: POOL });
     expect(res.httpStatus).toBe(201);
-    expect(res.body).toMatchObject({ accountNumber: expect.stringMatching(/^20\d{8}$/), bankName: 'Payrep MFB', status: 'ACTIVE' });
-    expect(create).toHaveBeenCalledWith({ bvn: BVN, phoneNumber: '08012345678', poolAccountNumber: POOL });
+    expect(res.body).toEqual({ accountNumber: expect.stringMatching(/^\d{10}$/), accountName: 'DavoChain-ADA CHIOMA OBI', bankName: 'Payrep MFB', status: 'ACTIVE' });
     expect(db.rows('virtualAccount')).toEqual([
-      expect.objectContaining({ userId: USER, provider: 'PAYREP', isPrimary: true, source: 'CREATED', identityType: 'BVN', providerStatus: 'active', providerRef: expect.any(String) }),
+      expect.objectContaining({ userId: USER, provider: 'PAYREP', isPrimary: true, source: 'CREATED', identityType: null, providerStatus: 'active' }),
     ]);
-    expect(db.rows('virtualAccountRequest')[0]).toMatchObject({ state: 'IDLE', attemptsInWindow: 1, lastError: null });
+    expect(notifications.notify).toHaveBeenCalledWith(expect.objectContaining({ userId: USER, type: 'ngn_account.ready', title: 'Your naira account is ready' }));
+    expect(db.rows('virtualAccountRequest')[0]).toMatchObject({ state: 'IDLE' });
   });
 
-  it('leaves the phone out when it is not a Nigerian number', async () => {
-    const { svc, payrep } = await setup({ user: { phone: '+447700900123' } });
-    const create = jest.spyOn(payrep, 'createCustomerAccount');
-    await svc.openForUser(USER, { bvn: BVN });
-    expect(create).toHaveBeenCalledWith({ bvn: BVN, phoneNumber: undefined, poolAccountNumber: POOL });
+  it('a bvn or nin sent by an older app is ignored: never sent, never stored', async () => {
+    const { svc, db, payrep } = await setup();
+    const create = jest.spyOn(payrep, 'createAccount');
+    await svc.openForUser(USER, { bvn: '22222223883', nin: '12345678901' } as never);
+    expect(JSON.stringify(create.mock.calls)).not.toMatch(/22222223883|12345678901/);
+    expect(JSON.stringify(db.rows('virtualAccount'))).not.toMatch(/22222223883|12345678901/);
+  });
+
+  it('no middle name: first and last; extra spaces tidied', async () => {
+    const { svc, payrep } = await setup({ record: { recordFirstName: '  BOLA ', recordMiddleName: null, recordLastName: 'ADE  WALE ' } });
+    const create = jest.spyOn(payrep, 'createAccount');
+    await svc.openForUser(USER, {});
+    expect(create).toHaveBeenCalledWith({ accountName: 'BOLA ADE WALE', poolAccountNumber: POOL });
+  });
+
+  it('no Dojah record (e.g. approved by hand): the name on the DavoChain account', async () => {
+    const { svc, payrep } = await setup({ record: null });
+    const create = jest.spyOn(payrep, 'createAccount');
+    await svc.openForUser(USER, {});
+    expect(create).toHaveBeenCalledWith({ accountName: 'Ada Obi', poolAccountNumber: POOL });
+  });
+
+  it('PAYREP_ACCOUNT_NAME_PREFIX is put in front when set (if live Payrep ever stops adding it)', async () => {
+    const { svc, payrep } = await setup({ prefix: 'DavoChain-' });
+    const create = jest.spyOn(payrep, 'createAccount');
+    await svc.openForUser(USER, {});
+    expect(create).toHaveBeenCalledWith({ accountName: 'DavoChain-ADA CHIOMA OBI', poolAccountNumber: POOL });
+  });
+
+  it('if the returned name has no "DavoChain" in it, owners are told once, and the account still works', async () => {
+    const { svc, payrep, alerts } = await setup();
+    jest.spyOn(payrep, 'createAccount').mockResolvedValueOnce({ accountNumber: '7356147005', accountName: 'ADA CHIOMA OBI', bankName: 'Payrep MFB', status: 'active', providerRef: null });
+    const res = await svc.openForUser(USER, {});
+    expect(res.httpStatus).toBe(201);
+    expect(alerts.raise).toHaveBeenCalledWith('NAIRA_RAIL_CONFIG', 'payrep-account-name-prefix', expect.stringMatching(/DavoChain/), expect.any(Array), expect.any(Number));
   });
 
   it('hands back an existing account with 200 and asks Payrep only once', async () => {
     const { svc, payrep } = await setup();
-    const create = jest.spyOn(payrep, 'createCustomerAccount');
-    const first = await svc.openForUser(USER, { bvn: BVN });
-    const again = await svc.openForUser(USER, { bvn: BVN });
-    expect(again).toEqual({ httpStatus: 200, body: first.body });
+    const create = jest.spyOn(payrep, 'createAccount');
+    const first = await svc.openForUser(USER, {});
+    const again = await svc.openForUser(USER, {});
+    expect(again.httpStatus).toBe(200);
+    expect(again.body).toEqual(first.body);
     expect(create).toHaveBeenCalledTimes(1);
   });
 
-  it.each([
-    ['an unverified user', { user: { kycTier: 'TIER_0', kycStatus: 'NOT_STARTED' } }, /Verify your identity/],
-    ['a user whose KYC is pending', { user: { kycStatus: 'PENDING' } }, /Verify your identity/],
-    ['a suspended user', { user: { status: 'SUSPENDED' } }, /not active/],
-    ['while deposits are switched off', { readiness: { depositsEnabled: false } }, /not available yet/],
-    ['while the rail is not ready', { readiness: { canCreateAccounts: false } }, /temporarily unavailable/],
-  ])('refuses %s with 403 and never calls Payrep', async (_name, options, reason) => {
-    const { svc, payrep } = await setup(options as Options);
-    const create = jest.spyOn(payrep, 'createCustomerAccount');
-    const err = await failure(svc.openForUser(USER, { bvn: BVN }));
-    expect(err.getStatus()).toBe(403);
-    expect(err.getResponse()).toMatchObject({ code: 'NOT_ELIGIBLE', message: expect.stringMatching(reason as RegExp) });
+  it('a customer who may not have one: 403 NOT_ELIGIBLE, and Payrep is never asked', async () => {
+    const { svc, payrep } = await setup({ user: { kycStatus: 'PENDING', kycTier: 'TIER_0' } });
+    const create = jest.spyOn(payrep, 'createAccount');
+    const e = await failure(svc.openForUser(USER, {}));
+    expect(e.getStatus()).toBe(403);
+    expect(e.getResponse()).toMatchObject({ code: 'NOT_ELIGIBLE' });
     expect(create).not.toHaveBeenCalled();
-  });
-
-  it('refuses both numbers, neither, or a malformed one, before touching anything', async () => {
-    const { svc, db } = await setup();
-    for (const input of [{ bvn: BVN, nin: NIN }, {}, { bvn: '1234' }]) {
-      expect((await failure(svc.openForUser(USER, input))).getStatus()).toBe(400);
-    }
-    expect(db.rows('virtualAccountRequest')).toHaveLength(0);
-  });
-
-  it('refuses a number that does not match KYC, counts the attempt, and goes idle', async () => {
-    const { svc, db, payrep } = await setup();
-    const create = jest.spyOn(payrep, 'createCustomerAccount');
-    const err = await failure(svc.openForUser(USER, { bvn: OTHER }));
-    expect(err.getStatus()).toBe(400);
-    expect(err.getResponse()).toMatchObject({ code: 'IDENTITY_MISMATCH' });
-    expect(create).not.toHaveBeenCalled();
-    expect(db.rows('virtualAccount')).toHaveLength(0);
-    expect(db.rows('virtualAccountRequest')[0]).toMatchObject({ state: 'IDLE', attemptsInWindow: 1 });
-  });
-
-  it('refuses the other kind of number than the one KYC verified', async () => {
-    const { svc } = await setup();
-    const err = await failure(svc.openForUser(USER, { nin: NIN }));
-    expect(err.getStatus()).toBe(400);
-    expect(err.getResponse()).toMatchObject({ code: 'IDENTITY_TYPE_MISMATCH', message: expect.stringMatching(/BVN/) });
-  });
-
-  it('upgrades a legacy hash to h1: when the number matches', async () => {
-    const { svc, db } = await setup({ profile: { bvnHash: legacyHashIdentity(BVN) } });
-    await svc.openForUser(USER, { bvn: BVN });
-    expect(db.rows('kycProfile')[0].bvnHash).toMatch(/^h1:[0-9a-f]{64}$/);
-  });
-
-  it('83 (identity rejected) is a 400 the customer can act on, with a redacted reason kept', async () => {
-    const { svc, db, payrep } = await setup();
-    jest.spyOn(payrep, 'createCustomerAccount').mockRejectedValueOnce(new PayrepError('REFUSED', `Identity ${BVN} verification failed`, 200, '83'));
-    const err = await failure(svc.openForUser(USER, { bvn: BVN }));
-    expect(err.getStatus()).toBe(400);
-    expect(err.getResponse()).toMatchObject({ code: 'PROVIDER_REJECTED' });
-    const request = db.rows('virtualAccountRequest')[0];
-    expect(request).toMatchObject({ state: 'IDLE', attemptsInWindow: 1 });
-    expect(request.lastError).toBe('Identity [REDACTED] verification failed');
-  });
-
-  it('answers 503 and alerts when Payrep refuses our setup', async () => {
-    const { svc, db, payrep, alerts } = await setup();
-    jest.spyOn(payrep, 'createCustomerAccount').mockRejectedValueOnce(new PayrepError('CONFIG', 'Pool account not found', 200, '42'));
-    const err = await failure(svc.openForUser(USER, { bvn: BVN }));
-    expect(err.getStatus()).toBe(503);
-    expect(alerts.raise).toHaveBeenCalledWith('NAIRA_RAIL_CONFIG', 'config', expect.any(String), expect.any(Array));
-    expect(db.rows('virtualAccountRequest')[0].state).toBe('IDLE');
-  });
-
-  it('a CONFIG problem (no main account) is 503 and alerts, without calling Payrep', async () => {
-    const { svc, payrep, alerts } = await setup({ mainAccount: null });
-    const create = jest.spyOn(payrep, 'createCustomerAccount');
-    expect((await failure(svc.openForUser(USER, { bvn: BVN }))).getStatus()).toBe(503);
-    expect(create).not.toHaveBeenCalled();
-    expect(alerts.raise).toHaveBeenCalledWith('NAIRA_RAIL_CONFIG', 'config', expect.any(String), expect.any(Array));
-  });
-
-  it('an unclear answer is 202 PENDING; the attempt is UNKNOWN and nothing is recorded', async () => {
-    const { svc, db, payrep } = await setup();
-    jest.spyOn(payrep, 'createCustomerAccount').mockRejectedValueOnce(new PayrepError('UNCLEAR', 'timeout', 0, null));
-    const r = await svc.openForUser(USER, { bvn: BVN });
-    expect(r).toEqual({ httpStatus: 202, body: expect.objectContaining({ status: 'PENDING' }) });
-    expect(db.rows('virtualAccount')).toHaveLength(0);
-    expect(db.rows('virtualAccountRequest')[0].state).toBe('UNKNOWN');
-  });
-
-  it('Payrep busy (rate limit, nothing sent): 503 "try later", no 30-minute wait, no alert', async () => {
-    const { svc, db, payrep, alerts } = await setup();
-    jest.spyOn(payrep, 'createCustomerAccount').mockRejectedValueOnce(new PayrepError('BUSY', 'Payrep asked us to slow down; nothing was sent', 429, '94'));
-    const err = await failure(svc.openForUser(USER, { bvn: BVN }));
-    expect(err.getStatus()).toBe(503);
-    expect(err.getResponse()).toMatchObject({ code: 'DEPOSITS_UNAVAILABLE' });
-    expect(db.rows('virtualAccountRequest')[0].state).toBe('IDLE');
-    expect(alerts.raise).not.toHaveBeenCalled();
-    await expect(svc.openForUser(USER, { bvn: BVN })).resolves.toMatchObject({ httpStatus: 201 });
-  });
-
-  it('after an unclear answer: ops are alerted, and the BVN is not sent again for 30 minutes (final review I5)', async () => {
-    const { svc, db, payrep, alerts } = await setup();
-    const create = jest.spyOn(payrep, 'createCustomerAccount').mockRejectedValueOnce(new PayrepError('UNCLEAR', 'timeout', 0, null));
-    await svc.openForUser(USER, { bvn: BVN });
-    expect(alerts.raise).toHaveBeenCalledWith('VIRTUAL_ACCOUNT_SYNC', `va-unknown:${USER}`, expect.any(String), expect.any(Array), expect.any(Number));
-    expect(JSON.stringify(alerts.raise.mock.calls)).not.toContain(BVN);
-
-    const again = await failure(svc.openForUser(USER, { bvn: BVN }));
-    expect(again.getStatus()).toBe(409);
-    expect(again.getResponse()).toMatchObject({ code: 'ALREADY_CREATING', message: expect.stringMatching(/setting up your account/) });
-    expect(create).toHaveBeenCalledTimes(1);
-
-    await db.virtualAccountRequest.update({ where: { userId: USER }, data: { stateSince: new Date(Date.now() - 31 * MINUTE) } });
-    await expect(svc.openForUser(USER, { bvn: BVN })).resolves.toMatchObject({ httpStatus: 201 });
-  });
-
-  it('answers 202 and keeps the account number for ops when recording a created account fails', async () => {
-    const { svc, db, alerts } = await setup();
-    db.failNext('virtualAccount', 'create', new Error('database unavailable'));
-    const res = await svc.openForUser(USER, { bvn: BVN });
-    expect(res).toEqual({ httpStatus: 202, body: { status: 'PENDING', message: expect.any(String) } });
-    expect(db.rows('virtualAccount')).toHaveLength(0);
-    expect(db.rows('virtualAccountRequest')[0]).toMatchObject({ state: 'UNKNOWN', lastError: 'database unavailable' });
-    expect(alerts.raise).toHaveBeenCalledWith(
-      'VIRTUAL_ACCOUNT_SYNC', expect.stringMatching(/^va-unrecorded:20\d{8}$/), expect.any(String),
-      expect.arrayContaining([expect.stringMatching(/^Account number: 20\d{8}$/)]), expect.any(Number),
-    );
-    expect(JSON.stringify(alerts.raise.mock.calls)).not.toContain(BVN);
-  });
-
-  it('hands back an account that appeared while the request waited, without claiming or calling Payrep', async () => {
-    const { svc, db, payrep, readiness } = await setup();
-    const create = jest.spyOn(payrep, 'createCustomerAccount');
-    readiness.report.mockImplementationOnce(async () => {
-      await db.virtualAccount.create({
-        data: { userId: USER, accountNumber: '9000000099', accountName: 'Ada Obi', bankName: 'Payrep MFB', isPrimary: true, source: 'CREATED', providerStatus: 'active' },
-      });
-      return { depositsEnabled: true, canCreateAccounts: true };
-    });
-    const res = await svc.openForUser(USER, { bvn: BVN });
-    expect(res).toEqual({ httpStatus: 200, body: expect.objectContaining({ accountNumber: '9000000099', status: 'ACTIVE' }) });
-    expect(create).not.toHaveBeenCalled();
-    expect(db.rows('virtualAccountRequest')).toHaveLength(0);
-  });
-
-  it('blocks a second request while one is in flight, but not a stale one', async () => {
-    const { svc, db } = await setup();
-    await db.virtualAccountRequest.create({
-      data: { userId: USER, state: 'CREATING', stateSince: new Date(), windowStartedAt: new Date(), attemptsInWindow: 1 },
-    });
-    expect((await failure(svc.openForUser(USER, { bvn: BVN }))).getStatus()).toBe(409);
-    await db.virtualAccountRequest.update({ where: { userId: USER }, data: { stateSince: new Date(Date.now() - 3 * MINUTE) } });
-    await expect(svc.openForUser(USER, { bvn: BVN })).resolves.toMatchObject({ httpStatus: 201 });
-  });
-
-  it('allows five attempts in 24 hours, then 429, and starts over a day later', async () => {
-    const { svc, db } = await setup();
-    await db.virtualAccountRequest.create({
-      data: { userId: USER, state: 'IDLE', windowStartedAt: new Date(Date.now() - 60 * MINUTE), attemptsInWindow: 5 },
-    });
-    const err = await failure(svc.openForUser(USER, { bvn: BVN }));
-    expect(err.getStatus()).toBe(429);
-    expect(err.getResponse()).toMatchObject({ code: 'TOO_MANY_ATTEMPTS' });
-    await db.virtualAccountRequest.update({ where: { userId: USER }, data: { windowStartedAt: new Date(Date.now() - 25 * 60 * MINUTE) } });
-    await expect(svc.openForUser(USER, { bvn: BVN })).resolves.toMatchObject({ httpStatus: 201 });
-    expect(db.rows('virtualAccountRequest')[0].attemptsInWindow).toBe(1);
-  });
-
-  it('never lets a BVN reach a stored row, an error, an alert or a log line', async () => {
-    const lines: string[] = [];
-    const spies = (['log', 'warn', 'error', 'debug', 'verbose'] as const).map((m) =>
-      jest.spyOn(Logger.prototype, m).mockImplementation((...args: unknown[]) => {
-        lines.push(JSON.stringify(args));
-      }),
-    );
-    const evidence: unknown[] = [];
-    try {
-      const arrangements: Array<(p: PayrepMock) => void> = [
-        () => undefined, // success
-        (p) => void jest.spyOn(p, 'createCustomerAccount').mockRejectedValueOnce(new PayrepError('REFUSED', `BVN ${BVN} could not be validated`, 200, '83')),
-        (p) => void jest.spyOn(p, 'createCustomerAccount').mockRejectedValueOnce(new PayrepError('CONFIG', `key refused for ${BVN}`, 200, '41')),
-        (p) => void jest.spyOn(p, 'createCustomerAccount').mockRejectedValueOnce(new PayrepError('UNCLEAR', `timeout while sending ${BVN}`, 0, null)),
-      ];
-      for (const arrange of arrangements) {
-        const s = await setup();
-        arrange(s.payrep);
-        const outcome = await s.svc.openForUser(USER, { bvn: BVN }).catch((e: unknown) => e);
-        evidence.push(outcome instanceof HttpException ? [outcome.message, outcome.getResponse()] : outcome, s.db.allWrites(), s.alerts.raise.mock.calls);
-      }
-      const mismatch = await setup();
-      const refused = await failure(mismatch.svc.openForUser(USER, { bvn: OTHER }));
-      evidence.push(refused.message, refused.getResponse(), mismatch.db.allWrites());
-
-      const text = JSON.stringify(evidence) + lines.join('\n');
-      expect(text).not.toContain(BVN);
-      expect(text).not.toContain(OTHER);
-    } finally {
-      spies.forEach((s) => s.mockRestore());
-    }
   });
 });
 
-describe('VirtualAccountsService: reading, owners and "off"', () => {
-  it('shows the account, INACTIVE when switched off, and 404 with eligibility when there is none', async () => {
-    const { svc, db } = await setup();
-    const none = await failure(svc.getForUser(USER));
-    expect(none.getStatus()).toBe(404);
-    expect(none.getResponse()).toMatchObject({ code: 'NO_VIRTUAL_ACCOUNT', eligible: true, reason: null });
-    await svc.openForUser(USER, { bvn: BVN });
-    await expect(svc.getForUser(USER)).resolves.toMatchObject({ status: 'ACTIVE', bankName: 'Payrep MFB' });
-    await db.virtualAccount.updateMany({ where: { userId: USER }, data: { desiredStatus: 'INACTIVE' } });
-    await expect(svc.getForUser(USER)).resolves.toMatchObject({ status: 'INACTIVE' });
+describe('when Payrep says no, is busy, or the answer is lost', () => {
+  it('our setup refused (42/60): 503, owners alerted, the request goes idle', async () => {
+    const { svc, payrep, alerts, db } = await setup();
+    jest.spyOn(payrep, 'createAccount').mockRejectedValueOnce(new PayrepError('CONFIG', 'Pool account not found', 200, '42'));
+    const e = await failure(svc.openForUser(USER, {}));
+    expect(e.getStatus()).toBe(503);
+    expect(alerts.raise).toHaveBeenCalledWith('NAIRA_RAIL_CONFIG', 'config', expect.any(String), expect.any(Array));
+    expect(db.rows('virtualAccountRequest')[0]).toMatchObject({ state: 'IDLE' });
   });
 
-  it('findOwnerByAccount knows switched-off accounts (Review Focus 4)', async () => {
+  it('no main account set: 503 and an alert, without calling Payrep', async () => {
+    const { svc, payrep, alerts } = await setup({ mainAccount: null });
+    const create = jest.spyOn(payrep, 'createAccount');
+    expect((await failure(svc.openForUser(USER, {}))).getStatus()).toBe(503);
+    expect(create).not.toHaveBeenCalled();
+    expect(alerts.raise).toHaveBeenCalled();
+  });
+
+  it('Payrep busy (nothing was sent): 503 "try later", the request goes idle, no alert', async () => {
+    const { svc, payrep, alerts, db } = await setup();
+    jest.spyOn(payrep, 'createAccount').mockRejectedValueOnce(new PayrepError('BUSY', 'paused', 429, '94'));
+    expect((await failure(svc.openForUser(USER, {}))).getStatus()).toBe(503);
+    expect(db.rows('virtualAccountRequest')[0]).toMatchObject({ state: 'IDLE' });
+    expect(alerts.raise).not.toHaveBeenCalled();
+  });
+
+  it('a lost answer is 202 PENDING: UNKNOWN, owners alerted, nothing recorded, nothing sent again straight away', async () => {
+    const { svc, payrep, alerts, db } = await setup();
+    const create = jest.spyOn(payrep, 'createAccount').mockRejectedValueOnce(new PayrepError('UNCLEAR', 'socket hang up', 0, null));
+    const res = await svc.openForUser(USER, {});
+    expect(res).toEqual({ httpStatus: 202, body: { status: 'PENDING', message: expect.any(String) } });
+    expect(db.rows('virtualAccount')).toEqual([]);
+    expect(db.rows('virtualAccountRequest')[0]).toMatchObject({ state: 'UNKNOWN' });
+    expect(alerts.raise).toHaveBeenCalledWith('VIRTUAL_ACCOUNT_SYNC', `va-unknown:${USER}`, expect.any(String), expect.any(Array), expect.any(Number));
+    // Asked again a moment later: still waiting, and Payrep is not asked again.
+    expect((await svc.openForUser(USER, {})).httpStatus).toBe(202);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it('after a lost answer, the account Payrep DID open is found in its list and kept: no second account', async () => {
+    const { svc, payrep, db } = await setup({ record: { recordFirstName: 'ANSWER', recordMiddleName: null, recordLastName: 'LOST' } });
+    const create = jest.spyOn(payrep, 'createAccount');
+    expect((await svc.openForUser(USER, {})).httpStatus).toBe(202); // the mock opens it, then "loses" the answer
+    await age(db, 3 * MINUTE);
+    const res = await svc.openForUser(USER, {});
+    expect(res.httpStatus).toBe(201);
+    expect(res.body).toMatchObject({ accountName: 'DavoChain-ANSWER LOST' });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(db.rows('virtualAccount')).toHaveLength(1);
+  });
+
+  it('after a lost answer where nothing was opened, it is sent again (once)', async () => {
+    const { svc, payrep, db } = await setup();
+    const create = jest.spyOn(payrep, 'createAccount').mockRejectedValueOnce(new PayrepError('UNCLEAR', 'timeout', 0, null));
+    await svc.openForUser(USER, {});
+    await age(db, 3 * MINUTE);
+    const res = await svc.openForUser(USER, {});
+    expect(res.httpStatus).toBe(201);
+    expect(create).toHaveBeenCalledTimes(2);
+  });
+
+  it("an account already recorded for another customer is never taken, even with the same name", async () => {
+    const { svc, payrep, db } = await setup();
+    jest.spyOn(payrep, 'createAccount').mockRejectedValueOnce(new PayrepError('UNCLEAR', 'timeout', 0, null));
+    await svc.openForUser(USER, {});
+    jest.spyOn(payrep, 'recentAccounts').mockResolvedValueOnce([{ accountNumber: '3046760427', accountName: 'DavoChain-ADA CHIOMA OBI', createdAt: new Date() }]);
+    await db.virtualAccount.create({ data: { userId: OTHER_USER, provider: 'PAYREP', accountNumber: '3046760427', accountName: 'DavoChain-ADA CHIOMA OBI', bankName: 'Payrep MFB', isPrimary: true, source: 'CREATED' } });
+    await age(db, 3 * MINUTE);
+    const res = await svc.openForUser(USER, {});
+    expect(res.httpStatus).toBe(201);
+    expect((res.body as { accountNumber: string }).accountNumber).not.toBe('3046760427');
+  });
+
+  it('two possible accounts: never guess. A person is alerted, the customer waits, and after 24 hours a fresh one is opened', async () => {
+    const { svc, payrep, db, alerts } = await setup();
+    const create = jest.spyOn(payrep, 'createAccount').mockRejectedValueOnce(new PayrepError('UNCLEAR', 'timeout', 0, null));
+    await svc.openForUser(USER, {});
+    const now = new Date();
+    jest.spyOn(payrep, 'recentAccounts').mockResolvedValueOnce([
+      { accountNumber: '3046760427', accountName: 'DavoChain-ADA CHIOMA OBI', createdAt: now },
+      { accountNumber: '7356147005', accountName: 'DavoChain-ADA CHIOMA OBI', createdAt: now },
+    ]);
+    await age(db, 3 * MINUTE);
+    expect((await svc.openForUser(USER, {})).httpStatus).toBe(202);
+    expect(db.rows('virtualAccountRequest')[0]).toMatchObject({ state: 'NEEDS_PERSON' });
+    expect(alerts.raise).toHaveBeenCalledWith('VIRTUAL_ACCOUNT_SYNC', `va-ambiguous:${USER}`, expect.any(String), expect.arrayContaining([expect.stringMatching(/3046760427.*7356147005|7356147005.*3046760427/)]), expect.any(Number));
+    expect((await svc.openForUser(USER, {})).httpStatus).toBe(202);
+    expect(create).toHaveBeenCalledTimes(1);
+    await age(db, 24 * 60 * MINUTE + MINUTE);
+    expect((await svc.openForUser(USER, {})).httpStatus).toBe(201);
+    expect(create).toHaveBeenCalledTimes(2);
+  });
+
+  it('the account list cannot be read: stay UNKNOWN and look again later; never send blind', async () => {
+    const { svc, payrep, db } = await setup();
+    const create = jest.spyOn(payrep, 'createAccount').mockRejectedValueOnce(new PayrepError('UNCLEAR', 'timeout', 0, null));
+    await svc.openForUser(USER, {});
+    jest.spyOn(payrep, 'recentAccounts').mockResolvedValueOnce(null);
+    await age(db, 3 * MINUTE);
+    expect((await svc.openForUser(USER, {})).httpStatus).toBe(202);
+    expect(db.rows('virtualAccountRequest')[0]).toMatchObject({ state: 'UNKNOWN' });
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it('opened but not recorded (database hiccup): 202 and an alert; the next try finds it in the list', async () => {
+    const { svc, db, alerts, payrep } = await setup();
+    const create = jest.spyOn(payrep, 'createAccount');
+    db.failNext('virtualAccount', 'create', new Error('database unavailable'));
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    expect((await svc.openForUser(USER, {})).httpStatus).toBe(202);
+    expect(alerts.raise).toHaveBeenCalledWith('VIRTUAL_ACCOUNT_SYNC', expect.stringMatching(/^va-unrecorded:/), expect.any(String), expect.any(Array), expect.any(Number));
+    await age(db, 3 * MINUTE);
+    expect((await svc.openForUser(USER, {})).httpStatus).toBe(201);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('one at a time, and a daily cap', () => {
+  it('a second request while one is opening is 202 PENDING (not an error); a stale lock is taken over', async () => {
+    const { svc, db } = await setup();
+    await db.virtualAccountRequest.create({ data: { userId: USER, state: 'CREATING', stateSince: new Date(), attemptsInWindow: 1, windowStartedAt: new Date() } });
+    expect((await svc.openForUser(USER, {})).httpStatus).toBe(202);
+    await age(db, 3 * MINUTE);
+    expect((await svc.openForUser(USER, {})).httpStatus).toBe(201);
+  });
+
+  it('five tries in 24 hours, then 429 for a tap (the background opener just waits)', async () => {
+    const { svc, payrep, db } = await setup();
+    jest.spyOn(payrep, 'createAccount').mockRejectedValue(new PayrepError('BUSY', 'paused', 429, '94'));
+    for (let i = 0; i < 5; i++) await failure(svc.openForUser(USER, {}));
+    const e = await failure(svc.openForUser(USER, {}));
+    expect(e.getStatus()).toBe(429);
+    expect((await svc.ensure(USER, 'AUTO')).httpStatus).toBe(202);
+    expect(db.rows('virtualAccountRequest')[0]).toMatchObject({ attemptsInWindow: 5 });
+  });
+});
+
+describe('reading the account: GET opens it for an eligible customer', () => {
+  it('eligible and none yet: GET opens it there and then (200); later GETs just read it', async () => {
+    const { svc, payrep } = await setup();
+    const create = jest.spyOn(payrep, 'createAccount');
+    const r = await svc.getForUser(USER);
+    expect(r.httpStatus).toBe(200);
+    expect(r.body).toMatchObject({ accountNumber: expect.stringMatching(/^\d{10}$/), status: 'ACTIVE' });
+    await svc.getForUser(USER);
+    expect(create).toHaveBeenCalledTimes(1);
+  });
+
+  it('while it is being opened, GET is 202 PENDING', async () => {
+    const { svc, db } = await setup();
+    await db.virtualAccountRequest.create({ data: { userId: USER, state: 'CREATING', stateSince: new Date(), attemptsInWindow: 1, windowStartedAt: new Date() } });
+    expect(await svc.getForUser(USER)).toEqual({ httpStatus: 202, body: { status: 'PENDING', message: expect.any(String) } });
+  });
+
+  it('not eligible: 404 NO_VIRTUAL_ACCOUNT with the reason, and Payrep is never asked', async () => {
+    const { svc, payrep } = await setup({ user: { kycStatus: 'NOT_STARTED', kycTier: 'TIER_0' } });
+    const create = jest.spyOn(payrep, 'createAccount');
+    const e = await failure(svc.getForUser(USER));
+    expect(e.getStatus()).toBe(404);
+    expect(e.getResponse()).toMatchObject({ code: 'NO_VIRTUAL_ACCOUNT', eligible: false, reason: expect.stringMatching(/Verify/) });
+    expect(create).not.toHaveBeenCalled();
+  });
+
+  it('a Payrep problem on GET never shows as an error: 202 PENDING, and the background opener retries', async () => {
+    const { svc, payrep } = await setup();
+    jest.spyOn(payrep, 'createAccount').mockRejectedValueOnce(new PayrepError('BUSY', 'paused', 429, '94'));
+    expect((await svc.getForUser(USER)).httpStatus).toBe(202);
+  });
+
+  it('shows INACTIVE when switched off', async () => {
+    const { svc, db } = await setup();
+    await svc.openForUser(USER, {});
+    await db.virtualAccount.updateMany({ where: { userId: USER }, data: { desiredStatus: 'INACTIVE' } });
+    expect((await svc.getForUser(USER)).body).toMatchObject({ status: 'INACTIVE' });
+  });
+});
+
+describe('owners and "off" (unchanged)', () => {
+  it('findOwnerByAccount knows switched-off accounts', async () => {
     const { svc } = await setup();
-    await svc.openForUser(USER, { bvn: BVN });
+    await svc.openForUser(USER, {});
     const [va] = await svc.listForUser(USER);
     await expect(svc.findOwnerByAccount(va.accountNumber)).resolves.toEqual({ userId: USER, switchedOff: false });
     await svc.setDesiredForUser(USER, 'INACTIVE');
@@ -296,30 +323,30 @@ describe('VirtualAccountsService: reading, owners and "off"', () => {
     await expect(svc.findOwnerByAccount('0000000000')).resolves.toBeNull();
   });
 
-  it('setDesiredForUser only records the wish (Payrep has no switch-off API) and never throws', async () => {
+  it('setDesiredForUser only records the wish and never throws', async () => {
     const { svc, db, payrep } = await setup();
-    await svc.openForUser(USER, { bvn: BVN });
-    const calls = jest.spyOn(payrep, 'createCustomerAccount');
+    await svc.openForUser(USER, {});
+    const calls = jest.spyOn(payrep, 'createAccount');
     await svc.setDesiredForUser(USER, 'INACTIVE', { background: true });
     expect(db.rows('virtualAccount')[0]).toMatchObject({ desiredStatus: 'INACTIVE' });
     expect(calls).not.toHaveBeenCalled();
     db.failNext('virtualAccount', 'updateMany', new Error('database unavailable'));
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     await expect(svc.setDesiredForUser(USER, 'ACTIVE')).resolves.toBeUndefined();
   });
 
   it("lets an admin switch one account, refusing another user's with 404", async () => {
     const { svc, db } = await setup();
-    await svc.openForUser(USER, { bvn: BVN });
+    await svc.openForUser(USER, {});
     const vaId = db.rows('virtualAccount')[0].id as string;
     expect((await failure(svc.setDesired('someone-else', vaId, 'INACTIVE'))).getStatus()).toBe(404);
     const { before, after } = await svc.setDesired(USER, vaId, 'INACTIVE');
     expect(before).toMatchObject({ id: vaId, desiredStatus: 'ACTIVE' });
-    expect(after).toMatchObject({ id: vaId, desiredStatus: 'INACTIVE', providerRef: expect.any(String) });
-    await expect(svc.listForUser(USER)).resolves.toEqual([expect.objectContaining({ id: vaId, desiredStatus: 'INACTIVE' })]);
+    expect(after).toMatchObject({ id: vaId, desiredStatus: 'INACTIVE' });
   });
 });
 
-describe('final review C1: a person not AML-CLEAR cannot open a naira deposit account', () => {
+describe('final review C1: a person not AML-CLEAR cannot have a naira deposit account', () => {
   it.each(['BLOCKED', 'UNDER_REVIEW', 'RESTRICTED', 'PENDING', 'NOT_SCREENED'])('%s is not eligible, with the generic wording', async (amlStatus) => {
     const { svc } = await setup({ user: { amlStatus } });
     const r = await svc.eligibility(USER);

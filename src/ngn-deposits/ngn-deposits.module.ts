@@ -6,6 +6,7 @@ import { PayInProcessor } from './pay-in.processor';
 import { PayInService } from './pay-in.service';
 import { ReadinessService } from './readiness.service';
 import { SweepService } from './sweep.service';
+import { AccountOpenerService } from './account-opener.service';
 import { DepositRefundService } from './deposit-refund.service';
 import { VirtualAccountsController } from './virtual-accounts.controller';
 import { VirtualAccountsService } from './virtual-accounts.service';
@@ -26,6 +27,7 @@ import { PayrepModule } from '../payrep/payrep.module';
     { provide: DepositIntake, useExisting: PayInService },
     PayInProcessor,
     SweepService,
+    AccountOpenerService,
     DepositRefundService,
   ],
   exports: [ReadinessService, VirtualAccountsService, PayInService, DepositRefundService],

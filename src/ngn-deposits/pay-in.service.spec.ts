@@ -32,7 +32,7 @@ async function setup(o: Options = {}) {
   const payrep = new PayrepMock({ port: 1 });
   jest.spyOn(payrep as unknown as { deliver: () => Promise<number> }, 'deliver').mockResolvedValue(200);
   const alerts = { raise: jest.fn(async () => true) };
-  const accounts = new VirtualAccountsService(db as never, payrep, { mainAccount: '7801234567' } as never, {} as never, {} as never, alerts as never);
+  const accounts = new VirtualAccountsService(db as never, payrep, { mainAccount: '7801234567', accountNamePrefix: '' } as never, {} as never, alerts as never, { notify: async () => undefined } as never);
   const posts: Array<{ legs: LedgerLeg[]; transactionId?: string }> = [];
   const ledger = {
     post: jest.fn(async (_t: unknown, legs: LedgerLeg[], transactionId?: string) => {
