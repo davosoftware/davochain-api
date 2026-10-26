@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { KycTier, PolicyAction, QuoteSide, RateQuote } from '@prisma/client';
 import { formatQuoteRate } from './quote-rate';
@@ -12,6 +12,7 @@ import { SystemFlagsService } from '../common/system-flags.service';
 import { Decimal, ZERO, dec, floorToStep, str } from '../common/money';
 import { LevelPolicyService } from '../levels/level-policy.service';
 import { levelOf } from '../levels/levels';
+import { ServerSettingsService } from '../settings/server-settings.service';
 
 export interface QuoteView {
   quoteId: string;
@@ -45,6 +46,8 @@ export class QuotesService {
     private readonly flags: SystemFlagsService,
     private readonly config: ConfigService,
     private readonly policy: LevelPolicyService,
+    /** Live values from System → Server settings (spec 2026-10-26); .env when absent. */
+    @Optional() private readonly settings?: ServerSettingsService,
   ) {}
 
   /**
@@ -348,7 +351,7 @@ export class QuotesService {
     /** The fee in dollars, whatever asset it is actually charged in. */
     feeUsd: Decimal;
   }): Promise<QuoteView> {
-    const ttl = this.config.get<number>('QUOTE_TTL_SECONDS') ?? 12;
+    const ttl = (this.settings ? this.settings.get<number>('QUOTE_TTL_SECONDS') : this.config.get<number>('QUOTE_TTL_SECONDS')) ?? 12;
     const expiresAt = new Date(Date.now() + ttl * 1000);
 
     // Level rules: tell the person now; the binding check runs again when the trade locks its funds.
@@ -407,7 +410,7 @@ export class QuotesService {
     if (!quote || quote.userId !== userId) throw new NotFoundException('Quote not found');
     if (quote.consumedAt) throw new BadRequestException('This quote has already been used');
 
-    const hardExpiry = this.config.get<number>('QUOTE_HARD_EXPIRY_SECONDS') ?? 30;
+    const hardExpiry = (this.settings ? this.settings.get<number>('QUOTE_HARD_EXPIRY_SECONDS') : this.config.get<number>('QUOTE_HARD_EXPIRY_SECONDS')) ?? 30;
     const ageSeconds = (Date.now() - quote.createdAt.getTime()) / 1000;
     if (quote.expiresAt < new Date() || ageSeconds > hardExpiry) {
       throw new BadRequestException('The rate has expired. Please refresh and try again.');

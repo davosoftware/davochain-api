@@ -69,6 +69,20 @@ export const CREDENTIALS = [
     hint: 'Sends admin alerts and password-reset codes.',
   },
   {
+    group: 'File storage',
+    name: 'r2.accessKeyId',
+    label: 'R2 access key ID',
+    env: 'R2_ACCESS_KEY_ID',
+    hint: 'From Cloudflare → R2 → Manage API tokens. The account ID and bucket are on System → Server settings.',
+  },
+  {
+    group: 'File storage',
+    name: 'r2.secretAccessKey',
+    label: 'R2 secret access key',
+    env: 'R2_SECRET_ACCESS_KEY',
+    hint: 'Shown once by Cloudflare when the token is made. KYC documents and gift-card photos are stored with it.',
+  },
+  {
     group: 'Push',
     name: 'fcm.privateKey',
     label: 'Firebase private key',

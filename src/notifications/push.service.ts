@@ -1,8 +1,9 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DevicePlatform } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CredentialsService } from '../common/credentials.service';
+import { ServerSettingsService } from '../settings/server-settings.service';
 
 /**
  * Firebase Cloud Messaging.
@@ -39,11 +40,13 @@ export class PushService implements OnModuleInit {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly credentials: CredentialsService,
+    /** Live values from System → Server settings (spec 2026-10-26); .env when absent. */
+    @Optional() private readonly settings?: ServerSettingsService,
   ) {}
 
   async onModuleInit(): Promise<void> {
-    const projectId = this.config.get<string>('FCM_PROJECT_ID');
-    const clientEmail = this.config.get<string>('FCM_CLIENT_EMAIL');
+    const projectId = (this.settings ? this.settings.get<string>('FCM_PROJECT_ID') : this.config.get<string>('FCM_PROJECT_ID'));
+    const clientEmail = (this.settings ? this.settings.get<string>('FCM_CLIENT_EMAIL') : this.config.get<string>('FCM_CLIENT_EMAIL'));
     const rawKey =
       (await this.credentials.get('fcm.privateKey').catch(() => undefined)) ??
       this.config.get<string>('FCM_PRIVATE_KEY');

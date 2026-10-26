@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AlertType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -7,6 +7,7 @@ import { OpsAlertsService } from '../common/ops-alerts/ops-alerts.service';
 import { PayrepApi } from '../payrep/payrep.api';
 import { PayrepConfig } from '../payrep/payrep.config';
 import { PayrepError } from '../payrep/payrep.errors';
+import { ServerSettingsService } from '../settings/server-settings.service';
 
 const CACHE_MS = 60_000;
 /** How long the account screen waits for Payrep before calling it unreachable. */
@@ -55,10 +56,12 @@ export class ReadinessService {
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly alerts: OpsAlertsService,
+    /** Live values from System → Server settings (spec 2026-10-26); .env when absent. */
+    @Optional() private readonly settings?: ServerSettingsService,
   ) {}
 
   get depositsEnabled(): boolean {
-    return this.config.get<boolean>('NGN_DEPOSITS_ENABLED') === true;
+    return (this.settings ? this.settings.get<boolean>('NGN_DEPOSITS_ENABLED') : this.config.get<boolean>('NGN_DEPOSITS_ENABLED')) === true;
   }
 
   async report(force = false): Promise<ReadinessReport> {

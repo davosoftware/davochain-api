@@ -6,6 +6,8 @@ import {
   SetMetadata,
   UnauthorizedException,
 } from '@nestjs/common';
+import { Optional } from '@nestjs/common';
+import { ServerSettingsService } from '../settings/server-settings.service';
 import { Reflector } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
@@ -29,6 +31,8 @@ export class JwtAuthGuard implements CanActivate {
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
     private readonly reflector: Reflector,
+    /** "Sign out all customers" (spec 2026-10-26): optional so the guard still builds in narrow tests. */
+    @Optional() private readonly settings?: ServerSettingsService,
   ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
@@ -47,16 +51,23 @@ export class JwtAuthGuard implements CanActivate {
       throw new UnauthorizedException('Missing bearer token');
     }
 
+    let payload: JwtPayload;
     try {
-      const payload = await this.jwt.verifyAsync<JwtPayload>(token, {
+      payload = await this.jwt.verifyAsync<JwtPayload>(token, {
         secret: this.config.getOrThrow<string>('JWT_SECRET'),
       });
       if (payload.typ !== 'access') throw new Error('wrong token type');
-      req.user = payload;
-      return true;
     } catch {
       throw new UnauthorizedException('Invalid or expired token');
     }
+    // An owner signed every customer out: tokens from that second or earlier are over,
+    // even with minutes left on them. The app sends the customer to sign in again.
+    const cut = this.settings?.customerSessionsValidAfterSec() ?? null;
+    if (cut !== null && typeof payload.iat === 'number' && payload.iat <= cut) {
+      throw new UnauthorizedException('Session expired. Please sign in again.');
+    }
+    req.user = payload;
+    return true;
   }
 }
 
@@ -97,6 +108,8 @@ export class KycGuard implements CanActivate {
     private readonly prisma: PrismaService,
     private readonly policy: LevelPolicyService,
     private readonly config: ConfigService,
+    /** Live values from System → Server settings (spec 2026-10-26); .env when absent. */
+    @Optional() private readonly settings?: ServerSettingsService,
   ) {}
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
@@ -135,7 +148,7 @@ export class KycGuard implements CanActivate {
 
   /** H9: money and verification wait until the customer proves the inbox is theirs. */
   private assertEmailConfirmed(u: { email: string; emailVerifiedAt: Date | null }): void {
-    if (u.emailVerifiedAt || this.config.get<boolean>('EMAIL_VERIFICATION_REQUIRED') === false) return;
+    if (u.emailVerifiedAt || (this.settings ? this.settings.get<boolean>('EMAIL_VERIFICATION_REQUIRED') : this.config.get<boolean>('EMAIL_VERIFICATION_REQUIRED')) === false) return;
     throw new ForbiddenException({
       statusCode: 403,
       code: 'EMAIL_NOT_VERIFIED',

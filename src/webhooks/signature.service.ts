@@ -1,7 +1,8 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CredentialsService } from '../common/credentials.service';
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { ServerSettingsService } from '../settings/server-settings.service';
 
 /**
  * Quidax signs as:
@@ -20,6 +21,8 @@ export class SignatureService {
 
   constructor(private readonly config: ConfigService,
     private readonly credentials: CredentialsService,
+    /** Live values from System → Server settings (spec 2026-10-26); .env when absent. */
+    @Optional() private readonly settings?: ServerSettingsService,
   ) {}
 
   async verify(header: string | undefined, rawBody: Buffer | undefined): Promise<boolean> {
@@ -38,7 +41,7 @@ export class SignatureService {
     if (!parsed) return false;
 
     // Close the replay window.
-    const toleranceSec = this.config.get<number>('QUIDAX_WEBHOOK_TOLERANCE_SECONDS') ?? 300;
+    const toleranceSec = (this.settings ? this.settings.get<number>('QUIDAX_WEBHOOK_TOLERANCE_SECONDS') : this.config.get<number>('QUIDAX_WEBHOOK_TOLERANCE_SECONDS')) ?? 300;
     const ageSec = Math.abs(Date.now() / 1000 - parsed.timestamp);
     if (ageSec > toleranceSec) {
       this.log.warn(`Rejected webhook: timestamp ${Math.round(ageSec)}s outside tolerance`);

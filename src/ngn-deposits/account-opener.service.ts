@@ -7,6 +7,7 @@ import { JobLeaseService } from '../common/job-lease.service';
 import { redactIds } from '../common/redact';
 import { ReadinessService } from './readiness.service';
 import { VirtualAccountsService } from './virtual-accounts.service';
+import { ServerSettingsService } from '../settings/server-settings.service';
 
 const MINUTE = 60_000;
 /** Customers per run. Payrep rate-limits us, so a steady trickle beats a burst. */
@@ -38,6 +39,8 @@ export class AccountOpenerService {
     private readonly leases: JobLeaseService,
     @Optional() @Inject(OPENER_OPTIONS) opts?: { pauseMs?: number },
     @Optional() private readonly config?: ConfigService,
+    /** Live values from System → Server settings (spec 2026-10-26); .env when absent. */
+    @Optional() private readonly settings?: ServerSettingsService,
   ) {
     this.pauseMs = opts?.pauseMs ?? 500;
   }
@@ -53,7 +56,7 @@ export class AccountOpenerService {
 
   async run(): Promise<{ tried: number }> {
     // Off only on purpose (e.g. a test server pointed at Payrep's sandbox and a database full of test customers).
-    if (this.config?.get<boolean>('NGN_ACCOUNT_AUTO_OPEN') === false) return { tried: 0 };
+    if ((this.settings ? this.settings.get<boolean>('NGN_ACCOUNT_AUTO_OPEN') : this.config?.get<boolean>('NGN_ACCOUNT_AUTO_OPEN')) === false) return { tried: 0 };
     const ready = await this.readiness.report();
     if (!ready.depositsEnabled || !ready.canCreateAccounts) return { tried: 0 };
 

@@ -46,3 +46,17 @@ describe('The FLW_* settings are retired', () => {
     warn.mockRestore();
   });
 });
+
+/** Server settings (26 Oct 2026): trading is paused and resumed with the dashboard's trading halt. */
+describe('TRADING_ENABLED is retired', () => {
+  it('an existing .env that still sets it keeps starting, and startup says what replaced it', () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    expect(() => validateEnv({ ...BASE, TRADING_ENABLED: 'false' })).not.toThrow();
+    expect(warn.mock.calls.map(([m]) => String(m))).toContainEqual(expect.stringMatching(/^TRADING_ENABLED is no longer used: .*trading halt/));
+    warn.mockRestore();
+  });
+
+  it('it is not a setting any more', () => {
+    expect(Object.keys((envSchema as unknown as { _def: { schema: { shape: object } } })._def.schema.shape)).not.toContain('TRADING_ENABLED');
+  });
+});

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { RateConfig } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -6,6 +6,7 @@ import { QuidaxClient } from '../quidax/quidax.client';
 import { SingleFlight } from '../quidax/rate-limiter';
 import { Decimal, dec } from '../common/money';
 import type { QuidaxSwapQuotation } from '../quidax/quidax.types';
+import { ServerSettingsService } from '../settings/server-settings.service';
 
 export interface PricePoint {
   assetCode: string;
@@ -40,8 +41,10 @@ export class RatesService {
     private readonly prisma: PrismaService,
     private readonly quidax: QuidaxClient,
     private readonly config: ConfigService,
+    /** Live values from System → Server settings (spec 2026-10-26); .env when absent. */
+    @Optional() private readonly settings?: ServerSettingsService,
   ) {
-    const ttl = (this.config.get<number>('RATE_CACHE_TTL_SECONDS') ?? 3) * 1000;
+    const ttl = ((this.settings ? this.settings.get<number>('RATE_CACHE_TTL_SECONDS') : this.config.get<number>('RATE_CACHE_TTL_SECONDS')) ?? 3) * 1000;
     this.flight = new SingleFlight<PricePoint>(ttl);
     this.sellFlight = new SingleFlight<PricePoint>(ttl);
   }

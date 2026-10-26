@@ -35,6 +35,7 @@ import { TreasuryModule } from '../treasury/treasury.module';
 import { TreasuryAdminController } from './treasury-admin.controller';
 import { KycDocumentsAdminController } from './kyc-documents-admin.controller';
 import { DojahSettingsService } from './dojah-settings.service';
+import { ServerSettingsController } from './server-settings.controller';
 import { TwoStepService } from './two-step.service';
 import { WithdrawalsModule } from '../withdrawals/withdrawals.module';
 
@@ -60,7 +61,7 @@ import { WithdrawalsModule } from '../withdrawals/withdrawals.module';
     // Admins view and remove customers' saved withdrawal destinations (Part 2).
     WithdrawalsModule,
   ],
-  controllers: [AdminController, AdminAuthController, AlertRecipientsController, KycBasicReviewController, KycAdvancedReviewController, ComplianceController, DojahAdminController, TreasuryAdminController, KycDocumentsAdminController],
+  controllers: [AdminController, AdminAuthController, AlertRecipientsController, KycBasicReviewController, KycAdvancedReviewController, ComplianceController, DojahAdminController, TreasuryAdminController, KycDocumentsAdminController, ServerSettingsController],
   providers: [AdminService, UsersAdminService, AdminsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService, AdminSessionsService, AdminOtpService, NgnWithdrawalsService, AdminGuard, LevelAdminService, DojahSettingsService, TwoStepService],
   exports: [AdminService, UsersAdminService, AdminsService, AdminSessionsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService],
 })

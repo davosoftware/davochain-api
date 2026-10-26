@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -9,6 +9,7 @@ import { SettlementService } from '../trades/settlement.service';
 import { RatesService } from '../rates/rates.service';
 import { Decimal, ZERO, dec, str } from '../common/money';
 import { JOBS, QUEUES, jobId } from '../common/queues';
+import { ServerSettingsService } from '../settings/server-settings.service';
 
 export interface ClaimableRow {
   asset: string;
@@ -51,10 +52,12 @@ export class FeeClaimsService {
     private readonly rates: RatesService,
     private readonly config: ConfigService,
     @InjectQueue(QUEUES.FEE_CLAIMS) private readonly queue: Queue,
+    /** Live values from System → Server settings (spec 2026-10-26); .env when absent. */
+    @Optional() private readonly settings?: ServerSettingsService,
   ) {}
 
   private destination(): string {
-    return (this.config.get<string>('FEE_CLAIM_DESTINATION') ?? 'usdt').toLowerCase();
+    return ((this.settings ? this.settings.get<string>('FEE_CLAIM_DESTINATION') : this.config.get<string>('FEE_CLAIM_DESTINATION')) ?? 'usdt').toLowerCase();
   }
 
   /**
@@ -95,7 +98,7 @@ export class FeeClaimsService {
 
       const asset = list[0].asset;
       const transferMin = asset.transferMin ? dec(asset.transferMin) : ZERO;
-      const minAmount = dec(this.config.get<number>('FEE_CLAIM_MIN_USD') ?? 1.5);
+      const minAmount = dec((this.settings ? this.settings.get<number>('FEE_CLAIM_MIN_USD') : this.config.get<number>('FEE_CLAIM_MIN_USD')) ?? 1.5);
 
       let direct = 0;
       let convert = 0;

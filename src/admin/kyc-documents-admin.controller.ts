@@ -10,6 +10,7 @@ import { AdminService } from './admin.service';
 import { KycDocumentsService, LEGACY_DOCUMENT } from '../kyc/kyc-documents.service';
 import { FILE_STORE, FileStore } from '../storage/file-store';
 import type { R2FileStore } from '../storage/r2-file-store';
+import { LiveR2FileStore } from '../storage/live-r2-file-store';
 import { sendPrivateFile } from '../storage/send-file';
 
 /**
@@ -55,7 +56,7 @@ export class KycDocumentsAdminController {
     return {
       driver: this.store.driver,
       reachable: await this.store.ping(),
-      bucket: this.store.driver === 'r2' ? (this.store as R2FileStore).bucket : null,
+      bucket: this.store instanceof LiveR2FileStore ? await this.store.currentBucket() : this.store.driver === 'r2' ? (this.store as R2FileStore).bucket : null,
     };
   }
 }

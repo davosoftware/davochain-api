@@ -6,6 +6,7 @@ import { ulid } from 'ulid';
 import type Redis from 'ioredis';
 import { TokenBucket } from './rate-limiter';
 import { LaneBusyError, SharedTokenBucket } from './shared-bucket';
+import { ServerSettingsService } from '../settings/server-settings.service';
 import { RATE_LIMIT_REDIS } from '../rate-limit/rate-limit.service';
 import { QuidaxError, QuidaxRateLimitError, QuidaxUnknownError } from './quidax.errors';
 import type {
@@ -58,6 +59,9 @@ export class QuidaxClient {
    */
   private readonly bootSecretKey: string;
   private readonly lanes: Record<Lane, SharedTokenBucket>;
+  /** The limit each lane was built with, so a change on the Server settings screen rebuilds it. */
+  private readonly laneLimits: Record<Lane, number>;
+  private readonly makeLane: (name: Lane, limit: number) => SharedTokenBucket;
 
   constructor(
     @Inject(ConfigService) private readonly config: ConfigService,
@@ -68,6 +72,8 @@ export class QuidaxClient {
      * keeps its own count, as before.
      */
     @Optional() @Inject(RATE_LIMIT_REDIS) redis?: Redis | null,
+    /** Live speed limits from System → Server settings (spec 2026-10-26); .env when absent. */
+    @Optional() private readonly settings?: ServerSettingsService,
   ) {
     this.baseUrl = this.config.getOrThrow<string>('QUIDAX_BASE_URL').replace(/\/+$/, '');
     this.bootSecretKey = this.config.get<string>('QUIDAX_SECRET_KEY') ?? '';
@@ -75,14 +81,37 @@ export class QuidaxClient {
     const perSecond = (n: number) => n / 1_000;
     const lane = (name: Lane, capacity: number, refillPerMs: number) =>
       new SharedTokenBucket(redis ?? null, `quidax:rl:${name}`, capacity, refillPerMs, new TokenBucket(capacity, refillPerMs, name));
-    const def = this.config.get<number>('QUIDAX_RATE_LIMIT_PER_MINUTE') ?? 240;
-    const addr = this.config.get<number>('QUIDAX_ADDRESS_RATE_LIMIT_PER_SECOND') ?? 15;
-    const bg = this.config.get<number>('QUIDAX_BACKGROUND_RATE_LIMIT_PER_MINUTE') ?? 30;
+    this.makeLane = (name, limit) => lane(name, limit, name === 'address' ? perSecond(limit) : perMinute(limit));
+    const def = this.laneLimit('default');
+    const addr = this.laneLimit('address');
+    const bg = this.laneLimit('background');
+    this.laneLimits = { default: def, address: addr, background: bg };
     this.lanes = {
-      default: lane('default', def, perMinute(def)),
-      address: lane('address', addr, perSecond(addr)),
-      background: lane('background', bg, perMinute(bg)),
+      default: this.makeLane('default', def),
+      address: this.makeLane('address', addr),
+      background: this.makeLane('background', bg),
     };
+  }
+
+  /** The limit that applies now for a lane: the Server settings screen, else .env, else the built-in default. */
+  private laneLimit(name: Lane): number {
+    const key = { default: 'QUIDAX_RATE_LIMIT_PER_MINUTE', address: 'QUIDAX_ADDRESS_RATE_LIMIT_PER_SECOND', background: 'QUIDAX_BACKGROUND_RATE_LIMIT_PER_MINUTE' }[name] as
+      | 'QUIDAX_RATE_LIMIT_PER_MINUTE'
+      | 'QUIDAX_ADDRESS_RATE_LIMIT_PER_SECOND'
+      | 'QUIDAX_BACKGROUND_RATE_LIMIT_PER_MINUTE';
+    const fallback = { default: 240, address: 15, background: 30 }[name];
+    const v = this.settings ? this.settings.get<number>(key) : this.config.get<number>(key);
+    return typeof v === 'number' && v > 0 ? v : fallback;
+  }
+
+  /** The lane to wait on, rebuilt when its limit was changed on the screen. */
+  private laneFor(name: Lane): SharedTokenBucket {
+    const limit = this.laneLimit(name);
+    if (limit !== this.laneLimits[name]) {
+      this.laneLimits[name] = limit;
+      this.lanes[name] = this.makeLane(name, limit);
+    }
+    return this.lanes[name];
   }
 
   // ── transport ───────────────────────────────────────────────
@@ -93,7 +122,7 @@ export class QuidaxClient {
     body?: unknown,
     opts: CallOpts = {},
   ): Promise<QuidaxPage<T>> {
-    const lane = this.lanes[opts.lane ?? 'default'];
+    const lane = this.laneFor(opts.lane ?? 'default');
     const url = new URL(this.baseUrl + path);
     for (const [k, v] of Object.entries(opts.query ?? {})) {
       if (v !== undefined && v !== null && v !== '') url.searchParams.set(k, String(v));

@@ -189,7 +189,6 @@ export const envSchema = z
     FEE_CLAIM_DESTINATION: z.string().default('usdt'),
     FEE_CLAIM_MIN_USD: num(1.5),
 
-    TRADING_ENABLED: bool(true),
     NGN_WITHDRAWALS_ENABLED: bool(false),
     // ── Payrep MFB (the naira rail, spec 2026-10-20 §8). An empty value counts as unset. ──
     PAYREP_USE_MOCK: bool(true),
@@ -482,6 +481,9 @@ export function validateEnv(raw: Record<string, unknown>): Env {
   if (lines.length > 0) throw refuse();
   for (const key of RETIRED) {
     if (raw[key] !== undefined) new Logger('Env').warn(`${key} is no longer used: trading limits are set on System -> Verification levels.`);
+  }
+  if (raw.TRADING_ENABLED !== undefined) {
+    new Logger('Env').warn('TRADING_ENABLED is no longer used: trading is paused and resumed with the trading halt on the dashboard. You can delete the line.');
   }
   for (const key of RETIRED_FLUTTERWAVE) {
     if (raw[key] !== undefined) new Logger('Env').warn(`${key} is no longer used: Flutterwave was replaced by Payrep (PAYREP_* settings). You can delete the line.`);

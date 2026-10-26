@@ -13,6 +13,7 @@ import { RatesService } from '../rates/rates.service';
 import { AdminSessionsService } from './sessions.service';
 import { TwoStepService } from './two-step.service';
 import { dec, str } from '../common/money';
+import { ServerSettingsService } from '../settings/server-settings.service';
 
 /** M7: a sign-in either finishes, or waits for its second step. */
 export type AdminLoginResult =
@@ -44,6 +45,8 @@ export class AdminService {
     private readonly referrals: ReferralsService,
     private readonly alerts: OpsAlertsService,
     @Optional() private readonly twoStep?: TwoStepService,
+    /** Live values from System → Server settings (spec 2026-10-26); .env when absent. */
+    @Optional() private readonly settings?: ServerSettingsService,
   ) {}
 
   async login(
@@ -178,7 +181,7 @@ export class AdminService {
     const token = await this.jwt.signAsync(payload, {
       // A separate secret: a leaked user token must never work here.
       secret: this.config.getOrThrow<string>('ADMIN_JWT_SECRET'),
-      expiresIn: (this.config.get<string>('ADMIN_JWT_EXPIRES_IN') ?? '8h') as unknown as number,
+      expiresIn: ((this.settings ? this.settings.get<string>('ADMIN_JWT_EXPIRES_IN') : this.config.get<string>('ADMIN_JWT_EXPIRES_IN')) ?? '8h') as unknown as number,
     });
 
     // The row is what makes the token revocable. Sign first so a failure here

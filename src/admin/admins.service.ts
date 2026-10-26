@@ -5,8 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
-  UnauthorizedException,
-} from '@nestjs/common';
+  UnauthorizedException, Optional } from '@nestjs/common';
 import { AdminRole } from '@prisma/client';
 import { createHash, randomBytes, randomInt } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -21,6 +20,7 @@ import { EmailTemplateService } from '../cms/email-template.service';
 import { formatLagos } from '../common/dates';
 import { SYSTEM_ACTOR_ID } from '../common/system-actor';
 import { mayLogSecrets } from '../common/dev-secrets';
+import { ServerSettingsService } from '../settings/server-settings.service';
 
 /** Where an invitation went, and how long it lasts. Never the token. */
 export interface InviteResult {
@@ -129,6 +129,8 @@ export class AdminsService {
     private readonly config: ConfigService,
     private readonly mail: MailService,
     private readonly templates: EmailTemplateService,
+    /** Live values from System → Server settings (spec 2026-10-26); .env when absent. */
+    @Optional() private readonly settings?: ServerSettingsService,
   ) {}
 
   private shape(a: AdminRow): AdminProfile {
@@ -481,7 +483,7 @@ export class AdminsService {
       data: { consumedAt: new Date() },
     });
 
-    const hours = this.config.get<number>('ADMIN_INVITE_TTL_HOURS') ?? 48;
+    const hours = (this.settings ? this.settings.get<number>('ADMIN_INVITE_TTL_HOURS') : this.config.get<number>('ADMIN_INVITE_TTL_HOURS')) ?? 48;
     const token = randomBytes(32).toString('base64url');
     const expiresAt = new Date(Date.now() + hours * 3_600_000);
 

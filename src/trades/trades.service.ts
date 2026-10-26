@@ -4,8 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
-  forwardRef,
-} from '@nestjs/common';
+  forwardRef, Optional } from '@nestjs/common';
 import { AlertType, KycTier, LedgerAccount, LegState, PolicyAction, Prisma, QuoteSide, SettlementLegKind, TxStatus, TxType } from '@prisma/client';
 import { RateQuote } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -24,6 +23,7 @@ import { SYSTEM_ACTOR_ID } from '../common/system-actor';
 import { ConfigService } from '@nestjs/config';
 import { Fx, LevelPolicyService } from '../levels/level-policy.service';
 import { levelOf } from '../levels/levels';
+import { ServerSettingsService } from '../settings/server-settings.service';
 
 export interface TradeResult {
   transactionId: string;
@@ -64,6 +64,8 @@ export class TradesService {
     private readonly config: ConfigService,
     private readonly alerts: OpsAlertsService,
     private readonly policy: LevelPolicyService,
+    /** Live values from System → Server settings (spec 2026-10-26); .env when absent. */
+    @Optional() private readonly settings?: ServerSettingsService,
   ) {}
 
   /**
@@ -84,7 +86,7 @@ export class TradesService {
     if (input.expected.lte(0) || input.actual.lte(0)) return false;
     const worseBy = input.worseWhen === 'less' ? input.expected.minus(input.actual) : input.actual.minus(input.expected);
     const bps = worseBy.div(input.expected).mul(10_000);
-    const trip = dec(this.config.get<number>('MARGIN_DEVIATION_TRIP_BPS') ?? 200);
+    const trip = dec((this.settings ? this.settings.get<number>('MARGIN_DEVIATION_TRIP_BPS') : this.config.get<number>('MARGIN_DEVIATION_TRIP_BPS')) ?? 200);
     if (bps.lte(trip)) return false;
 
     const reason = 'Quidax executed ' + bps.toFixed(0) + ' bps worse than quoted (transaction ' + input.tx + ')';

@@ -1,8 +1,9 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CredentialsService } from '../common/credentials.service';
 import { PayrepError } from './payrep.errors';
 import { payrepKeyModeProblem } from './key-mode';
+import { ServerSettingsService } from '../settings/server-settings.service';
 
 /** Payrep's real sandbox. (Its docs and OpenAPI file name shogun-dev.payrepmfb.com, which refuses our keys.) */
 export const PAYREP_SANDBOX_URL = 'https://baasapi-sandbox.payrepmfb.com';
@@ -19,6 +20,8 @@ export class PayrepConfig {
   constructor(
     private readonly config: ConfigService,
     private readonly creds: CredentialsService,
+    /** Live values from System → Server settings (spec 2026-10-26); .env when absent. */
+    @Optional() private readonly settings?: ServerSettingsService,
   ) {}
 
   get useMock(): boolean {
@@ -44,7 +47,7 @@ export class PayrepConfig {
    * works with an empty .env.
    */
   get mainAccount(): string | null {
-    return blank(this.config.get<string>('PAYREP_MAIN_ACCOUNT')) ?? (this.useMock ? MOCK_MAIN_ACCOUNT : null);
+    return blank((this.settings ? this.settings.get<string>('PAYREP_MAIN_ACCOUNT') : this.config.get<string>('PAYREP_MAIN_ACCOUNT'))) ?? (this.useMock ? MOCK_MAIN_ACCOUNT : null);
   }
 
   /**
@@ -53,7 +56,7 @@ export class PayrepConfig {
    * "DavoChain-" only if Payrep stops doing that.
    */
   get accountNamePrefix(): string {
-    return this.config.get<string>('PAYREP_ACCOUNT_NAME_PREFIX') ?? '';
+    return (this.settings ? this.settings.get<string>('PAYREP_ACCOUNT_NAME_PREFIX') : this.config.get<string>('PAYREP_ACCOUNT_NAME_PREFIX')) ?? '';
   }
 
   /** The key pair in force. Refused if missing or the wrong mode for this environment; never names a key. */

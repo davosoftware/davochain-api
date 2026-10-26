@@ -1,6 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
+import { ServerSettingsService } from '../settings/server-settings.service';
 
 /**
  * How long a session survives with nobody touching it.
@@ -30,10 +31,12 @@ export class AdminSessionsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    /** Live values from System → Server settings (spec 2026-10-26); .env when absent. */
+    @Optional() private readonly settings?: ServerSettingsService,
   ) {}
 
   get idleMs(): number {
-    const minutes = this.config.get<number>('ADMIN_IDLE_TIMEOUT_MINUTES') ?? DEFAULT_IDLE_MINUTES;
+    const minutes = (this.settings ? this.settings.get<number>('ADMIN_IDLE_TIMEOUT_MINUTES') : this.config.get<number>('ADMIN_IDLE_TIMEOUT_MINUTES')) ?? DEFAULT_IDLE_MINUTES;
     return minutes * 60_000;
   }
 

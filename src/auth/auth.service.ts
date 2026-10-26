@@ -3,8 +3,7 @@ import {
   ForbiddenException,
   Injectable,
   Logger,
-  UnauthorizedException,
-} from '@nestjs/common';
+  UnauthorizedException, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { KycStatus, KycTier, Prisma, UserOtpPurpose, UserStatus } from '@prisma/client';
@@ -19,6 +18,7 @@ import { formatLagos } from '../common/dates';
 import { UserOtpService } from './user-otp.service';
 import { ReferralsService } from '../referrals/referrals.service';
 import { JOBS, QUEUES, jobId } from '../common/queues';
+import { ServerSettingsService } from '../settings/server-settings.service';
 
 export interface AuthTokens {
   accessToken: string;
@@ -32,6 +32,8 @@ export interface JwtPayload {
   tier: KycTier;
   kyc: KycStatus;
   typ: 'access';
+  /** Issued at (seconds), set by the signer. Used by "sign out all customers". */
+  iat?: number;
 }
 
 interface SessionContext {
@@ -52,6 +54,8 @@ export class AuthService {
     private readonly mail: TemplatedMailService,
     private readonly otps: UserOtpService,
     private readonly referrals: ReferralsService,
+    /** Live values from System → Server settings (spec 2026-10-26); .env when absent. */
+    @Optional() private readonly settings?: ServerSettingsService,
   ) {}
 
   // ── registration ────────────────────────────────────────────
@@ -261,7 +265,7 @@ export class AuthService {
       typ: 'access',
     };
 
-    const expiresIn = this.config.get<string>('JWT_EXPIRES_IN') ?? '15m';
+    const expiresIn = (this.settings ? this.settings.get<string>('JWT_EXPIRES_IN') : this.config.get<string>('JWT_EXPIRES_IN')) ?? '15m';
     const accessToken = await this.jwt.signAsync(payload, {
       secret: this.config.getOrThrow<string>('JWT_SECRET'),
       // jsonwebtoken types expiresIn as a template literal; the value is validated at boot.
@@ -270,7 +274,7 @@ export class AuthService {
 
     // Opaque, high-entropy, stored only as a hash.
     const refreshToken = randomBytes(48).toString('base64url');
-    const days = this.parseDays(this.config.get<string>('JWT_REFRESH_EXPIRES_IN') ?? '30d');
+    const days = this.parseDays((this.settings ? this.settings.get<string>('JWT_REFRESH_EXPIRES_IN') : this.config.get<string>('JWT_REFRESH_EXPIRES_IN')) ?? '30d');
 
     await this.prisma.refreshToken.create({
       data: {

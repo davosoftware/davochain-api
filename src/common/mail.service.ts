@@ -1,4 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { ConfigService } from '@nestjs/config';
 import { createTransport, type Transporter } from 'nodemailer';
 import { PrismaService } from '../prisma/prisma.service';
@@ -15,20 +16,40 @@ import { CredentialsService } from './credentials.service';
 export class MailService {
   private readonly log = new Logger(MailService.name);
   private transporter: Transporter | null = null;
+  /** The server, port, secure flag, user and password the current transporter was built with. */
+  private builtWith = '';
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
     private readonly credentials: CredentialsService,
+    /**
+     * Read lazily: ServerSettingsService emails owners through this service, so
+     * the two must not need each other at start-up (spec 2026-10-26).
+     */
+    @Optional() private readonly moduleRef?: ModuleRef,
   ) {}
 
+  /** The mail server details that apply now: System → Server settings, else .env. */
+  private smtp<T>(key: 'SMTP_HOST' | 'SMTP_PORT' | 'SMTP_SECURE' | 'SMTP_USER' | 'SMTP_FROM'): T | undefined {
+    let settings: { get<V>(k: string): V } | null = null;
+    try {
+      // Loaded here, not at the top: server-settings.service imports this file (no import loop at start-up).
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { ServerSettingsService } = require('../settings/server-settings.service') as typeof import('../settings/server-settings.service');
+      settings = this.moduleRef?.get(ServerSettingsService, { strict: false }) ?? null;
+    } catch {
+      settings = null;
+    }
+    return settings ? settings.get<T>(key as never) : this.config.get<T>(key);
+  }
+
   get isConfigured(): boolean {
-    return Boolean(this.config.get<string>('SMTP_HOST'));
+    return Boolean(this.smtp<string>('SMTP_HOST'));
   }
 
   private async mailer(): Promise<Transporter | null> {
-    if (this.transporter) return this.transporter;
-    const host = this.config.get<string>('SMTP_HOST');
+    const host = this.smtp<string>('SMTP_HOST');
     if (!host) return null;
 
     // The password can be rotated from the admin; the host and user stay in
@@ -37,13 +58,19 @@ export class MailService {
       (await this.credentials.get('smtp.password').catch(() => undefined)) ??
       this.config.get<string>('SMTP_PASSWORD');
 
+    const port = this.smtp<number>('SMTP_PORT') ?? 587;
+    const secure = this.smtp<boolean>('SMTP_SECURE') ?? false;
+    const user = this.smtp<string>('SMTP_USER');
+    // Rebuilt only when something it was built with changed (a change on the Server settings or API keys screen).
+    const signature = JSON.stringify([host, port, secure, user ?? '', password ?? '']);
+    if (this.transporter && signature === this.builtWith) return this.transporter;
+    this.builtWith = signature;
+
     this.transporter = createTransport({
       host,
-      port: this.config.get<number>('SMTP_PORT') ?? 587,
-      secure: this.config.get<boolean>('SMTP_SECURE') ?? false,
-      auth: this.config.get<string>('SMTP_USER')
-        ? { user: this.config.getOrThrow<string>('SMTP_USER'), pass: password ?? '' }
-        : undefined,
+      port,
+      secure,
+      auth: user ? { user, pass: password ?? '' } : undefined,
       // A mail server that never answers fails in seconds, not nodemailer's default 2 minutes.
       connectionTimeout: 15_000,
       greetingTimeout: 15_000,
@@ -87,7 +114,7 @@ export class MailService {
 
     try {
       await mailer.sendMail({
-        from: this.config.get<string>('SMTP_FROM'),
+        from: this.smtp<string>('SMTP_FROM'),
         to: message.to,
         subject: message.subject,
         text: message.text,

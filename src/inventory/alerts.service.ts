@@ -8,6 +8,7 @@ import { InventoryService, type InventoryRow } from './inventory.service';
 import { MailService } from '../common/mail.service';
 import { dec } from '../common/money';
 import { JobLeaseService } from '../common/job-lease.service';
+import { ServerSettingsService } from '../settings/server-settings.service';
 
 const MINUTE = 60_000;
 
@@ -40,6 +41,8 @@ export class AlertsService {
     private readonly mail: MailService,
     @Optional() recipients?: AlertRecipientsService,
     @Optional() private readonly leases?: JobLeaseService,
+    /** Live values from System → Server settings (spec 2026-10-26); .env when absent. */
+    @Optional() private readonly settings?: ServerSettingsService,
   ) {
     this.recipientsOf = recipients ?? new AlertRecipientsService(prisma, config);
   }
@@ -78,8 +81,8 @@ export class AlertsService {
    */
   @Cron('0 * * * *', { name: 'daily-digest' })
   async digestTick(now = new Date()): Promise<void> {
-    const zone = this.config.get<string>('DIGEST_TIMEZONE') ?? 'Africa/Lagos';
-    const hour = this.config.get<number>('DAILY_DIGEST_HOUR') ?? 7;
+    const zone = (this.settings ? this.settings.get<string>('DIGEST_TIMEZONE') : this.config.get<string>('DIGEST_TIMEZONE')) ?? 'Africa/Lagos';
+    const hour = (this.settings ? this.settings.get<number>('DAILY_DIGEST_HOUR') : this.config.get<number>('DAILY_DIGEST_HOUR')) ?? 7;
     const local = Number(new Intl.DateTimeFormat('en-GB', { timeZone: zone, hour: '2-digit', hourCycle: 'h23' }).format(now));
     if (local !== hour) return;
     await this.once('daily-digest', 50 * MINUTE, () => this.dailyDigest());
