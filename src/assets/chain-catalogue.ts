@@ -170,6 +170,13 @@ export function seedNetworksFor(assetCode: string): SeedNetwork[] {
   return CHAIN_CATALOGUE[assetCode.toLowerCase()] ?? [];
 }
 
+/** Made in advance for verified customers on a fresh install (the owner's choice, 26 Oct); switchable on the dashboard. */
+export const AUTO_CREATE_DEFAULT = new Set(['btc/btc', 'usdt/trc20', 'usdt/bep20']);
+
+export function autoCreateByDefault(assetCode: string, networkId: string): boolean {
+  return AUTO_CREATE_DEFAULT.has(`${assetCode.toLowerCase()}/${networkId.toLowerCase()}`);
+}
+
 export function requiresTag(assetCode: string, networkId: string): boolean {
   return TAG_REQUIRED.has(assetCode.toLowerCase()) || TAG_REQUIRED.has(networkId.toLowerCase());
 }

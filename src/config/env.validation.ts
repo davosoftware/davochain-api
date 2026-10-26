@@ -202,6 +202,8 @@ export const envSchema = z
     NGN_DEPOSITS_ENABLED: bool(false),
     /** The background opener: verified customers get their naira account without asking (spec 2026-10-23). Leave on. */
     NGN_ACCOUNT_AUTO_OPEN: bool(true),
+    /** Make the switched-on crypto addresses for verified customers in advance (spec 2026-10-26). Off for a test server. */
+    CRYPTO_ADDRESS_AUTO_CREATE: bool(true),
     /** H9: customers confirm their email before any money action. Switch off only if email (SMTP) is down. */
     EMAIL_VERIFICATION_REQUIRED: bool(true),
     /** HMAC key for BVN/NIN hashes. Rotating it means users re-enter their number. */

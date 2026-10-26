@@ -54,6 +54,7 @@ describe('Admins see and remove a customer\'s saved destinations', () => {
       balance: { findMany: jest.fn(async () => []) },
       asset: { findMany: jest.fn(async () => []) },
       transaction: { count: jest.fn(async () => 0) },
+      depositAddress: { findMany: jest.fn(async () => []) },
       savedBankAccount: { findMany: jest.fn(async () => [{ id: 'b1', bankCode: '058', bankName: 'GTBank', accountNumber: '0123451234', accountName: 'ADA', nickname: null, usableFrom: NOW, removedAt: null }]) },
       savedCryptoAddress: { findMany: jest.fn(async () => [{ id: 'c1', assetCode: 'btc', networkId: 'btc', address: 'bc1q', destinationTag: null, nickname: null, usableFrom: NOW }]) },
       assetNetwork: { findMany: jest.fn(async () => [{ assetCode: 'btc', networkId: 'btc', label: 'Bitcoin' }]) },

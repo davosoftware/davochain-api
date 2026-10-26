@@ -43,6 +43,9 @@ export const SERVER_SETTINGS: SettingDef[] = [
   s({ key: 'PAYREP_MAIN_ACCOUNT', group: 'Naira', label: 'Main Payrep account', help: "DavoChain's own 10-digit Payrep account: the pool for customer accounts and the source of payouts. Payrep must recognise it.", kind: { type: 'account' }, live: true, money: true }),
   s({ key: 'PAYREP_ACCOUNT_NAME_PREFIX', group: 'Naira', label: 'Account name prefix', help: 'Put in front of the customer\'s name on new accounts, e.g. "DavoChain-". Leave empty when Payrep adds our name itself.', kind: { type: 'string', maxLength: 40, allowEmpty: true }, live: true, money: false }),
 
+  // ── Crypto ───────────────────────────────────────────────
+  s({ key: 'CRYPTO_ADDRESS_AUTO_CREATE', group: 'Crypto', label: 'Make crypto addresses in advance', help: 'Verified customers get the addresses switched on under People → Crypto addresses without opening Receive.', kind: { type: 'boolean' }, live: true, money: false }),
+
   // ── Sign-up ──────────────────────────────────────────────
   s({ key: 'EMAIL_VERIFICATION_REQUIRED', group: 'Sign-up', label: 'Customers must confirm their email', help: 'Until they type the emailed code, customers can look around but not move money. Switch off only if email sending is down.', kind: { type: 'boolean' }, live: true, money: true }),
 
@@ -90,6 +93,7 @@ export const SERVER_SETTINGS: SettingDef[] = [
 ];
 
 export type ServerSettingKey =
+  | 'CRYPTO_ADDRESS_AUTO_CREATE'
   | 'NGN_DEPOSITS_ENABLED' | 'NGN_ACCOUNT_AUTO_OPEN' | 'PAYREP_MAIN_ACCOUNT' | 'PAYREP_ACCOUNT_NAME_PREFIX'
   | 'EMAIL_VERIFICATION_REQUIRED'
   | 'SMTP_HOST' | 'SMTP_PORT' | 'SMTP_SECURE' | 'SMTP_USER' | 'SMTP_FROM'

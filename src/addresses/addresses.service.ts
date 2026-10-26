@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException, Optional, ServiceUnavailableException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { AddressStatus } from '@prisma/client';
+import { AddressStatus, AlertType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuidaxClient } from '../quidax/quidax.client';
 import { AssetsService } from '../assets/assets.service';
@@ -10,6 +10,11 @@ import { SystemFlagsService } from '../common/system-flags.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { JOBS, QUEUES, jobId } from '../common/queues';
 import { JobLeaseService } from '../common/job-lease.service';
+import { OpsAlertsService } from '../common/ops-alerts/ops-alerts.service';
+
+const HOUR = 3_600_000;
+/** A PENDING address older than this gets one last check by the hourly sweep. */
+const SWEEP_AFTER_MS = 2 * HOUR;
 
 export interface AddressView {
   asset: string;
@@ -44,6 +49,7 @@ export class AddressesService {
     @InjectQueue(QUEUES.ADDRESSES) private readonly queue: Queue,
     private readonly notifications: NotificationsService,
     @Optional() private readonly leases?: JobLeaseService,
+    @Optional() private readonly alerts?: OpsAlertsService,
   ) {}
 
   /** How long to wait between looks while another request creates the same address. */
@@ -53,7 +59,7 @@ export class AddressesService {
    * Get-or-create. The overwhelming majority of calls hit the existing row and
    * never touch Quidax — which is what keeps this inside the 20/sec cap.
    */
-  async getOrCreate(userId: string, assetCode: string, networkId: string): Promise<AddressView> {
+  async getOrCreate(userId: string, assetCode: string, networkId: string, opts: { auto?: boolean } = {}): Promise<AddressView> {
     await this.flags.assertDepositsAllowed();
 
     const code = assetCode.toLowerCase();
@@ -80,9 +86,9 @@ export class AddressesService {
 
     // A6: one creation per customer, coin and network at a time, so two taps
     // never make Quidax create two addresses. The other request waits for it.
-    if (!this.leases) return this.create(userId, code, networkId, network);
+    if (!this.leases) return this.create(userId, code, networkId, network, opts.auto ?? false);
     const run = await this.leases.run(`address-${userId}-${code}-${networkId}`, 60_000, () =>
-      this.create(userId, code, networkId, network),
+      this.create(userId, code, networkId, network, opts.auto ?? false),
     );
     if (run.ran) return run.result;
     for (let i = 0; i < 20; i++) {
@@ -102,6 +108,7 @@ export class AddressesService {
     code: string,
     networkId: string,
     network: { label: string; requiresTag: boolean; confirmations: number },
+    auto: boolean,
   ): Promise<AddressView> {
     // Re-read inside the lease: another request may have just finished.
     const already = await this.prisma.depositAddress.findUnique({
@@ -109,6 +116,13 @@ export class AddressesService {
     });
     if (already && already.status !== AddressStatus.FAILED) {
       return this.toView(already, network.label, network.requiresTag, network.confirmations);
+    }
+
+    // Try again after FAILED (spec 2026-10-26): Quidax may have finished late.
+    // Only if it has nothing do we ask for a new address, so a tap never wastes one.
+    if (already) {
+      const late = await this.resolve(already.id);
+      if (late?.address) return late;
     }
 
     const quidaxUserId = await this.provisioning.requireQuidaxId(userId);
@@ -125,6 +139,7 @@ export class AddressesService {
         destinationTag: created.destination_tag,
         status: created.address ? AddressStatus.ACTIVE : AddressStatus.PENDING,
         activatedAt: created.address ? new Date() : null,
+        autoCreated: auto,
       },
       update: {
         quidaxAddressId: created.id,
@@ -132,6 +147,9 @@ export class AddressesService {
         address: created.address,
         destinationTag: created.destination_tag,
         requestedAt: new Date(),
+        failedAt: null,
+        // A customer's own tap makes it theirs: they get the "address ready" message.
+        autoCreated: auto && (already?.autoCreated ?? true),
       },
     });
 
@@ -201,6 +219,7 @@ export class AddressesService {
         destinationTag,
         status: AddressStatus.ACTIVE,
         activatedAt: new Date(),
+        failedAt: null,
       },
       include: { network: true },
     });
@@ -213,7 +232,8 @@ export class AddressesService {
      * address and then closed the app has no way of finding out it arrived —
      * the poll they were relying on stopped when the screen did.
      */
-    await this.notifications.notify({
+    // Made in advance (spec 2026-10-26): the customer didn't ask, so no message.
+    if (!updated.autoCreated) await this.notifications.notify({
       userId: updated.userId,
       type: 'address.ready',
       title: `${updated.assetCode.toUpperCase()} address ready`,
@@ -237,6 +257,70 @@ export class AddressesService {
       updated.network.requiresTag,
       updated.network.confirmations,
     );
+  }
+
+  /**
+   * Give up on an address Quidax never delivered (spec 2026-10-26): FAILED, a
+   * person is alerted, and the customer is told to try again. Only a row that is
+   * still PENDING without an address changes, so a late arrival is never undone.
+   */
+  async markFailed(addressId: string): Promise<boolean> {
+    const { count } = await this.prisma.depositAddress.updateMany({
+      where: { id: addressId, status: AddressStatus.PENDING, address: null },
+      data: { status: AddressStatus.FAILED, failedAt: new Date() },
+    });
+    if (count === 0) return false;
+
+    const row = await this.prisma.depositAddress.findUnique({ where: { id: addressId }, include: { network: true } });
+    if (!row) return true;
+    const coin = row.assetCode.toUpperCase();
+    this.log.error(`Address ${addressId} (${coin}/${row.networkId}) never arrived from Quidax: marked FAILED`);
+
+    await this.alerts?.raise(
+      AlertType.CRYPTO_ADDRESS_STUCK,
+      `address:${addressId}`,
+      `A ${coin} deposit address never arrived from Quidax`,
+      [
+        `Coin and network: ${coin} on ${row.network.label}`,
+        `Customer: ${row.userId}`,
+        `Asked for: ${row.requestedAt.toISOString()}`,
+        row.autoCreated ? 'Made in advance (the customer did not ask yet).' : 'The customer asked for it and was told to try again.',
+        'Open: /crypto-addresses?stuck=true (Try again there, or check the sub-account at Quidax).',
+      ],
+      24 * HOUR,
+    );
+
+    if (!row.autoCreated) {
+      await this.notifications.notify({
+        userId: row.userId,
+        type: 'address.failed',
+        title: `${coin} address not ready`,
+        body: `We couldn't create your ${coin} address. Open Receive to try again.`,
+      });
+    }
+    return true;
+  }
+
+  /**
+   * Hourly: PENDING addresses whose checker was lost (e.g. with Redis) get one
+   * last look at Quidax; if still nothing, they fail like the checker would.
+   */
+  async sweepStuck(now = new Date()): Promise<{ checked: number; failed: number }> {
+    const rows = await this.prisma.depositAddress.findMany({
+      where: { status: AddressStatus.PENDING, address: null, requestedAt: { lt: new Date(now.getTime() - SWEEP_AFTER_MS) } },
+      select: { id: true },
+      take: 100,
+    });
+    let failed = 0;
+    for (const { id } of rows) {
+      const found = await this.resolve(id).catch((err) => {
+        this.log.warn(`Sweep could not check address ${id}: ${(err as Error).message}`);
+        return undefined;
+      });
+      if (found === undefined) continue; // Quidax unreachable: try again next hour
+      if (!found?.address && (await this.markFailed(id))) failed++;
+    }
+    return { checked: rows.length, failed };
   }
 
   /** Match an inbound webhook to a stored row when we only know the address. */

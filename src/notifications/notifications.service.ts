@@ -8,6 +8,7 @@ import { TemplatedMailService } from '../cms/templated-mail.service';
 
 export type NotificationType =
   | 'address.ready'
+  | 'address.failed'
   | 'ngn_account.ready'
   | 'deposit.detected'
   | 'deposit.credited'

@@ -7,6 +7,7 @@ import { UsersModule } from '../users/users.module';
 import { AddressesService } from './addresses.service';
 import { AddressesController } from './addresses.controller';
 import { AddressesProcessor } from './addresses.processor';
+import { AddressMakerService } from './address-maker.service';
 
 @Module({
   imports: [
@@ -16,7 +17,7 @@ import { AddressesProcessor } from './addresses.processor';
     BullModule.registerQueue({ name: QUEUES.ADDRESSES }),
   ],
   controllers: [AddressesController],
-  providers: [AddressesService, AddressesProcessor],
+  providers: [AddressesService, AddressesProcessor, AddressMakerService],
   exports: [AddressesService],
 })
 export class AddressesModule {}

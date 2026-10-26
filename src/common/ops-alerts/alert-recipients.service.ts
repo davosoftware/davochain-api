@@ -40,6 +40,7 @@ const CATALOGUE: Record<AlertType, { label: string; description: string }> = {
   TREASURY_SHORT: { label: 'Naira short', description: 'The daily Treasury check: customers are owed more naira than we hold at the naira rail and Quidax together.' },
   TREASURY_RESERVE_LOW: { label: 'Payout reserve low', description: 'The naira at the naira rail has dropped below the payout reserve, so customer withdrawals may run short. Top it up.' },
   PAYOUT_REVERSED: { label: 'Payout reversed', description: 'Payrep reversed a transfer that had succeeded. Nothing is changed automatically: check where the money is.' },
+  CRYPTO_ADDRESS_STUCK: { label: 'Crypto address stuck', description: "A customer's crypto deposit address never arrived from Quidax. It is marked failed; Try again on the Crypto addresses page." },
   DEPOSIT_REVERSED: { label: 'Deposit reversed', description: 'Payrep reversed a deposit that had succeeded. Nothing is clawed back automatically: review the customer balance.' },
 };
 

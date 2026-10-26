@@ -38,6 +38,9 @@ import { DojahSettingsService } from './dojah-settings.service';
 import { ServerSettingsController } from './server-settings.controller';
 import { TwoStepService } from './two-step.service';
 import { WithdrawalsModule } from '../withdrawals/withdrawals.module';
+import { AddressesModule } from '../addresses/addresses.module';
+import { DepositAddressesAdminController } from './deposit-addresses-admin.controller';
+import { DepositAddressesAdminService } from './deposit-addresses-admin.service';
 
 @Module({
   imports: [
@@ -60,9 +63,11 @@ import { WithdrawalsModule } from '../withdrawals/withdrawals.module';
     TreasuryModule,
     // Admins view and remove customers' saved withdrawal destinations (Part 2).
     WithdrawalsModule,
+    // People → Crypto addresses (spec 2026-10-26).
+    AddressesModule,
   ],
-  controllers: [AdminController, AdminAuthController, AlertRecipientsController, KycBasicReviewController, KycAdvancedReviewController, ComplianceController, DojahAdminController, TreasuryAdminController, KycDocumentsAdminController, ServerSettingsController],
-  providers: [AdminService, UsersAdminService, AdminsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService, AdminSessionsService, AdminOtpService, NgnWithdrawalsService, AdminGuard, LevelAdminService, DojahSettingsService, TwoStepService],
+  controllers: [AdminController, AdminAuthController, AlertRecipientsController, KycBasicReviewController, KycAdvancedReviewController, ComplianceController, DojahAdminController, TreasuryAdminController, KycDocumentsAdminController, ServerSettingsController, DepositAddressesAdminController],
+  providers: [AdminService, UsersAdminService, AdminsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService, AdminSessionsService, AdminOtpService, NgnWithdrawalsService, AdminGuard, LevelAdminService, DojahSettingsService, TwoStepService, DepositAddressesAdminService],
   exports: [AdminService, UsersAdminService, AdminsService, AdminSessionsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService],
 })
 export class AdminModule {}

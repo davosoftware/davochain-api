@@ -260,6 +260,8 @@ enum AlertType {
   DOJAH_CONFIG
   AML_REVIEW
   AML_SANCTIONS
+  /// A customer's crypto deposit address never arrived from Quidax.
+  CRYPTO_ADDRESS_STUCK
   /// Treasury: customers are owed more naira than we hold.
   TREASURY_SHORT
   /// Treasury: the naira at the rail is below the payout reserve.
@@ -416,6 +418,8 @@ model AssetNetwork {
   confirmations    Int      @default(1)
   addressRegex     String? // Davochain owns this — Quidax does not return it
   requiresTag      Boolean  @default(false) // XRP, XLM, TON
+  /// Made for every verified customer without being asked (spec 2026-10-26). The Quidax sync never changes it.
+  autoCreate       Boolean  @default(false)
   syncedAt         DateTime @default(now())
 
   asset     Asset            @relation(fields: [assetCode], references: [code])
@@ -439,6 +443,10 @@ model DepositAddress {
   status          AddressStatus @default(PENDING)
   requestedAt     DateTime      @default(now())
   activatedAt     DateTime?
+  /// When it was given up on (FAILED); cleared by a retry.
+  failedAt        DateTime?
+  /// Made in advance by the background maker, not asked for: no "address ready" message.
+  autoCreated     Boolean       @default(false)
 
   user    User         @relation(fields: [userId], references: [id])
   asset   Asset        @relation(fields: [assetCode], references: [code])

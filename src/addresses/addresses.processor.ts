@@ -28,9 +28,8 @@ export class AddressesProcessor extends WorkerHost {
     if (resolved?.address) return { address: resolved.address };
 
     if (attempt >= AddressesProcessor.MAX_POLLS) {
-      this.log.error(
-        `Address ${job.data.addressId} never generated after ${attempt} polls — needs a human`,
-      );
+      // Spec 2026-10-26: FAILED, a person alerted, the customer told to try again.
+      await this.addresses.markFailed(job.data.addressId);
       return { gaveUp: true };
     }
 

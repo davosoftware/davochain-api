@@ -3,7 +3,7 @@ import { Asset, AssetNetwork } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuidaxClient } from '../quidax/quidax.client';
 import { Decimal, dec, minTradeUsd } from '../common/money';
-import { requiresTag } from './chain-catalogue';
+import { autoCreateByDefault, requiresTag } from './chain-catalogue';
 
 @Injectable()
 export class AssetsService {
@@ -81,6 +81,7 @@ export class AssetsService {
           withdrawsEnabled: net.withdraws_enabled,
           isDefault: net.id === wallet.default_network,
           requiresTag: requiresTag(code, net.id),
+          autoCreate: autoCreateByDefault(code, net.id),
         },
         update: {
           label: net.name,

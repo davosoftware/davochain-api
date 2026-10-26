@@ -196,6 +196,25 @@ export class UsersAdminService {
       this.prisma.transaction.count({ where: { userId } }),
     ]);
     const savedDestinations = await this.savedDestinations(userId);
+    // People → Crypto addresses, for this customer (spec 2026-10-26).
+    const depositAddresses = (
+      await this.prisma.depositAddress.findMany({
+        where: { userId },
+        include: { network: { select: { label: true } } },
+        orderBy: [{ assetCode: 'asc' }, { networkId: 'asc' }],
+      })
+    ).map((a) => ({
+      id: a.id,
+      asset: a.assetCode,
+      network: a.networkId,
+      networkLabel: a.network.label,
+      status: a.status,
+      address: a.address,
+      destinationTag: a.destinationTag,
+      autoCreated: a.autoCreated,
+      requestedAt: a.requestedAt,
+      failedAt: a.failedAt,
+    }));
 
     const byAsset = new Map(balances.map((b) => [b.assetCode, b]));
 
@@ -233,6 +252,7 @@ export class UsersAdminService {
         })
         .filter((b) => !b.isZero),
       savedDestinations,
+      depositAddresses,
     };
   }
 
