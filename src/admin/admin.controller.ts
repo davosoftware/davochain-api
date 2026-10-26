@@ -40,6 +40,7 @@ import {
   type EarningQuery,
 } from './earnings.service';
 import { AdminTransactionsService, type TxQuery } from './transactions.service';
+import { kycQueueQuery, type KycQueueParams } from './kyc-queue';
 import { ReferralsService } from '../referrals/referrals.service';
 import { GiftCardsAdminService } from '../giftcards/giftcards-admin.service';
 import { GiftCardsService } from '../giftcards/giftcards.service';
@@ -1243,11 +1244,23 @@ export class AdminController {
 
   // ── kyc review ────────────────────────────────────────────
 
+  /**
+   * The KYC review queue, a page at a time (26 Oct 2026): `order` oldest|newest,
+   * `page`, `pageSize` (max 100), `search` (email or name), and
+   * `includeAutomatedTests=true` to show accounts the automated tests made.
+   * Answers { items, total, page, pageSize, order }.
+   */
   @Get('kyc/pending')
   @RequirePermissions('kyc.view')
-  pendingKyc() {
+  async pendingKyc(@Query() params: KycQueueParams) {
+    const q = kycQueueQuery(params);
+    const [items, total] = await Promise.all([this.pendingKycPage(q), this.prisma.kycProfile.count({ where: q.where })]);
+    return { items, total, page: q.page, pageSize: q.pageSize, order: q.order };
+  }
+
+  private pendingKycPage(q: ReturnType<typeof kycQueueQuery>) {
     return this.prisma.kycProfile.findMany({
-      where: { status: 'PENDING' },
+      where: q.where,
       include: {
         documents: true,
         user: {
@@ -1272,8 +1285,9 @@ export class AdminController {
           },
         },
       },
-      orderBy: { submittedAt: 'asc' },
-      take: 100,
+      orderBy: q.orderBy,
+      skip: q.skip,
+      take: q.take,
     });
   }
 
