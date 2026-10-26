@@ -102,7 +102,8 @@ export class AddressMakerService {
         OR: networks.map((n) => ({ addresses: { none: { assetCode: n.assetCode, networkId: n.networkId } } })),
       },
       select: { id: true, addresses: { select: { assetCode: true, networkId: true } } },
-      orderBy: { createdAt: 'asc' },
+      // Newest first: someone just verified is about to open the app; older customers fill in behind.
+      orderBy: { createdAt: 'desc' },
       take: BATCH,
     });
 

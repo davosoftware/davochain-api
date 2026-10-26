@@ -1421,7 +1421,7 @@ Content-Type: application/json
 | `asset` | string | Coin |
 | `network` | string | Network id |
 | `networkLabel` | string | Network display name |
-| `status` | string | `PENDING` (generating) / `ACTIVE` / `FAILED` / `DISABLED` |
+| `status` | string | `PENDING` (generating) / `ACTIVE` / `FAILED` (never arrived: show **Try again**, see notes) / `DISABLED` |
 | `address` | string \| null | The address. **`null` while generating.** |
 | `destinationTag` | string \| null | Memo / tag, for networks that need one |
 | `requiresTag` | boolean | If `true`, the user must include `destinationTag` when sending |
@@ -1438,12 +1438,15 @@ Content-Type: application/json
 | 404 | Coin not on that network | `"USDT is not available on xyz"` |
 | 400 | Deposits switched off on that network | `"Deposits are disabled for USDT on Arbitrum One"` |
 | 400 | Bad asset format | `["Invalid asset code"]` |
+| 503 | Another request for the same address is still creating it | `"Your address is still being created. Try again in a moment."` |
 
 **Integration notes**
 - While `usable` is `false`, show a spinner ("Generating your address…") and **call this same endpoint again every 3–5 s**. Stop after ~2 minutes; a push `address.ready` arrives when it's done.
 - **Never show or copy a `null` address.**
 - If `requiresTag` is `true`, show the `destinationTag` as large as the address, with a warning: "You MUST include this tag or your deposit will be lost."
 - When funds arrive the user gets pushes `deposit.detected` and then `deposit.credited`. Refresh 3.2.
+- **`status: "FAILED"` (since 26 Oct 2026):** Quidax never delivered the address (we checked for about 45 minutes). Stop the spinner and show **"We couldn't create your address"** with a **Try again** button. Try again = **call this same endpoint again**: it first picks up an address that arrived late (then `ACTIVE` at once), otherwise asks Quidax once more (then `PENDING`: show the spinner again). Tapping more than once never makes extra addresses. A push `address.failed` is sent when it fails.
+- **Made in advance (since 26 Oct 2026):** after Basic approval, BTC, USDT on Tron and USDT on BNB Smart Chain (the list is set on the dashboard) are created in the background, so they are often already `ACTIVE` the first time the user opens Receive. Nothing to do in the app; no `address.ready` push is sent for these. Full guide: `Reports/FLUTTER_CRYPTO_ADDRESSES.md`.
 
 ---
 
@@ -3213,6 +3216,7 @@ Push uses **Firebase Cloud Messaging** and is **off until the backend adds Fireb
 | `data.type` | Sent when | `transactionId`? | On tap open |
 | --- | --- | --- | --- |
 | `address.ready` | Deposit address finished generating | no | Deposit screen |
+| `address.failed` | A deposit address could not be created (since 26 Oct 2026); the user can tap Try again | no | Deposit screen for that coin |
 | `ngn_account.ready` | The naira account number is ready (opened after Basic approval) | no | Naira deposit screen (6.4) |
 | `deposit.detected` | Crypto deposit seen, waiting for confirmations. **Also: gift card submitted.** | crypto: yes / gift card: no | Activity / gift-card history |
 | `deposit.credited` | Deposit credited, held deposit released, referral reward paid. **Also: gift card paid** (`transactionId` type `GIFT_CARD`). | yes | Transaction (7.4); for `GIFT_CARD`, gift-card history |
