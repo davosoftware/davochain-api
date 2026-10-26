@@ -99,7 +99,13 @@ for (const file of controllerFiles(SRC)) {
       for (const [k, a] of Object.entries(args)) {
         const kind = Number(k.split(':')[0]);
         if (kind === 3) body.push(...(a.data ? [`- \`${a.data}\``] : bodyFields(types[a.index])));
-        if (kind === 4) query.push(a.data ? `\`${a.data}\`` : '(object)');
+        if (kind === 4) {
+          // A whole query class (@Query() dto): list its fields like a body's, marked as query.
+          const fields = a.data ? [] : bodyFields(types[a.index]);
+          if (a.data) query.push(`\`${a.data}\``);
+          else if (fields.length) body.push(...fields.map((l) => l.replace(/^(\s*)- /, '$1- (query) ')));
+          else query.push('(object)');
+        }
       }
       for (const s of subs) {
         rows.push({
@@ -127,6 +133,7 @@ out.push('');
 // Behaviour the table below can't show (a route's fields can stay the same while what it does changes).
 // Newest first; keep each line short and point to the app guide for detail.
 const RECENT_CHANGES: Array<[string, string]> = [
+  ['26 Oct 2026', 'Admin `GET /v1/admin/kyc/pending` is paged: `order` (oldest|newest), `page`, `pageSize` (max 100), `search` (email or name), `includeAutomatedTests`; it answers `{ items, total, page, pageSize, order }` instead of a bare list of the oldest 100.'],
   ['23 Oct 2026', '`GET`/`POST /v1/deposits/ngn/account`: **no BVN or NIN**. The naira account opens by itself after Basic approval (Payrep `create_account`, named from the ID). GET answers `200` with the number, or `202 {status:"PENDING"}` while it opens; its 404 is only for someone not eligible. POST needs no body; `bvn`/`nin` are still accepted for old app builds and ignored. New push `ngn_account.ready`. (FLUTTER_API.md 6.4, 6.5)'],
   ['23 Oct 2026', '`tier`, `currentTier` and `requiredTier` are the **old names**: build on `level` (None, Basic, Advanced) and `requiredLevel`. (FLUTTER_API.md §0.6.1)'],
   ['23 Oct 2026', 'Basic or Advanced approval ends every session: the app signs in again; a refresh then answers 401. (FLUTTER_API.md §0.5)'],

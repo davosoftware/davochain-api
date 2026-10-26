@@ -40,7 +40,7 @@ import {
   type EarningQuery,
 } from './earnings.service';
 import { AdminTransactionsService, type TxQuery } from './transactions.service';
-import { kycQueueQuery, type KycQueueParams } from './kyc-queue';
+import { kycQueueQuery, KycQueueParams } from './kyc-queue';
 import { ReferralsService } from '../referrals/referrals.service';
 import { GiftCardsAdminService } from '../giftcards/giftcards-admin.service';
 import { GiftCardsService } from '../giftcards/giftcards.service';

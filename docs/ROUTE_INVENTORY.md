@@ -4,6 +4,7 @@
 
 | Date | Change |
 | --- | --- |
+| 26 Oct 2026 | Admin `GET /v1/admin/kyc/pending` is paged: `order` (oldest|newest), `page`, `pageSize` (max 100), `search` (email or name), `includeAutomatedTests`; it answers `{ items, total, page, pageSize, order }` instead of a bare list of the oldest 100. |
 | 23 Oct 2026 | `GET`/`POST /v1/deposits/ngn/account`: **no BVN or NIN**. The naira account opens by itself after Basic approval (Payrep `create_account`, named from the ID). GET answers `200` with the number, or `202 {status:"PENDING"}` while it opens; its 404 is only for someone not eligible. POST needs no body; `bvn`/`nin` are still accepted for old app builds and ignored. New push `ngn_account.ready`. (FLUTTER_API.md 6.4, 6.5) |
 | 23 Oct 2026 | `tier`, `currentTier` and `requiredTier` are the **old names**: build on `level` (None, Basic, Advanced) and `requiredLevel`. (FLUTTER_API.md §0.6.1) |
 | 23 Oct 2026 | Basic or Advanced approval ends every session: the app signs in again; a refresh then answers 401. (FLUTTER_API.md §0.5) |
@@ -517,7 +518,11 @@
 - `note` (optional): maxLength(300), isString
 
 **GET `/v1/admin/kyc/pending`** (src/admin/admin.controller.ts)
-- Query: (object)
+- (query) `order` (optional): isIn(oldest|newest)
+- (query) `page` (optional): matches(^\d{1,6}$, undefined)
+- (query) `pageSize` (optional): matches(^\d{1,3}$, undefined)
+- (query) `search` (optional): maxLength(100), isString
+- (query) `includeAutomatedTests` (optional): isIn(true|false)
 
 **PUT `/v1/admin/levels`** (src/admin/admin.controller.ts)
 - `rules` (required): object, arrayMaxSize(64), isArray

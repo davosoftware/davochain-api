@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { IsIn, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
 
 /**
  * The KYC review list's paging, order, search and test-account filter
@@ -12,12 +13,13 @@ export const AUTOMATED_TEST_DOMAIN = '@davochain.invalid';
 const DEFAULT_PAGE_SIZE = 25;
 const MAX_PAGE_SIZE = 100;
 
-export interface KycQueueParams {
-  order?: string;
-  page?: string;
-  pageSize?: string;
-  search?: string;
-  includeAutomatedTests?: string;
+/** The query string GET /v1/admin/kyc/pending accepts. */
+export class KycQueueParams {
+  @IsOptional() @IsIn(['oldest', 'newest']) order?: string;
+  @IsOptional() @Matches(/^\d{1,6}$/) page?: string;
+  @IsOptional() @Matches(/^\d{1,3}$/) pageSize?: string;
+  @IsOptional() @IsString() @MaxLength(100) search?: string;
+  @IsOptional() @IsIn(['true', 'false']) includeAutomatedTests?: string;
 }
 
 const whole = (v: string | undefined) => {
