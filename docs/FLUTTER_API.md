@@ -22,6 +22,15 @@
 
 **New (23 Oct 2026): start with the walk-through.** [`CUSTOMER_JOURNEY_API_GUIDE.md`](CUSTOMER_JOURNEY_API_GUIDE.md) takes one customer through the whole app in order, with real responses: register, email code, Basic verification, the naira account number, deposits, buy, sell, swap, withdrawals, gift cards, Advanced verification and sign-out. It also covers exactly when and how to refresh tokens. A ready-to-import Postman collection that refreshes tokens by itself is in [`postman/`](postman/DavoChain-Customer-Journey.postman_collection.json).
 
+## What changed for the app (27 October 2026): swaps use Quidax's live price
+
+| Change | Where | What the app must do |
+| --- | --- | --- |
+| **A swap is priced from Quidax's own live swap price, with DavoChain's fee on top**, so the user receives exactly what was shown | 7.1 | **Refresh the swap quote every ~10 s** while the swap screen is open (rule 5), and send the newest `quoteId` |
+| **Tapping Swap after the price expired doesn't fail any more** (up to 30 s): the API picks up the current price and goes ahead if it's at most 0.5% worse | 7.2 | Nothing for the normal case |
+| **New `409 PRICE_CHANGED`** when the price moved more than 0.5% against the user, with a new quote | 7.2 | Show "The price changed: you'd now get … Swap anyway?". Swap anyway = 7.2 with `quote.quoteId` and a new Idempotency-Key |
+| **Swap history shows the real fee** (`fee`, `feeAsset`), and small rates keep their digits | 7.3, 7.4 | Show the fee line for swaps |
+
 ## What changed for the app (26 October 2026): crypto addresses and emergency sign-out
 
 | Change | Where | What the app must do |
@@ -1733,8 +1742,9 @@ Content-Type: application/json
 **Integration notes (important)**
 1. **Debounce the amount field ~400 ms** before asking for a quote.
 2. Show a **12-second countdown**. At 0, **fade and disable Continue** and show "Refresh rate".
-3. **Never refresh the quote automatically** while the user looks at it. Only when they change the amount or tap refresh.
+3. **Buy and sell:** never refresh the quote automatically while the user looks at it. Only when they change the amount or tap refresh.
 4. Convert `minimum` / `maximum` into the currency on screen and validate **before** the user taps Continue.
+5. **Swaps (since 27 Oct 2026): keep the price live.** A swap is priced from **Quidax's own live swap price**, with DavoChain's swap fee on top. While the swap screen is open, **ask 7.1 again every ~10 seconds** and update "You'll get" with the new `toAmount`. Use the newest `quoteId` when the user taps Swap. Stop refreshing when the screen closes.
 
 ---
 
@@ -1811,11 +1821,13 @@ Content-Type: application/json
 | 400 | Balance dropped since the quote | `"Insufficient NGN balance: need 99998.4, have 5000"` |
 | 400 | Provider refused the trade | `"<reason>. Nothing was deducted from your balance."` |
 | 409 | Two changes collided | `"Someone else changed this at the same moment. Try again."`: get a **new** quote and key |
+| 409 | **Swap only: the price moved more than 0.5% against the user** since the quote | `{ "code": "PRICE_CHANGED", "message": "The price changed: you'd now get 0.00146 BTC. Swap anyway?", "quote": { …a new 7.1 quote… } }`: nothing was deducted. Show the message with **Swap anyway** (send 7.2 again with `quote.quoteId` and a **new** Idempotency-Key) and **Cancel** |
 | 403 | Trading paused / not verified | as in 7.1 |
 
 **Integration notes**
 - `COMPLETED`: success screen, refresh 3.2.
 - `PROCESSING` (swaps): progress screen. Poll **7.4** every 5 s while it's open; push `trade.completed` or `trade.failed` arrives at the end.
+- **Swaps (since 27 Oct 2026):** a swap quote can still be used **up to 30 seconds** after it was made, even after its countdown. If Quidax's price expired meanwhile, the API picks up the current price **by itself** and goes ahead when it's at most **0.5% worse** (or better); otherwise it answers **409 `PRICE_CHANGED`** (above). The amount the user finally receives is in 7.4's `toAmount` and in the push. It equals the quote, give or take the last decimal, or the refreshed price.
 - `RECONCILING`: "We're confirming this with our provider. Your funds are safe." **No retry button.**
 - Any `400`: **nothing was deducted**. Show the message.
 - On a timeout, retry with the **same** `Idempotency-Key` (Appendix D has the code).
@@ -1869,8 +1881,9 @@ Authorization: Bearer eyJhbGciOi…
 | `status` | string | §0.8 |
 | `fromAsset`, `fromAmount` | string | Paid (full precision) |
 | `toAsset`, `toAmount` | string | Received (full precision) |
-| `rate` | string \| null | 4 decimals |
-| `fee` | string | Always `"0"` here (a swap's fee is already taken out of `toAmount`) |
+| `rate` | string \| null | 4 decimals when 1 or more; up to 10 decimals below 1 (a USDT→BTC swap rate such as `"0.0000166"`, never `"0.0000"`) |
+| `fee` | string | Buy/sell: `"0"` (the margin is inside the rate). **Swap: the real fee** (since 27 Oct 2026), already taken out of `toAmount` |
+| `feeAsset` | string \| null | Swap: the coin the fee is in; otherwise `null` |
 | `reason` | string \| null | Set when `FAILED` or `RECONCILING` |
 | `createdAt`, `completedAt` | string / null | |
 
@@ -1916,7 +1929,9 @@ Authorization: Bearer eyJhbGciOi…
 | `type` | string | `BUY`, `SELL`, `SWAP`, `DEPOSIT`, `WITHDRAWAL` or `GIFT_CARD` |
 | `status` | string | §0.8 |
 | `fromAsset`, `fromAmount` | string \| null | `null` for deposits and gift-card payouts |
-| `toAsset`, `toAmount` | string \| null | |
+| `toAsset`, `toAmount` | string \| null | For a swap, `toAmount` is what the user actually received |
+| `rate` | string \| null | Trades only; 4 decimals when 1 or more, up to 10 below 1 (since 27 Oct 2026) |
+| `fee`, `feeAsset` | string, string \| null | A swap's real fee and its coin; `"0"` / `null` otherwise (since 27 Oct 2026) |
 | `reason` | string \| null | |
 | `createdAt`, `completedAt` | string / null | |
 
