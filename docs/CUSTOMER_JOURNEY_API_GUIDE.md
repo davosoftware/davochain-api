@@ -1,7 +1,7 @@
 # DavoChain API: The Complete Customer Journey
 
 **For:** anyone testing the API (Postman, curl) and the Flutter developers building the app.
-**Written:** 23 October 2026 (launch day), against API branch `feature/email-design`.
+**Written:** 23 October 2026, against the code now on `main`. Later changes (26 Oct) for the app: crypto addresses can be `FAILED` with Try again, some are made in advance, and "Session expired" can follow an emergency sign-out (`Reports/FLUTTER_WIRING_GUIDE.md`).
 
 **Every response in this guide is real.** It was captured on 23 Oct 2026 by walking one customer through the whole journey (91 calls) on a test server with pretend providers. Your IDs, tokens, account numbers, rates and times will differ. Long tokens and IDs are shortened with `…`, the test email is shown as `ada.obi@example.com`, and the made-up test gift-card names are shown as "Amazon".
 

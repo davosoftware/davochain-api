@@ -66,7 +66,7 @@ PASSWORD='Test-password-123'
 
 | Rule | Detail |
 |---|---|
-| **Base URL** | `http://localhost:3000/v1/...`. Exceptions with no `/v1`: `/health`, `/webhooks/quidax`, `/webhooks/flutterwave`. |
+| **Base URL** | `http://localhost:3000/v1/...`. Exceptions with no `/v1`: `/health`, `/webhooks/quidax`, `/webhooks/payrep`. |
 | **Body** | JSON, with header `Content-Type: application/json` |
 | **User login** | Header `Authorization: Bearer <accessToken>` (from register or login). Lasts 15 minutes; use refresh (3.4) for a new one. |
 | **Admin login** | Header `Authorization: Bearer <admin accessToken>` from `POST /v1/admin/auth/login`. A user token never works on `/v1/admin/...`. |

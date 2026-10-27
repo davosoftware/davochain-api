@@ -4,7 +4,7 @@
 | --- | --- |
 | **For** | The Flutter developer building the DavoChain mobile app |
 | **API version** | `v1` |
-| **Last verified** | 2 October 2026, against the API source (`api/src/`) and a running local instance. Rate limiting (0.4.1, 2.x errors) added 12 October 2026. Basic verification (4.2, 4.4, §0.6) added 14 October 2026. Bug fixes and maintenance enforcement (Appendix F) 15 October 2026. **Checked again on 23 October 2026 against a real run of the whole customer journey (91 calls)**: sessions (§0.5) and local testing (Appendix E) updated. |
+| **Last verified** | 2 October 2026, against the API source (`api/src/`) and a running local instance. Rate limiting (0.4.1, 2.x errors) added 12 October 2026. Basic verification (4.2, 4.4, §0.6) added 14 October 2026. Bug fixes and maintenance enforcement (Appendix F) 15 October 2026. **Checked again on 23 October 2026 against a real run of the whole customer journey (91 calls)**: sessions (§0.5) and local testing (Appendix E) updated. **26 October 2026:** crypto address `FAILED` + Try again, addresses made in advance, emergency sign-out (top section). |
 | **Source of truth** | The API code. If this guide and the API disagree, tell the backend team so the guide gets fixed. |
 | **Replaces** | `admin/docs/FLUTTER.md` |
 
@@ -21,6 +21,17 @@
 3. Use **Part 2, Appendices** for push notifications, enum values, ready-made Dart code, testing on the local backend, and known limitations.
 
 **New (23 Oct 2026): start with the walk-through.** [`CUSTOMER_JOURNEY_API_GUIDE.md`](CUSTOMER_JOURNEY_API_GUIDE.md) takes one customer through the whole app in order, with real responses: register, email code, Basic verification, the naira account number, deposits, buy, sell, swap, withdrawals, gift cards, Advanced verification and sign-out. It also covers exactly when and how to refresh tokens. A ready-to-import Postman collection that refreshes tokens by itself is in [`postman/`](postman/DavoChain-Customer-Journey.postman_collection.json).
+
+## What changed for the app (26 October 2026): crypto addresses and emergency sign-out
+
+| Change | Where | What the app must do |
+| --- | --- | --- |
+| **A crypto deposit address can now be `status: "FAILED"`** (Quidax never delivered it, after about 45 minutes of checking) | 6.1, 6.2 | Stop the spinner; show "We couldn't create your address" with a **Try again** button. Try again = call 6.1 again with the same body: it first picks up an address that arrived late, otherwise asks Quidax once more (then `PENDING`). |
+| **New push `address.failed`** | Appendix A | On tap, open Receive; call 6.2 and show the `FAILED` address with its Try again button |
+| **BTC, USDT (Tron) and USDT (BNB) are made in advance** after Basic approval | 6.1 | Nothing to build: 6.1 often answers `ACTIVE` at once. No `address.ready` push for these. |
+| **`401 "Session expired. Please sign in again."` can follow an emergency "sign out all customers"** by our owners | §0.5 | Nothing new if your 401 handling follows §0.5: a failed refresh goes to sign-in |
+
+Everything the app still needs to wire, in one place: `Reports/FLUTTER_WIRING_GUIDE.md` (in the workspace).
 
 ## What changed for the app (23 October 2026, later): naira account without BVN
 
