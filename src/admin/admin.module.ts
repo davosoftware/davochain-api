@@ -40,6 +40,7 @@ import { TwoStepService } from './two-step.service';
 import { WithdrawalsModule } from '../withdrawals/withdrawals.module';
 import { AddressesModule } from '../addresses/addresses.module';
 import { DepositAddressesAdminController } from './deposit-addresses-admin.controller';
+import { DailyLimitsAdminController } from './daily-limits-admin.controller';
 import { DepositAddressesAdminService } from './deposit-addresses-admin.service';
 
 @Module({
@@ -66,7 +67,7 @@ import { DepositAddressesAdminService } from './deposit-addresses-admin.service'
     // People → Crypto addresses (spec 2026-10-26).
     AddressesModule,
   ],
-  controllers: [AdminController, AdminAuthController, AlertRecipientsController, KycBasicReviewController, KycAdvancedReviewController, ComplianceController, DojahAdminController, TreasuryAdminController, KycDocumentsAdminController, ServerSettingsController, DepositAddressesAdminController],
+  controllers: [AdminController, AdminAuthController, AlertRecipientsController, KycBasicReviewController, KycAdvancedReviewController, ComplianceController, DojahAdminController, TreasuryAdminController, KycDocumentsAdminController, ServerSettingsController, DepositAddressesAdminController, DailyLimitsAdminController],
   providers: [AdminService, UsersAdminService, AdminsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService, AdminSessionsService, AdminOtpService, NgnWithdrawalsService, AdminGuard, LevelAdminService, DojahSettingsService, TwoStepService, DepositAddressesAdminService],
   exports: [AdminService, UsersAdminService, AdminsService, AdminSessionsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService],
 })

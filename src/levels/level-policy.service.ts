@@ -5,10 +5,17 @@ import { RatesService } from '../rates/rates.service';
 import { Decimal, ZERO, dec } from '../common/money';
 import { lagosWhen } from '../common/dates';
 import { ACTIONS, LEVEL_NAMES, levelOf } from './levels';
+import { ACTION_TOTALS } from './daily-usage';
 
 export type Db = Pick<Prisma.TransactionClient, 'levelRule' | 'transaction' | 'giftCardTrade' | 'platformLimit'>;
 export interface Fx {
   ngnPerUsd: Decimal;
+}
+
+/** An amount in one limit currency, in another, at the given ₦/$ rate. */
+export function convertAmount(amount: Decimal, from: 'NGN' | 'USD', to: 'NGN' | 'USD', fx: Fx): Decimal {
+  if (from === to) return amount;
+  return from === 'USD' ? amount.mul(fx.ngnPerUsd) : amount.div(fx.ngnPerUsd);
 }
 export interface Verdict {
   allowed: boolean;
@@ -70,42 +77,35 @@ export class LevelPolicyService {
   }
 
   private convert(amount: Decimal, from: 'NGN' | 'USD', to: 'NGN' | 'USD', fx: Fx): Decimal {
-    if (from === to) return amount;
-    return from === 'USD' ? amount.mul(fx.ngnPerUsd) : amount.div(fx.ngnPerUsd);
+    return convertAmount(amount, from, to, fx);
   }
 
-  /** Today's total for one action, in the action's natural unit (ACTIONS[action].unit). */
+  /**
+   * Today's total for one action, in the action's natural unit (ACTIONS[action].unit).
+   * What counts is ACTION_TOTALS, shared with the daily limits monitor.
+   */
   private async usedToday(db: Db, userId: string, action: PolicyAction, now: Date, excludeTransactionId?: string): Promise<Decimal> {
     const since = startOfLagosDay(now);
-    const notFailed = { not: TxStatus.FAILED };
-    const exclude = excludeTransactionId ? { NOT: { id: excludeTransactionId } } : {};
-    const sumUsd = async (where: Prisma.TransactionWhereInput) =>
-      dec((await db.transaction.aggregate({ where, _sum: { usdValue: true } }))._sum.usdValue ?? 0);
-    const sumNgn = async (where: Prisma.TransactionWhereInput) =>
-      dec((await db.transaction.aggregate({ where, _sum: { toAmount: true } }))._sum.toAmount ?? 0);
-    switch (action) {
-      case PolicyAction.BUY:
-        return sumUsd({ userId, type: TxType.BUY, status: notFailed, createdAt: { gte: since }, ...exclude });
-      case PolicyAction.SELL:
-        return sumUsd({ userId, type: TxType.SELL, status: notFailed, createdAt: { gte: since }, ...exclude });
-      case PolicyAction.SWAP:
-        return sumUsd({ userId, type: TxType.SWAP, status: notFailed, createdAt: { gte: since }, ...exclude });
-      case PolicyAction.CRYPTO_WITHDRAW:
-        return sumUsd({ userId, type: TxType.WITHDRAWAL, fromAsset: { not: 'ngn' }, status: notFailed, createdAt: { gte: since }, ...exclude });
-      case PolicyAction.NGN_WITHDRAW:
-        return sumNgn({ userId, type: TxType.WITHDRAWAL, fromAsset: 'ngn', status: notFailed, createdAt: { gte: since }, ...exclude });
-      case PolicyAction.NGN_DEPOSIT:
-        return sumNgn({ userId, type: TxType.DEPOSIT, toAsset: 'ngn', status: notFailed, createdAt: { gte: since }, ...exclude });
-      case PolicyAction.GIFTCARD_SELL: {
-        const r = await db.giftCardTrade.aggregate({
-          where: { userId, status: { not: GiftCardTradeStatus.REJECTED }, createdAt: { gte: since } },
-          _sum: { expectedNgn: true },
-        });
-        return dec(r._sum.expectedNgn ?? 0);
-      }
-      default:
-        return ZERO;
+    const spec = ACTION_TOTALS[action];
+    if (spec.from === 'giftcards') {
+      const r = await db.giftCardTrade.aggregate({
+        where: { userId, status: { not: GiftCardTradeStatus.REJECTED }, createdAt: { gte: since } },
+        _sum: { expectedNgn: true },
+      });
+      return dec(r._sum.expectedNgn ?? 0);
     }
+    if (spec.from !== 'transactions') return ZERO;
+    const where: Prisma.TransactionWhereInput = {
+      userId,
+      type: spec.type,
+      ...(spec.fromAsset ? { fromAsset: spec.fromAsset } : {}),
+      ...(spec.toAsset ? { toAsset: spec.toAsset } : {}),
+      status: { not: TxStatus.FAILED },
+      createdAt: { gte: since },
+      ...(excludeTransactionId ? { NOT: { id: excludeTransactionId } } : {}),
+    };
+    const r = await db.transaction.aggregate({ where, _sum: { [spec.sum]: true } as Prisma.TransactionSumAggregateInputType });
+    return dec((r._sum as Record<string, unknown>)[spec.sum] as never ?? 0);
   }
 
   async evaluate(
