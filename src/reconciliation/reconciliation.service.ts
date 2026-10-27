@@ -415,7 +415,7 @@ export class ReconciliationService {
 
     if (status === 'completed') {
       await this.prisma.settlementLeg.update({ where: { id: leg.id }, data: { state: LegState.CONFIRMED } });
-      if (isUserSwap) await this.settlement.finaliseSwap(leg.transactionId);
+      if (isUserSwap) await this.settlement.finaliseSwap(leg.transactionId, swap?.received_amount);
       else touched.add(leg.transactionId);
       return true;
     }

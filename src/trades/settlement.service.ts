@@ -1,5 +1,5 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { LedgerAccount, LegState, SettlementLegKind, TxStatus, TxType } from '@prisma/client';
+import { Injectable, Logger, Optional } from '@nestjs/common';
+import { AlertType, LedgerAccount, LegState, SettlementLegKind, TxStatus, TxType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuidaxClient } from '../quidax/quidax.client';
 import { QuidaxError, QuidaxRateLimitError, QuidaxUnknownError } from '../quidax/quidax.errors';
@@ -7,8 +7,9 @@ import { LedgerService } from '../ledger/ledger.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ReferralsService } from '../referrals/referrals.service';
 import { ProvisioningService } from '../users/provisioning.service';
+import { OpsAlertsService } from '../common/ops-alerts/ops-alerts.service';
 import { Decimal, dec, str } from '../common/money';
-import type { QuidaxSwapTransaction, QuidaxWithdrawal } from '../quidax/quidax.types';
+import type { QuidaxSwapQuotation, QuidaxSwapTransaction, QuidaxWithdrawal } from '../quidax/quidax.types';
 import { closeOpen, OPEN_STATUSES } from './close-open';
 
 export type SettlementSource = 'INVENTORY' | 'FALLBACK_SWAP';
@@ -33,6 +34,8 @@ export class SettlementService {
     private readonly notifications: NotificationsService,
     private readonly provisioning: ProvisioningService,
     private readonly referrals: ReferralsService,
+    /** Tells a person when a swap delivered a different amount than quoted. */
+    @Optional() private readonly alerts?: OpsAlertsService,
   ) {}
 
   async mainAccount(): Promise<string> {
@@ -196,13 +199,32 @@ export class SettlementService {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  /** Swap inside the user's own sub-account. Nothing crosses accounts. */
+  /**
+   * Quidax's live swap price for this customer, in their own sub-account
+   * (27 Oct 2026). A quote is priced from it and the swap confirms the same
+   * quotation, so what the customer is shown is what Quidax delivers. Asking
+   * for a quotation moves nothing; an unused one just expires (~15 s).
+   */
+  async swapQuotation(quidaxUserId: string, fromCurrency: string, toCurrency: string, fromAmount: Decimal): Promise<QuidaxSwapQuotation> {
+    return this.quidax.createSwapQuotation(quidaxUserId, {
+      from_currency: fromCurrency,
+      to_currency: toCurrency,
+      from_amount: fromAmount.toFixed(),
+    });
+  }
+
+  /**
+   * Swap inside the user's own sub-account. Nothing crosses accounts.
+   * With `quotationId`, confirms the quotation the customer was quoted from;
+   * without one (older quotes), asks Quidax for a new quotation first.
+   */
   async swapInSubAccount(params: {
     transactionId: string;
     quidaxUserId: string;
     fromCurrency: string;
     toCurrency: string;
     fromAmount: Decimal;
+    quotationId?: string | null;
   }): Promise<QuidaxSwapTransaction> {
     const reference = this.quidax.newReference('subswap');
     const leg = await this.prisma.settlementLeg.create({
@@ -217,12 +239,9 @@ export class SettlementService {
     });
 
     try {
-      const quotation = await this.quidax.createSwapQuotation(params.quidaxUserId, {
-        from_currency: params.fromCurrency,
-        to_currency: params.toCurrency,
-        from_amount: params.fromAmount.toFixed(),
-      });
-      const result = await this.quidax.confirmSwap(params.quidaxUserId, quotation.id);
+      const quotationId =
+        params.quotationId ?? (await this.swapQuotation(params.quidaxUserId, params.fromCurrency, params.toCurrency, params.fromAmount)).id;
+      const result = await this.quidax.confirmSwap(params.quidaxUserId, quotationId);
 
       await this.prisma.settlementLeg.update({
         where: { id: leg.id },
@@ -442,17 +461,43 @@ export class SettlementService {
       return;
     }
 
-    // Settled upstream. Credit what the quote promised, not what came back —
-    // the small variance is the treasury's, which is what the spread pays for.
-    await this.finaliseSwap(tx.id);
+    // Settled upstream: credit what Quidax delivered into the customer's
+    // sub-account, minus our fee (27 Oct 2026), so the books match custody.
+    await this.finaliseSwap(tx.id, data.received_amount);
   }
 
-  async finaliseSwap(transactionId: string): Promise<void> {
+  /**
+   * Completes a coin-to-coin swap. `receivedAmount` is what Quidax delivered
+   * into the customer's sub-account (from its own confirmed record). The
+   * customer is credited that minus our fee, so their DavoChain balance always
+   * equals what Quidax holds for them (the custody check). Swaps are priced
+   * from Quidax's own quotation, so this normally equals the quote; if it
+   * doesn't, the delivered amount wins and a person is told. Unknown (an
+   * owner resolving by hand, or an unreadable amount): the quoted amount.
+   */
+  async finaliseSwap(transactionId: string, receivedAmount?: string | null): Promise<void> {
     const tx = await this.prisma.transaction.findUniqueOrThrow({ where: { id: transactionId } });
     if (tx.status === TxStatus.COMPLETED) return;
 
+    const quoted = dec(tx.toAmount!);
+    const fee = dec(tx.feeAmount ?? 0);
+    let received: Decimal | null = null;
+    try {
+      received = receivedAmount != null && receivedAmount !== '' ? dec(receivedAmount) : null;
+    } catch {
+      received = null;
+    }
+    const credited = received && received.isFinite() && received.gt(0) ? Decimal.max(received.minus(fee), 0) : quoted;
+    const differs = !credited.eq(quoted);
+    // The quote is rounded down to the coin's smallest unit and Quidax delivers
+    // the exact amount, so a sliver above the quote is normal and not worth a
+    // person's time. Less than quoted, or more than 0.01% above, is.
+    const unexpected = credited.lt(quoted) || credited.minus(quoted).gt(quoted.mul('0.0001'));
+
     const won = await this.prisma.serializable(async (t) => {
-      if (!(await closeOpen(t, tx.id, { status: TxStatus.COMPLETED, completedAt: new Date() }))) return false;
+      if (!(await closeOpen(t, tx.id, { status: TxStatus.COMPLETED, completedAt: new Date(), ...(differs ? { toAmount: credited.toFixed() } : {}) }))) {
+        return false;
+      }
       await this.ledger.settleLocked(t, {
         userId: tx.userId,
         assetCode: tx.fromAsset!,
@@ -464,7 +509,7 @@ export class SettlementService {
       await this.ledger.credit(t, {
         userId: tx.userId,
         assetCode: tx.toAsset!,
-        amount: dec(tx.toAmount!),
+        amount: credited,
         counterparty: LedgerAccount.INVENTORY,
         transactionId: tx.id,
         memo: 'swap out',
@@ -492,18 +537,32 @@ export class SettlementService {
     });
     if (!won) return;
 
+    if (unexpected) {
+      const coin = tx.toAsset!.toUpperCase();
+      this.log.warn(`Swap ${tx.id}: quoted ${quoted.toFixed()} ${coin}, Quidax delivered ${received?.toFixed()} (fee ${fee.toFixed()}); credited ${credited.toFixed()}`);
+      await this.alerts
+        ?.raise(AlertType.RECONCILIATION_DRIFT, `swap-amount:${tx.id}`, `A swap delivered a different amount than quoted (${coin})`, [
+          `Transaction: ${tx.id}`,
+          `Quoted to the customer: ${quoted.toFixed()} ${coin}`,
+          `Quidax delivered: ${received?.toFixed()} ${coin}; our fee ${fee.toFixed()} ${coin}`,
+          `Credited (what arrived minus our fee): ${credited.toFixed()} ${coin}`,
+          'Swaps are priced from Quidax\'s own quotation, so this should be rare. If it keeps happening, check the swap settings.',
+        ], 0)
+        .catch(() => false);
+    }
+
     await this.notifications.notify({
       userId: tx.userId,
       transactionId: tx.id,
       type: 'trade.completed',
       title: 'Swap complete',
-      body: `${str(dec(tx.fromAmount!), 8)} ${tx.fromAsset!.toUpperCase()} → ${str(dec(tx.toAmount!), 8)} ${tx.toAsset!.toUpperCase()}`,
+      body: `${str(dec(tx.fromAmount!), 8)} ${tx.fromAsset!.toUpperCase()} → ${str(credited, 8)} ${tx.toAsset!.toUpperCase()}`,
       email: {
         key: 'trade.swap.completed',
         variables: {
           fromAmount: str(dec(tx.fromAmount!), 8),
           fromAsset: tx.fromAsset!.toUpperCase(),
-          toAmount: str(dec(tx.toAmount!), 8),
+          toAmount: str(credited, 8),
           toAsset: tx.toAsset!.toUpperCase(),
           transactionId: tx.id,
         },

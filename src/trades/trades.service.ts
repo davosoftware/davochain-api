@@ -334,6 +334,8 @@ export class TradesService {
       feeAmount: unknown;
       feeAsset: string | null;
       rateConfigId: string;
+      /** The Quidax quotation the customer was priced from (27 Oct 2026); confirmed as it is. */
+      quidaxQuotationId?: string | null;
     },
   ): Promise<TradeResult> {
     await this.flags.assertTradingAllowed(quote.fromAsset);
@@ -378,6 +380,7 @@ export class TradesService {
         fromCurrency: quote.fromAsset,
         toCurrency: quote.toAsset,
         fromAmount: amountIn,
+        quotationId: quote.quidaxQuotationId,
       });
       // H10: what Quidax gives against what we quoted (before our fee).
       await this.tripIfWorse({
@@ -547,9 +550,11 @@ export class TradesService {
       fromAmount: t.fromAmount ? str(t.fromAmount) : null,
       toAsset: t.toAsset,
       toAmount: t.toAmount ? str(t.toAmount) : null,
-      rate: t.displayedRate ? str(t.displayedRate, 4) : null,
-      // The app shows ₦0 — the gate lives inside the rate.
-      fee: '0',
+      rate: t.displayedRate ? rateText(t.displayedRate) : null,
+      // Buys and sells show ₦0: the gate lives inside the rate. A swap's fee is
+      // real, charged in the coin received (27 Oct 2026).
+      fee: t.type === TxType.SWAP && t.feeAmount ? str(t.feeAmount) : '0',
+      feeAsset: t.type === TxType.SWAP ? t.feeAsset : null,
       reason: t.failureReason,
       createdAt: t.createdAt,
       completedAt: t.completedAt,
@@ -570,9 +575,22 @@ export class TradesService {
       fromAmount: tx.fromAmount ? str(tx.fromAmount) : null,
       toAsset: tx.toAsset,
       toAmount: tx.toAmount ? str(tx.toAmount) : null,
+      rate: tx.displayedRate ? rateText(tx.displayedRate) : null,
+      fee: tx.type === TxType.SWAP && tx.feeAmount ? str(tx.feeAmount) : '0',
+      feeAsset: tx.type === TxType.SWAP ? tx.feeAsset : null,
       reason: tx.failureReason,
       createdAt: tx.createdAt,
       completedAt: tx.completedAt,
     };
   }
+}
+
+/**
+ * A rate for people: 4 decimals when it's 1 or more (₦1,520.5000 per $1, 25.1234
+ * ETH per BTC); below 1, up to 10 decimals so a small swap rate (USDT → BTC,
+ * 0.0000166) is never shown as "0.0000".
+ */
+export function rateText(value: unknown): string {
+  const d = dec(value as never);
+  return d.gte(1) ? str(d, 4) : d.toDecimalPlaces(10, Decimal.ROUND_DOWN).toFixed();
 }

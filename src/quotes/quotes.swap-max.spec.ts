@@ -28,6 +28,8 @@ function build() {
     { assertTradingAllowed: jest.fn(async () => undefined) } as never,
     config as never,
     { fx: async () => ({ ngnPerUsd: dec('1500') }), assertWithinLimits: async () => undefined } as never,
+    // Quidax's live swap quotation (27 Oct 2026): BTC→ETH at 20 ETH per BTC.
+    { quidaxIdFor: async () => 'sub-1', swapQuotation: async (_s: string, _f: string, _t: string, amount: ReturnType<typeof dec>) => ({ id: 'qx1', to_amount: amount.mul(20).toFixed(), expires_at: new Date(Date.now() + 15_000).toISOString() }) } as never,
   );
 }
 

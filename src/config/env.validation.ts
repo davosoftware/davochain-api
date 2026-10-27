@@ -106,6 +106,8 @@ export const envSchema = z
     QUOTE_TTL_SECONDS: int(12),
     RATE_CACHE_TTL_SECONDS: int(3),
     QUOTE_HARD_EXPIRY_SECONDS: int(30),
+    /** A swap whose Quidax price expired goes through at a fresh price only if it's at most this much worse (50 = 0.5%). */
+    SWAP_REQUOTE_TOLERANCE_BPS: int(50),
 
     USER_ALIAS_EMAIL_DOMAIN: z.string().default('users.davochain.com'),
     TEST_ALIAS_EMAIL_DOMAIN: z.string().default('test.davochain.com'),

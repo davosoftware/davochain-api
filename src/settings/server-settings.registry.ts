@@ -60,6 +60,7 @@ export const SERVER_SETTINGS: SettingDef[] = [
   s({ key: 'MARGIN_DEVIATION_TRIP_BPS', group: 'Trading', label: 'Price-move trip', help: 'Trading pauses when Quidax\'s real price differs from ours by more than this (in hundredths of a percent; 200 = 2%).', kind: { type: 'int', min: 10, max: 2000, unit: 'bps' }, live: true, money: false }),
   s({ key: 'QUOTE_TTL_SECONDS', group: 'Trading', label: 'Quote lifetime', help: 'How long a price quote is shown before the app asks for a new one. At most 14: a Quidax swap quotation expires at 15 seconds (the same rule as at start-up).', kind: { type: 'int', min: 5, max: 14, unit: 'seconds' }, live: true, money: false }),
   s({ key: 'QUOTE_HARD_EXPIRY_SECONDS', group: 'Trading', label: 'Quote hard expiry', help: 'After this, a quote can never be traded, even if the app still shows it.', kind: { type: 'int', min: 5, max: 300, unit: 'seconds' }, live: true, money: false }),
+  s({ key: 'SWAP_REQUOTE_TOLERANCE_BPS', group: 'Trading', label: 'Swap price change allowed', help: "When Quidax's swap price expired before the customer tapped Swap, a fresh price is used if it's at most this much worse (hundredths of a percent; 50 = 0.5%). Worse than that, the customer is asked to accept the new price.", kind: { type: 'int', min: 0, max: 500, unit: 'bps' }, live: true, money: true }),
   s({ key: 'RATE_CACHE_TTL_SECONDS', group: 'Trading', label: 'Price cache', help: 'How long a price from Quidax is reused before asking again.', kind: { type: 'int', min: 1, max: 60, unit: 'seconds' }, live: true, money: false }),
 
   // ── Fees ─────────────────────────────────────────────────
@@ -97,7 +98,7 @@ export type ServerSettingKey =
   | 'NGN_DEPOSITS_ENABLED' | 'NGN_ACCOUNT_AUTO_OPEN' | 'PAYREP_MAIN_ACCOUNT' | 'PAYREP_ACCOUNT_NAME_PREFIX'
   | 'EMAIL_VERIFICATION_REQUIRED'
   | 'SMTP_HOST' | 'SMTP_PORT' | 'SMTP_SECURE' | 'SMTP_USER' | 'SMTP_FROM'
-  | 'MARGIN_DEVIATION_TRIP_BPS' | 'QUOTE_TTL_SECONDS' | 'QUOTE_HARD_EXPIRY_SECONDS' | 'RATE_CACHE_TTL_SECONDS'
+  | 'MARGIN_DEVIATION_TRIP_BPS' | 'QUOTE_TTL_SECONDS' | 'QUOTE_HARD_EXPIRY_SECONDS' | 'SWAP_REQUOTE_TOLERANCE_BPS' | 'RATE_CACHE_TTL_SECONDS'
   | 'FEE_CLAIM_DESTINATION' | 'FEE_CLAIM_MIN_USD'
   | 'JWT_EXPIRES_IN' | 'JWT_REFRESH_EXPIRES_IN' | 'ADMIN_JWT_EXPIRES_IN' | 'ADMIN_IDLE_TIMEOUT_MINUTES' | 'ADMIN_INVITE_TTL_HOURS'
   | 'DAILY_DIGEST_HOUR' | 'DIGEST_TIMEZONE'

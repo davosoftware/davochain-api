@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { KycTier, PolicyAction, QuoteSide, RateQuote } from '@prisma/client';
 import { formatQuoteRate } from './quote-rate';
@@ -13,6 +13,7 @@ import { Decimal, ZERO, dec, floorToStep, str } from '../common/money';
 import { LevelPolicyService } from '../levels/level-policy.service';
 import { levelOf } from '../levels/levels';
 import { ServerSettingsService } from '../settings/server-settings.service';
+import { SettlementService } from '../trades/settlement.service';
 
 export interface QuoteView {
   quoteId: string;
@@ -46,9 +47,15 @@ export class QuotesService {
     private readonly flags: SystemFlagsService,
     private readonly config: ConfigService,
     private readonly policy: LevelPolicyService,
+    /** Quidax's live swap quotation in the customer's sub-account (swaps are priced from it). */
+    private readonly settlement: SettlementService,
     /** Live values from System → Server settings (spec 2026-10-26); .env when absent. */
     @Optional() private readonly settings?: ServerSettingsService,
   ) {}
+
+  private setting<T>(key: 'QUOTE_TTL_SECONDS' | 'QUOTE_HARD_EXPIRY_SECONDS' | 'SWAP_REQUOTE_TOLERANCE_BPS'): T | undefined {
+    return this.settings ? this.settings.get<T>(key) : this.config.get<T>(key);
+  }
 
   /**
    * The gate for a trade of this size.
@@ -223,9 +230,12 @@ export class QuotesService {
   /**
    * SWAP — coin to coin. Different mechanism, different fee.
    *
-   * No naira leg, so the per-dollar gate does not apply. A flat USD fee is
-   * taken from the OUTPUT and accrues as a receivable; the swap itself runs
-   * inside the user's own sub-account, so no transfer minimum applies to it.
+   * Priced from **Quidax's live swap quotation** in the customer's own
+   * sub-account, with our swap fee (Fees → Swap fee: flat dollars, banded by
+   * size) taken from the output (decision 27 Oct 2026). The swap later confirms
+   * that same quotation, so the customer receives exactly what they were shown
+   * and our books match what Quidax delivered. Our cached USD prices only size
+   * the trade (limits, fee band) and convert the fee into the coin received.
    */
   async quoteSwap(
     userId: string,
@@ -265,11 +275,6 @@ export class QuotesService {
       );
     }
 
-    const grossOut = usdValue.div(toPrice.priceUsd);
-    const feeInToAsset = feeUsd.div(toPrice.priceUsd);
-    const netOut = floorToStep(grossOut.minus(feeInToAsset), toAsset.transferStep);
-    if (netOut.lte(0)) throw new BadRequestException('Amount is too small to swap');
-
     // H10: swaps had no maximum size; the same per-coin cap as buy and sell.
     const maxUsd = dec(cfg.maxTradeUsd);
     if (usdValue.gt(maxUsd)) {
@@ -282,6 +287,14 @@ export class QuotesService {
         `Insufficient ${from.toUpperCase()} balance. You have ${str(balance.available, fromAsset.displayScale)}.`,
       );
     }
+
+    // Quidax's live price for exactly this swap; our fee goes on top of it.
+    const subId = await this.settlement.quidaxIdFor(userId);
+    const quotation = await this.settlement.swapQuotation(subId, from, to, amountIn);
+    const grossOut = dec(quotation.to_amount);
+    const feeInToAsset = feeUsd.div(toPrice.priceUsd);
+    const netOut = floorToStep(grossOut.minus(feeInToAsset), toAsset.transferStep);
+    if (netOut.lte(0)) throw new BadRequestException('Amount is too small to swap');
 
     return this.persist({
       userId,
@@ -304,6 +317,8 @@ export class QuotesService {
       scale: fromAsset.displayScale,
       usdValue,
       feeUsd,
+      quidaxQuotationId: quotation.id,
+      quidaxQuotationExpiresAt: new Date(quotation.expires_at),
     });
   }
 
@@ -350,9 +365,15 @@ export class QuotesService {
     usdValue: Decimal;
     /** The fee in dollars, whatever asset it is actually charged in. */
     feeUsd: Decimal;
+    /** Swaps: the Quidax quotation the price came from. The quote never outlives it. */
+    quidaxQuotationId?: string;
+    quidaxQuotationExpiresAt?: Date;
   }): Promise<QuoteView> {
-    const ttl = (this.settings ? this.settings.get<number>('QUOTE_TTL_SECONDS') : this.config.get<number>('QUOTE_TTL_SECONDS')) ?? 12;
-    const expiresAt = new Date(Date.now() + ttl * 1000);
+    const ttl = this.setting<number>('QUOTE_TTL_SECONDS') ?? 12;
+    let expiresAt = new Date(Date.now() + ttl * 1000);
+    if (input.quidaxQuotationExpiresAt && !Number.isNaN(input.quidaxQuotationExpiresAt.getTime()) && input.quidaxQuotationExpiresAt < expiresAt) {
+      expiresAt = input.quidaxQuotationExpiresAt;
+    }
 
     // Level rules: tell the person now; the binding check runs again when the trade locks its funds.
     const fx = await this.policy.fx();
@@ -377,6 +398,8 @@ export class QuotesService {
         feeUsd: input.feeUsd.toFixed(),
         rateConfigId: input.rateConfigId,
         expiresAt,
+        quidaxQuotationId: input.quidaxQuotationId ?? null,
+        quidaxQuotationExpiresAt: input.quidaxQuotationExpiresAt ?? null,
       },
     });
 
@@ -393,7 +416,7 @@ export class QuotesService {
       minimum: input.minimumUsd.toFixed(2),
       maximum: input.maximumUsd.toFixed(2),
       expiresAt: expiresAt.toISOString(),
-      ttlSeconds: ttl,
+      ttlSeconds: Math.max(1, Math.round((expiresAt.getTime() - Date.now()) / 1000)),
       availableBalance: str(input.availableBalance, input.scale),
     };
   }
@@ -410,11 +433,15 @@ export class QuotesService {
     if (!quote || quote.userId !== userId) throw new NotFoundException('Quote not found');
     if (quote.consumedAt) throw new BadRequestException('This quote has already been used');
 
-    const hardExpiry = (this.settings ? this.settings.get<number>('QUOTE_HARD_EXPIRY_SECONDS') : this.config.get<number>('QUOTE_HARD_EXPIRY_SECONDS')) ?? 30;
+    const hardExpiry = this.setting<number>('QUOTE_HARD_EXPIRY_SECONDS') ?? 30;
     const ageSeconds = (Date.now() - quote.createdAt.getTime()) / 1000;
-    if (quote.expiresAt < new Date() || ageSeconds > hardExpiry) {
+    const tooOld = ageSeconds > hardExpiry;
+    // A swap whose price expired is priced again here (27 Oct 2026): the customer
+    // isn't sent back for a quote unless the price moved against them.
+    if (tooOld || (quote.side !== QuoteSide.SWAP && quote.expiresAt < new Date())) {
       throw new BadRequestException('The rate has expired. Please refresh and try again.');
     }
+    const ready = quote.side === QuoteSide.SWAP ? await this.freshSwapPrice(userId, quote) : quote;
 
     const claimed = await this.prisma.rateQuote.updateMany({
       where: { id: quoteId, consumedAt: null },
@@ -422,6 +449,52 @@ export class QuotesService {
     });
     if (claimed.count === 0) throw new BadRequestException('This quote has already been used');
 
-    return quote;
+    return ready;
+  }
+
+  /**
+   * At the tap: a swap must confirm a Quidax quotation that is still alive.
+   *
+   * - Still alive (more than a second left): used as quoted.
+   * - Expired: a fresh quotation, with the same fee on top. At most
+   *   SWAP_REQUOTE_TOLERANCE_BPS worse (0.5% by default) or better → the quote
+   *   is updated to the new price and the swap goes ahead at it. Worse than
+   *   that → nothing happens: 409 PRICE_CHANGED with a new quote to accept.
+   */
+  private async freshSwapPrice(userId: string, quote: RateQuote): Promise<RateQuote> {
+    const alive = quote.quidaxQuotationId && quote.quidaxQuotationExpiresAt && quote.quidaxQuotationExpiresAt.getTime() - Date.now() > 1000;
+    if (alive) return quote;
+
+    const toAsset = await this.assets.require(quote.toAsset);
+    const amountIn = dec(quote.fromAmount as never);
+    const fee = dec(quote.feeAmount as never);
+    const subId = await this.settlement.quidaxIdFor(userId);
+    const quotation = await this.settlement.swapQuotation(subId, quote.fromAsset, quote.toAsset, amountIn);
+    const grossOut = dec(quotation.to_amount);
+    const netOut = floorToStep(grossOut.minus(fee), toAsset.transferStep);
+
+    const quoted = dec(quote.toAmount as never);
+    const tolerance = dec(this.setting<number>('SWAP_REQUOTE_TOLERANCE_BPS') ?? 50).div(10_000);
+    if (netOut.lte(0) || netOut.lt(quoted.mul(dec(1).minus(tolerance)))) {
+      const fresh = await this.quoteSwap(userId, quote.fromAsset, quote.toAsset, amountIn);
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'PRICE_CHANGED',
+        message: `The price changed: you'd now get ${fresh.toAmount} ${quote.toAsset.toUpperCase()}. Swap anyway?`,
+        quote: fresh,
+      });
+    }
+
+    const rate = grossOut.div(amountIn);
+    return this.prisma.rateQuote.update({
+      where: { id: quote.id },
+      data: {
+        toAmount: netOut.toFixed(),
+        displayedRate: rate.toFixed(),
+        quidaxRate: rate.toFixed(),
+        quidaxQuotationId: quotation.id,
+        quidaxQuotationExpiresAt: new Date(quotation.expires_at),
+      },
+    });
   }
 }

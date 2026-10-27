@@ -643,6 +643,9 @@ model RateQuote {
   snapshotId   String?
   expiresAt    DateTime
   consumedAt   DateTime?
+  /// Swaps only: the Quidax swap quotation this quote was priced from; the swap confirms it (27 Oct 2026).
+  quidaxQuotationId        String?
+  quidaxQuotationExpiresAt DateTime?
   createdAt    DateTime  @default(now())
 
   user User @relation(fields: [userId], references: [id])

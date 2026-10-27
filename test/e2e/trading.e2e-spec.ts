@@ -117,3 +117,55 @@ describe('trades (POST /v1/trades)', () => {
     expect((n.body.items as Array<{ type: string }>).some((i) => i.type === 'trade.completed')).toBe(true);
   });
 });
+
+/**
+ * Swaps (27 Oct 2026): priced from Quidax's own live swap quotation with our fee
+ * on top, so the customer is credited exactly what they were quoted; and a tap
+ * after Quidax's 15-second quotation expired still goes through at a fresh
+ * price when it moved less than 0.5%.
+ */
+describe('swaps (POST /v1/quotes side=swap, then /v1/trades)', () => {
+  const SWAP = { side: 'swap', fromAsset: 'usdt', toAsset: 'btc', amount: '50' };
+
+  beforeAll(() => credit(user, 'usdt', '200'));
+
+  async function finished(id: string): Promise<Record<string, string>> {
+    let t = (await call('GET', `/trades/${id}`, { token: user.token })).body;
+    for (let i = 0; i < 40 && t.status !== 'COMPLETED' && t.status !== 'FAILED'; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      t = (await call('GET', `/trades/${id}`, { token: user.token })).body;
+    }
+    return t;
+  }
+
+  it('the customer is credited exactly the quoted amount, and the swap shows its fee', async () => {
+    const before = Number((await balance(user, 'btc')).available);
+    const q = await quote(user, SWAP);
+    expect(q.status).toBe(201);
+    expect(q.body).toMatchObject({ side: 'SWAP', feeAsset: 'btc' });
+    const t = await call('POST', '/trades', { token: user.token, body: { quoteId: q.body.quoteId }, headers: { 'Idempotency-Key': key() } });
+    expect(t.status).toBe(201);
+    const done = await finished(t.body.transactionId);
+    expect(done.status).toBe('COMPLETED');
+    // Exactly what Quidax delivered minus our fee: the quote, plus at most rounding dust (the quote is rounded down).
+    const credited = Number(done.toAmount);
+    expect(credited).toBeGreaterThanOrEqual(Number(q.body.toAmount));
+    expect(credited - Number(q.body.toAmount)).toBeLessThan(0.0000001);
+    expect(Number((await balance(user, 'btc')).available) - before).toBeCloseTo(credited, 7); // the wallet shows 8 decimals
+    expect(done).toMatchObject({ feeAsset: 'btc' });
+    expect(Number(done.fee)).toBeGreaterThan(0);
+    expect(Number(done.rate)).toBeGreaterThan(0); // a small rate keeps its digits, never "0.0000"
+  });
+
+  it("tapping Swap after Quidax's 15-second price expired still goes through, at the refreshed price", async () => {
+    const q = await quote(user, SWAP);
+    expect(q.status).toBe(201);
+    await new Promise((r) => setTimeout(r, 16_000)); // Quidax's quotation is gone; ours is within the 30-second hard expiry
+    const t = await call('POST', '/trades', { token: user.token, body: { quoteId: q.body.quoteId }, headers: { 'Idempotency-Key': key() } });
+    expect(t.status).toBe(201);
+    const done = await finished(t.body.transactionId);
+    expect(done.status).toBe('COMPLETED');
+    // The pretend Quidax's prices don't move, so the refreshed price is the same (give or take rounding dust).
+    expect(Math.abs(Number(done.toAmount) - Number(q.body.toAmount))).toBeLessThan(0.0000001);
+  }, 40_000);
+});

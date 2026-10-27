@@ -39,6 +39,7 @@ function build(bands: Partial<Record<FeeKind, string>>) {
     { assertTradingAllowed: jest.fn(async () => undefined) } as never,
     { get: () => undefined } as never,
     { fx: async () => ({ ngnPerUsd: dec('1500') }), assertWithinLimits: async () => undefined } as never,
+    {} as never, // settlement: only swaps use it
   );
   return { svc, resolved, created };
 }
