@@ -113,11 +113,21 @@ describe('changing a setting: owners only, password, reason, checked, audited', 
   });
 
   it('a quote may not live longer than its hard expiry (the two are checked together)', async () => {
-    const { svc } = build({ QUOTE_TTL_SECONDS: 12, QUOTE_HARD_EXPIRY_SECONDS: 30 });
+    const { svc } = build({ QUOTE_TTL_SECONDS: 12, QUOTE_HARD_EXPIRY_SECONDS: 10 });
     await svc.refresh();
-    await expect(svc.set(OWNER, 'QUOTE_TTL_SECONDS', 40, PASSWORD, REASON)).rejects.toThrow(/hard expiry/);
-    await svc.set(OWNER, 'QUOTE_TTL_SECONDS', 20, PASSWORD, REASON);
-    expect(svc.get('QUOTE_TTL_SECONDS')).toBe(20);
+    await expect(svc.set(OWNER, 'QUOTE_TTL_SECONDS', 12, PASSWORD, REASON)).rejects.toThrow(/hard expiry/);
+    await svc.set(OWNER, 'QUOTE_TTL_SECONDS', 8, PASSWORD, REASON);
+    expect(svc.get('QUOTE_TTL_SECONDS')).toBe(8);
+  });
+
+  it('a quote lifetime of 15 seconds or more is refused, as at start-up: a Quidax swap quotation expires at 15 s', async () => {
+    const { svc, flags } = build({ QUOTE_TTL_SECONDS: 12, QUOTE_HARD_EXPIRY_SECONDS: 30 });
+    await svc.refresh();
+    await expect(svc.set(OWNER, 'QUOTE_TTL_SECONDS', 15, PASSWORD, REASON)).rejects.toBeInstanceOf(BadRequestException);
+    await expect(svc.set(OWNER, 'QUOTE_TTL_SECONDS', 20, PASSWORD, REASON)).rejects.toBeInstanceOf(BadRequestException);
+    expect(flags.size).toBe(0);
+    await svc.set(OWNER, 'QUOTE_TTL_SECONDS', 14, PASSWORD, REASON);
+    expect(svc.get('QUOTE_TTL_SECONDS')).toBe(14);
   });
 
   it('the main Payrep account must be one Payrep recognises', async () => {
@@ -162,7 +172,7 @@ describe('changing a setting: owners only, password, reason, checked, audited', 
 
   it('reset goes back to the .env value, audited', async () => {
     const { svc, audit } = build({ QUOTE_TTL_SECONDS: 12, QUOTE_HARD_EXPIRY_SECONDS: 30 });
-    await svc.set(OWNER, 'QUOTE_TTL_SECONDS', 20, PASSWORD, REASON);
+    await svc.set(OWNER, 'QUOTE_TTL_SECONDS', 10, PASSWORD, REASON);
     await svc.reset(OWNER, 'QUOTE_TTL_SECONDS', PASSWORD, 'Back to the normal quote time');
     expect(svc.get('QUOTE_TTL_SECONDS')).toBe(12);
     expect(audit.at(-1)).toMatchObject({ action: 'server_setting.reset', entityId: 'QUOTE_TTL_SECONDS' });

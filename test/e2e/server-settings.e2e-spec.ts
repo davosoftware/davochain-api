@@ -27,7 +27,7 @@ describeAdmin('Server settings', () => {
     expect(r.status).toBe(200);
     expect(r.body.owner).toBe(true);
     const ttl = r.body.settings.find((s: { key: string }) => s.key === 'QUOTE_TTL_SECONDS');
-    expect(ttl).toMatchObject({ group: 'Trading', kind: 'int', min: 5, max: 120, live: true, money: false });
+    expect(ttl).toMatchObject({ group: 'Trading', kind: 'int', min: 5, max: 14, live: true, money: false });
     expect(r.body.settings.map((s: { key: string }) => s.key)).not.toContain('DATABASE_URL');
   });
 
@@ -39,7 +39,7 @@ describeAdmin('Server settings', () => {
     const short = await call('PUT', '/admin/server-settings/QUOTE_TTL_SECONDS', { token: ADMIN, body: { value: 20, password: PASSWORD, reason: 'because' } });
     expect(short.status).toBe(400);
 
-    const range = await call('PUT', '/admin/server-settings/QUOTE_TTL_SECONDS', { token: ADMIN, body: { value: 999, password: PASSWORD, reason: REASON } });
+    const range = await call('PUT', '/admin/server-settings/QUOTE_TTL_SECONDS', { token: ADMIN, body: { value: 15, password: PASSWORD, reason: REASON } });
     expect(range.status).toBe(400);
   });
 
@@ -50,9 +50,9 @@ describeAdmin('Server settings', () => {
   });
 
   it('an owner changes a setting, and reset puts the server value back', async () => {
-    const set = await call('PUT', '/admin/server-settings/QUOTE_TTL_SECONDS', { token: ADMIN, body: { value: 21, password: PASSWORD, reason: REASON } });
+    const set = await call('PUT', '/admin/server-settings/QUOTE_TTL_SECONDS', { token: ADMIN, body: { value: 11, password: PASSWORD, reason: REASON } });
     expect(set.status).toBe(200);
-    expect(set.body).toMatchObject({ key: 'QUOTE_TTL_SECONDS', value: 21, source: 'dashboard' });
+    expect(set.body).toMatchObject({ key: 'QUOTE_TTL_SECONDS', value: 11, source: 'dashboard' });
 
     const audit = await call('GET', '/admin/audit?action=server_setting.set', { token: ADMIN });
     if (audit.status === 200) expect(JSON.stringify(audit.body)).toContain('QUOTE_TTL_SECONDS');
