@@ -1,8 +1,10 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { runEffects } from '../../compliance/aml.service';
 import { lagosDate } from '../../common/dates';
+import { AUTOMATED_TEST_DOMAIN } from '../../admin/kyc-queue';
 import { AdvancedApprover } from './advanced-approver';
 import { AdvancedRunner } from './advanced-runner.service';
 
@@ -27,6 +29,8 @@ export class AdvancedReviewService {
     private readonly prisma: PrismaService,
     private readonly approver: AdvancedApprover,
     private readonly runner: AdvancedRunner,
+    /** For DOJAH_USE_MOCK: the screen says when results come from the pretend Dojah. */
+    @Optional() private readonly config?: ConfigService,
   ) {}
 
   async list() {
@@ -59,7 +63,53 @@ export class AdvancedReviewService {
         docLast4: r.docLast4,
       });
     }
-    return { waiting: rows.length, approvedToday, rejectedToday, rows: out };
+    return {
+      waiting: rows.length,
+      approvedToday,
+      rejectedToday,
+      rows: out,
+      recentRejected: await this.recentRejected(),
+      pretendDojah: this.config?.get<boolean>('DOJAH_USE_MOCK') === true,
+    };
+  }
+
+  /**
+   * The latest rejections, newest first (28 Oct 2026). Most are made by the
+   * rules and never reach the queue above, so without this list an admin could
+   * not see why a customer was told "we couldn't verify you".
+   */
+  private async recentRejected() {
+    const rows = await this.prisma.advancedVerification.findMany({
+      where: { state: 'REJECTED' },
+      orderBy: { updatedAt: 'desc' },
+      take: 100,
+    });
+    const out = [];
+    for (const r of rows) {
+      if (out.length === 20) break;
+      const user = await this.prisma.user.findUnique({ where: { id: r.userId }, select: { id: true, firstName: true, lastName: true, email: true } });
+      // Automated-test accounts would push real attempts off the list (as on the KYC queue).
+      if (user?.email.endsWith(AUTOMATED_TEST_DOMAIN)) continue;
+      const verified = r.rejectCode === 'DETAILS_MISMATCH' ? await this.runner.verified(r.userId).catch(() => null) : null;
+      out.push({
+        id: r.id,
+        step: r.step,
+        createdAt: r.createdAt,
+        decidedAt: r.updatedAt,
+        user: user ? { id: user.id, firstName: user.firstName, lastName: user.lastName, email: user.email } : null,
+        idType: r.idType,
+        addressKind: r.addressKind,
+        rejectCode: r.rejectCode,
+        customerMessage: r.customerMessage,
+        decidedBy: r.reviewedBy ? 'ADMIN' : 'RULES',
+        // Only when the dates were the reason: what the ID showed beside the verified (Basic) date.
+        dateOfBirth:
+          r.rejectCode === 'DETAILS_MISMATCH'
+            ? { onDocument: r.docDateOfBirth ?? null, verified: verified?.dateOfBirth ?? null }
+            : null,
+      });
+    }
+    return out;
   }
 
   async decide(actor: { adminId: string; ip?: string }, id: string, d: { approve: boolean; reason: ReviewRejectReason; note?: string }) {

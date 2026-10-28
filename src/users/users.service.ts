@@ -9,9 +9,10 @@ export class UsersService {
   async profile(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      // M12: only the two KYC fields shown, never the hashes, date of birth or address.
+      // M12: only the KYC fields shown, never the hashes or address. The date of birth
+      // (28 Oct 2026) is the verified one, from the BVN/NIN record at Basic.
       include: {
-        kycProfile: { select: { rejectionReason: true, submittedAt: true } },
+        kycProfile: { select: { rejectionReason: true, submittedAt: true, dateOfBirth: true } },
         quidaxAccount: { select: { quidaxUserId: true } },
       },
     });
@@ -26,6 +27,8 @@ export class UsersService {
       status: user.status,
       // H9: false until the emailed code is entered; deposits, withdrawals, trades and verification wait for it.
       emailVerified: user.emailVerifiedAt !== null,
+      /** "YYYY-MM-DD" from the verified BVN/NIN record; null until Basic verification is approved. */
+      dateOfBirth: user.kycProfile?.dateOfBirth ? user.kycProfile.dateOfBirth.toISOString().slice(0, 10) : null,
       kyc: {
         tier: user.kycTier,
         status: user.kycStatus,

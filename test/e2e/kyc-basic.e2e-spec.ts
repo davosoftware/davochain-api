@@ -55,6 +55,13 @@ describe('Basic verification (POST /v1/kyc/basic) on the Dojah mock', () => {
     expect(k.body).toMatchObject({ tier: 'TIER_1', status: 'APPROVED', level: 'BASIC', basicState: 'APPROVED', bvnLast4: raw.slice(-4) });
   });
 
+  it('GET /v1/me shows the verified date of birth after Basic, and null before (28 Oct 2026)', async () => {
+    const before = await newUser();
+    expect((await call('GET', '/me', { token: before.token })).body.dateOfBirth).toBeNull();
+    const after = await verifyBasic(await newUser());
+    expect((await call('GET', '/me', { token: after.token })).body.dateOfBirth).toBe('1995-03-03');
+  });
+
   it('the raw BVN never comes back in any response', async () => {
     const u = await newUser();
     const raw = idNumber('333');

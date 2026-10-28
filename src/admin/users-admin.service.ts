@@ -180,6 +180,8 @@ export class UsersAdminService {
             submittedAt: true,
             reviewedAt: true,
             rejectionReason: true,
+            // The verified date of birth (BVN/NIN record at Basic), shown on the opened row (28 Oct 2026).
+            dateOfBirth: true,
           },
         },
       },
@@ -233,7 +235,9 @@ export class UsersAdminService {
       suspendedBy: user.suspendedBy,
       transactionCount: txCount,
       quidax: user.quidaxAccount,
-      kyc: user.kycProfile,
+      kyc: user.kycProfile
+        ? { ...user.kycProfile, dateOfBirth: user.kycProfile.dateOfBirth ? user.kycProfile.dateOfBirth.toISOString().slice(0, 10) : null }
+        : null,
       // Only coins they actually hold — a list of fifteen zeroes is noise.
       balances: assets
         .map((a) => {

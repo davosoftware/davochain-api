@@ -98,6 +98,50 @@ describe('AdvancedReviewService.list', () => {
   });
 });
 
+describe('AdvancedReviewService.list: recently rejected (28 Oct 2026)', () => {
+  it('lists attempts the rules rejected, with the reason and both dates for a birth-date mismatch', async () => {
+    const h = build('REJECTED', 'IDENTITY', {
+      rejectCode: 'DETAILS_MISMATCH',
+      customerMessage: "The date of birth on this ID doesn't match your verified details.",
+      docDateOfBirth: '1990-01-01',
+      reviewedBy: null,
+    });
+    const r = await h.svc.list();
+    expect(r.rows).toEqual([]);
+    expect(r.recentRejected).toEqual([
+      expect.objectContaining({
+        id: 'v1',
+        step: 'IDENTITY',
+        user: { id: 'u1', firstName: 'Someone', lastName: 'Clean', email: 'u1@x.test' },
+        idType: 'NATIONAL_ID',
+        rejectCode: 'DETAILS_MISMATCH',
+        customerMessage: "The date of birth on this ID doesn't match your verified details.",
+        decidedBy: 'RULES',
+        dateOfBirth: { onDocument: '1990-01-01', verified: '1995-03-03' },
+      }),
+    ]);
+  });
+
+  it('marks a rejection made by an admin, and leaves the dates out when they were not the reason', async () => {
+    const h = build('REJECTED', 'IDENTITY', { rejectCode: 'BY_REVIEW', customerMessage: 'Please send a sharper photo.', reviewedBy: 'a1', docDateOfBirth: '1995-03-03' });
+    const [row] = (await h.svc.list()).recentRejected;
+    expect(row).toMatchObject({ decidedBy: 'ADMIN', dateOfBirth: null });
+  });
+
+  it('leaves out automated-test accounts, so real attempts are not pushed off the list', async () => {
+    const h = build('REJECTED', 'IDENTITY', { rejectCode: 'ID_EXPIRED', reviewedBy: null });
+    (h.db.user.rows[0] as Record<string, unknown>).email = 'e2e-abc@davochain.invalid';
+    expect((await h.svc.list()).recentRejected).toEqual([]);
+  });
+
+  it('says when Dojah is in pretend mode, so test results are not mistaken for real ones', async () => {
+    const h = build();
+    expect((await h.svc.list()).pretendDojah).toBe(false);
+    const pretend = new AdvancedReviewService(h.db as never, {} as never, { verified: jest.fn(async () => null) } as never, { get: () => true } as never);
+    expect((await pretend.list()).pretendDojah).toBe(true);
+  });
+});
+
 describe('final review I2/I4', () => {
   it('I4: one row whose Basic record cannot be read does not take down the whole list', async () => {
     const h = build();

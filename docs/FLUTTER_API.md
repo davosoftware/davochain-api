@@ -27,6 +27,8 @@
 | Change | Where | What the app must do |
 | --- | --- | --- |
 | **New `GET /v1/rates`**: every coin's naira **buy** and **sell** price and dollar price, public (no sign-in) | 5.3 | Use it for the markets/home screen and coin cards. Refresh every 30 s while visible. Keep using 7.1 for the real price at trade time |
+| **`GET /v1/me` now has `dateOfBirth`**: the verified date from Basic, `"YYYY-MM-DD"` or `null` | 3.1 | Show it on the profile screen (read-only) if you want |
+| **Advanced on a test server: a "date of birth doesn't match" rejection is expected** unless Basic used test number `33333333333` | 4.6 | Nothing. The test server's pretend Dojah always reads "SOMEONE CLEAN, 1995-03-03" from any ID photo; the live server reads the real card |
 
 ## What changed for the app (27 October 2026): swaps use Quidax's live price
 
@@ -896,6 +898,7 @@ Authorization: Bearer eyJhbGciOi…
   },
   "walletReady": true,
   "emailVerified": true,
+  "dateOfBirth": "1995-03-03",
   "createdAt": "2026-09-30T12:00:00.000Z"
 }
 ```
@@ -913,6 +916,7 @@ Authorization: Bearer eyJhbGciOi…
 | `kyc.submittedAt` | string \| null | When KYC was last submitted |
 | `walletReady` | boolean | `false` while the crypto wallet is still being set up (usually seconds after signup) |
 | `emailVerified` | boolean | `false` until the customer enters the emailed code (2.10). Money routes answer `403 EMAIL_NOT_VERIFIED` until then. |
+| `dateOfBirth` | string \| null | **New 28 Oct 2026.** `"YYYY-MM-DD"`, the **verified** date from the BVN/NIN record at Basic (not what was typed). `null` until Basic is approved. Read-only: the customer can't change it |
 | `createdAt` | string | Signup date |
 
 **Integration notes**

@@ -4,6 +4,7 @@
 
 | Date | Change |
 | --- | --- |
+| 28 Oct 2026 | `GET /v1/me` adds `dateOfBirth` (verified, YYYY-MM-DD, null before Basic). Admin: `GET /v1/admin/users/:id` adds `kyc.dateOfBirth`; `GET /v1/admin/kyc/advanced` adds `recentRejected` (the latest 20 rejections, with both dates for a birth-date mismatch) and `pretendDojah`. |
 | 28 Oct 2026 | New public `GET /v1/rates`: every listed coin with its naira buy and sell price (for a $100 trade) and dollar price, built like a quote and refreshed at most every 30 s. For the markets screen; the trade price is still the quote (FLUTTER_API.md 5.3). |
 | 27 Oct 2026 | Admin: `GET /v1/admin/limits/daily` (a Lagos day: `date`, `action`, `near`, `search`, `page`) and `GET /v1/admin/users/:id/limits`: each customer use of each verification-level daily limit, counted exactly as the limits check counts it. Nothing changes for the app. |
 | 27 Oct 2026 | Swaps: priced from Quidax own live swap price with the DavoChain swap fee on top, so the user receives what was shown. The app should refresh a swap quote every ~10 s while the screen is open. `POST /v1/trades` for a swap whose price expired (up to 30 s) picks up the current price and goes ahead if at most 0.5% worse, else answers `409 code: PRICE_CHANGED` with a new quote. Trade history and `GET /v1/trades/:id` show a swap fee (`fee`, `feeAsset`) and small rates with their digits. (FLUTTER_API.md 7.1-7.4) |
