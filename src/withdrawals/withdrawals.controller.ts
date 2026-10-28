@@ -25,8 +25,10 @@ export class WithdrawalsController {
     @Query('asset') asset: string,
     @Query('amount') amount: string,
     @Query('network') network: string,
+    @CurrentUser('sub') userId: string,
+    @Query('savedCryptoAddressId') savedCryptoAddressId?: string,
   ) {
-    return this.withdrawals.quoteFee(asset, amount, network);
+    return this.withdrawals.quoteFee(asset, amount, network, { userId, savedCryptoAddressId });
   }
 
   /**

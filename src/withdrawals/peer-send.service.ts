@@ -52,24 +52,31 @@ export class PeerSendService {
     const tag = destinationTag?.trim() || null;
     const match = rows.find((r) => !r.destinationTag || r.destinationTag === tag);
     if (!match) return null;
+    await this.assertCanReceive(senderId, match.userId);
+    return match.userId;
+  }
 
-    if (match.userId === senderId) {
-      throw new BadRequestException({ code: 'OWN_ADDRESS', message: 'This is your own DavoChain address. Choose another address.' });
+  /**
+   * Whether this customer may receive from this sender: never yourself, and
+   * only an open account that finished Basic verification (decision 28 Oct 2026).
+   */
+  async assertCanReceive(senderId: string, receiverId: string): Promise<void> {
+    if (receiverId === senderId) {
+      throw new BadRequestException({ code: 'OWN_ADDRESS', message: 'You cannot send to your own DavoChain account.' });
     }
-    const receiver = await this.prisma.user.findUnique({ where: { id: match.userId }, select: { status: true, kycTier: true } });
+    const receiver = await this.prisma.user.findUnique({ where: { id: receiverId }, select: { status: true, kycTier: true } });
     if (!receiver || receiver.status !== UserStatus.ACTIVE) {
       throw new BadRequestException({
         code: 'RECIPIENT_CANNOT_RECEIVE',
-        message: 'This address belongs to a DavoChain account that cannot receive coins right now.',
+        message: 'This DavoChain account cannot receive coins right now.',
       });
     }
     if (levelOf(receiver.kycTier) === PolicyLevel.NONE) {
       throw new BadRequestException({
         code: 'RECIPIENT_NOT_VERIFIED',
-        message: 'This address belongs to a DavoChain customer who has not finished Basic verification, so it cannot receive coins yet. Ask them to verify first.',
+        message: 'This DavoChain customer has not finished Basic verification, so they cannot receive coins yet. Ask them to verify first.',
       });
     }
-    return match.userId;
   }
 
   async send(input: {

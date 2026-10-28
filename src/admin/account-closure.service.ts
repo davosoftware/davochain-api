@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { Prisma, TxStatus, UserStatus, VirtualAccountStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { holdPayUsername } from '../transfers/pay-usernames.service';
 import { PasswordService } from '../auth/password.service';
 import { MailService } from '../common/mail.service';
 import { TemplatedMailService } from '../cms/templated-mail.service';
@@ -92,7 +93,7 @@ export class AccountClosureService {
       const found = await tx.user.findUnique({ where: { id: userId } });
       if (!found) throw new NotFoundException('User not found');
       // A copy taken before the update: the customer is emailed at their real address.
-      const user = { status: found.status, email: found.email, phone: found.phone, firstName: found.firstName, lastName: found.lastName };
+      const user = { status: found.status, email: found.email, phone: found.phone, firstName: found.firstName, lastName: found.lastName, payUsername: found.payUsername };
       // Checked again inside the transaction, so nothing can slip in between.
       const blockers = await this.blockers(tx, userId, user.status);
       if (blockers.length) {
@@ -114,9 +115,13 @@ export class AccountClosureService {
           closedPhone: user.phone,
           email: releasedEmail(userId),
           phone: null,
+          // Freed like the email, but held 30 days so nobody receives coins meant for them.
+          payUsername: null,
+          payUsernameSetAt: null,
           dataDeleteAt,
         },
       });
+      if (user.payUsername) await holdPayUsername(tx, userId, user.payUsername, closedAt);
       await tx.refreshToken.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: closedAt } });
       await tx.adminAuditLog.create({
         data: {

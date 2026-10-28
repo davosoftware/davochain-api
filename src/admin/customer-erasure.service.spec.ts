@@ -34,6 +34,7 @@ function build(user: Record<string, unknown> = {}) {
     userOtp: { deleteMany: fn('userOtp.deleteMany') },
     refreshToken: { deleteMany: fn('refreshToken.deleteMany') },
     idempotencyKey: { deleteMany: fn('idempotencyKey.deleteMany') },
+    payUsernameHold: { deleteMany: fn('payUsernameHold.deleteMany') },
     adminAuditLog: { updateMany: fn('adminAuditLog.updateMany'), create: fn('adminAuditLog.create') },
     // Money records: never touched.
     transaction: { deleteMany: fn('transaction.deleteMany'), updateMany: fn('transaction.updateMany') },
@@ -54,7 +55,7 @@ describe('CustomerErasureService.erase', () => {
     for (const t of [
       'kycDocument.deleteMany', 'advancedVerification.deleteMany', 'kycVerification.deleteMany', 'amlReviewCase.deleteMany',
       'amlScreening.deleteMany', 'giftCardTradeImage.deleteMany', 'virtualAccountRequest.deleteMany', 'notification.deleteMany',
-      'deviceToken.deleteMany', 'userOtp.deleteMany', 'refreshToken.deleteMany', 'idempotencyKey.deleteMany',
+      'deviceToken.deleteMany', 'userOtp.deleteMany', 'refreshToken.deleteMany', 'idempotencyKey.deleteMany', 'payUsernameHold.deleteMany',
     ]) {
       expect(h.calls).toContain(t);
     }
@@ -80,6 +81,8 @@ describe('CustomerErasureService.erase', () => {
       closedPhone: null,
       closedReason: 'Personal data deleted',
       username: null,
+      payUsername: null,
+      payUsernameSetAt: null,
       dataDeleteAt: null,
     });
     expect(data.dataDeletedAt).toBeInstanceOf(Date);

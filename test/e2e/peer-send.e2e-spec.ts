@@ -26,8 +26,8 @@ describeAdmin('sending coins to another DavoChain customer by address', () => {
     bob = await verifyBasic(await newUser('Bob', 'Receiver'));
 
     // Alice buys USDT, so her Quidax account really holds it.
-    credit(alice, 'ngn', '100000');
-    const q = await call('POST', '/quotes', { token: alice.token, body: { side: 'buy', fromAsset: 'ngn', toAsset: 'usdt', amount: '30000' } });
+    credit(alice, 'ngn', '400000');
+    const q = await call('POST', '/quotes', { token: alice.token, body: { side: 'buy', fromAsset: 'ngn', toAsset: 'usdt', amount: '200000' } });
     const t = await call('POST', '/trades', { token: alice.token, body: { quoteId: q.body.quoteId }, headers: { 'Idempotency-Key': key() } });
     expect(t.body.status).toBe('COMPLETED');
 
@@ -69,5 +69,62 @@ describeAdmin('sending coins to another DavoChain customer by address', () => {
   it('sending to your own DavoChain address is refused', async () => {
     const own = await send(bob, bobAddress, '1');
     expect(own.status).toBe(400);
+  });
+
+  it('the fee quote for a DavoChain address shows no fees', async () => {
+    const saved = await call('POST', '/me/crypto-addresses', { token: alice.token, body: { asset: 'usdt', network: 'erc20', address: bobAddress, password: alice.password } });
+    const id = saved.status === 201 ? saved.body.id : (await call('GET', '/me/crypto-addresses', { token: alice.token })).body.items[0].id;
+    const q = await call('GET', `/withdrawals/quote?asset=usdt&amount=5&network=erc20&savedCryptoAddressId=${id}`, { token: alice.token });
+    expect(q.status).toBe(200);
+    expect(q.body).toMatchObject({ toDavoChainCustomer: true, totalFee: '0.000000', youReceive: '5.000000' });
+  });
+
+  describe('by payment username', () => {
+    const name = `bob_${Date.now().toString(36)}`;
+
+    it('Bob chooses a username; rules and clashes are explained', async () => {
+      expect((await call('PUT', '/me/pay-username', { token: bob.token, body: { username: 'bob' } })).body).toMatchObject({ code: 'USERNAME_INVALID', message: expect.stringMatching(/at least 7/) });
+      const set = await call('PUT', '/me/pay-username', { token: bob.token, body: { username: name.toUpperCase() } });
+      expect(set.status).toBe(200);
+      expect(set.body).toEqual({ payUsername: name });
+      expect((await call('GET', '/me', { token: bob.token })).body.payUsername).toBe(name);
+      const clash = await call('PUT', '/me/pay-username', { token: alice.token, body: { username: name } });
+      expect(clash.status).toBe(409);
+      expect((await call('GET', `/me/pay-username/check?username=${name}`, { token: alice.token })).body).toMatchObject({ available: false });
+    });
+
+    it('Alice looks Bob up and sees a short name', async () => {
+      const r = await call('GET', `/transfers/recipient?username=@${name}`, { token: alice.token });
+      expect(r.status).toBe(200);
+      expect(r.body).toEqual({ username: name, displayName: 'Bob R.', canReceive: true, reason: null });
+      expect((await call('GET', '/transfers/recipient?username=nobody_at_all_x', { token: alice.token })).status).toBe(404);
+    });
+
+    it('Alice sends 3 USDT by username: free, instant, both histories say who', async () => {
+      const aliceBefore = Number((await balance(alice, 'usdt')).available);
+      const bobBefore = Number((await balance(bob, 'usdt')).available);
+      const r = await call('POST', '/transfers/crypto', { token: alice.token, body: { username: name, asset: 'usdt', amount: '3' }, headers: { 'Idempotency-Key': key() } });
+      expect(r.status).toBe(201);
+      expect(r.body).toMatchObject({ status: 'COMPLETED', toDavoChainCustomer: true, to: { username: name } });
+      expect(Number((await balance(alice, 'usdt')).available)).toBeCloseTo(aliceBefore - 3, 6);
+      expect(Number((await balance(bob, 'usdt')).available)).toBeCloseTo(bobBefore + 3, 6);
+      const out = (await call('GET', '/withdrawals', { token: alice.token })).body[0];
+      expect(out.to).toEqual({ username: name, displayName: 'Bob R.' });
+      const inn = (await call('GET', '/deposits', { token: bob.token })).body[0];
+      expect(inn.from).toMatchObject({ displayName: 'Alice S.' });
+    });
+
+    it('a first send of ₦100,000 or more needs the password', async () => {
+      const carol = await verifyBasic(await newUser('Carol', 'Third'));
+      const carolName = `carol_${Date.now().toString(36)}`;
+      await call('PUT', '/me/pay-username', { token: carol.token, body: { username: carolName } });
+      const body = { username: carolName, asset: 'usdt', amount: '80' };
+      const no = await call('POST', '/transfers/crypto', { token: alice.token, body, headers: { 'Idempotency-Key': key() } });
+      expect(no.status).toBe(403);
+      expect(no.body.code).toBe('PASSWORD_REQUIRED');
+      const yes = await call('POST', '/transfers/crypto', { token: alice.token, body: { ...body, password: alice.password }, headers: { 'Idempotency-Key': key() } });
+      expect(yes.status).toBe(201);
+      expect(Number((await balance(carol, 'usdt')).available)).toBeCloseTo(80, 6);
+    });
   });
 });

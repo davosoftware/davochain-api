@@ -1,5 +1,5 @@
 import { Prisma, TxStatus, TxType } from '@prisma/client';
-import { figuresFor, isAwaitingApproval } from './transactions.service';
+import { AdminTransactionsService, figuresFor, isAwaitingApproval } from './transactions.service';
 import { isSerializationFailure } from '../prisma/prisma.service';
 
 const d = (v: string) => new Prisma.Decimal(v);
@@ -201,5 +201,23 @@ describe('isSerializationFailure', () => {
     expect(isSerializationFailure(new Error('connection refused'))).toBe(false);
     expect(isSerializationFailure(null)).toBe(false);
     expect(isSerializationFailure(undefined)).toBe(false);
+  });
+});
+
+describe('a send between two DavoChain customers names the other side (28 Oct 2026)', () => {
+  it('peer: { userId, name, username }; null on any other transaction', async () => {
+    const prisma = {
+      adminAuditLog: { findMany: jest.fn(async () => []) },
+      user: { findMany: jest.fn(async () => [{ id: 'bob', firstName: 'Bob', lastName: 'Eze', payUsername: 'bob_eze_1' }]) },
+    };
+    const svc = new AdminTransactionsService(prisma as never, {} as never, {} as never, {} as never);
+    const base = { reference: 'r', status: 'COMPLETED', fromAsset: 'usdt', toAsset: 'usdt', fromAmount: '5', toAmount: '5', legs: [], userId: 'alice', user: { firstName: 'Alice', lastName: 'Okafor', email: 'a@x.y', kycTier: 'TIER_1' }, createdAt: new Date(), completedAt: null };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rows = await (svc as any).decorate([
+      { ...base, id: 't1', type: 'WITHDRAWAL', peerUserId: 'bob' },
+      { ...base, id: 't2', type: 'WITHDRAWAL', peerUserId: null },
+    ]);
+    expect(rows[0].peer).toEqual({ userId: 'bob', name: 'Bob Eze', username: 'bob_eze_1' });
+    expect(rows[1].peer).toBeNull();
   });
 });

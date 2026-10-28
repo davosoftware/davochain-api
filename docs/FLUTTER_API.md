@@ -22,6 +22,16 @@
 
 **New (23 Oct 2026): start with the walk-through.** [`CUSTOMER_JOURNEY_API_GUIDE.md`](CUSTOMER_JOURNEY_API_GUIDE.md) takes one customer through the whole app in order, with real responses: register, email code, Basic verification, the naira account number, deposits, buy, sell, swap, withdrawals, gift cards, Advanced verification and sign-out. It also covers exactly when and how to refresh tokens. A ready-to-import Postman collection that refreshes tokens by itself is in [`postman/`](postman/DavoChain-Customer-Journey.postman_collection.json).
 
+## What changed for the app (28 October 2026, latest): send crypto by username
+
+| Change | Where | What the app must do |
+| --- | --- | --- |
+| **Payment usernames.** `PUT /v1/me/pay-username` chooses one (7 to 20 of letters, numbers, `_`, `-`; no spaces; capitals don't matter). `GET /v1/me/pay-username/check?username=` says if it is free. `GET /v1/me` has `payUsername` | 8.10 | Add "Choose your username" to the profile, checking as the person types |
+| **Find a person:** `GET /v1/transfers/recipient?username=` answers `{ username, displayName: "Ada O.", canReceive, reason }` | 8.11 | Show the short name before the person confirms |
+| **Send by username:** `POST /v1/transfers/crypto` with `{ username, asset, amount }` (+ `password` the first time ₦100,000 or more goes to someone). Free and instant | 8.12 | New "Send to a DavoChain user" screen |
+| **Histories name the other customer:** `GET /v1/withdrawals` rows have `to`, `GET /v1/deposits` rows have `from`: `{ username, displayName }` or `null` | 8.3, 6 | Show "Sent to @ada_okafor" / "Received from Ada O." |
+| **The fee quote knows a DavoChain address:** add `&savedCryptoAddressId=` to 8.1; for a DavoChain customer's address it answers all fees `0` and `"toDavoChainCustomer": true` | 8.1 | Pass the saved address id when quoting |
+
 ## What changed for the app (28 October 2026, later): sending to another DavoChain customer's address
 
 | Change | Where | What the app must do |
@@ -29,7 +39,7 @@
 | **A crypto withdrawal to an address that belongs to another DavoChain customer now moves inside DavoChain**: free, and it arrives at once. Before, the sender was charged and the receiver never got it | 8.2 | Nothing required. The answer has `"status": "COMPLETED"` and `"toDavoChainCustomer": true`: show "Sent to a DavoChain customer, no fee" instead of "processing" |
 | **New refusals** on 8.2: `OWN_ADDRESS`, `RECIPIENT_NOT_VERIFIED`, `RECIPIENT_CANNOT_RECEIVE` (400, with `code` and `message`) | 8.2 | Show `message` as it is |
 | **The receiver** gets a normal deposit (`GET /v1/deposits`) with `counterpartyName` such as `"Alice O."`, and the `deposit.credited` push and email | 6 | Nothing |
-| The fee quote (8.1) does not know the address yet, so it still shows the usual fees for these sends | 8.1 | Optional: after a send with `toDavoChainCustomer: true`, say no fee was taken |
+| The fee quote (8.1) shows no fees for these sends when given the saved address id (see the note above) | 8.1 | Pass `savedCryptoAddressId` |
 
 ## What changed for the app (28 October 2026): a price list
 
@@ -187,7 +197,7 @@ Admins now decide, on one screen, what people at each level may do: **None** (no
 | 5 | [Assets & rates](#5-assets-networks--rates) | 5.1 List coins · 5.2 List a coin's networks · 5.3 Rates and prices |
 | 6 | [Deposits](#6-deposits) | 6.1 Get deposit address · 6.2 List my addresses · 6.3 Deposit history · 6.4 Naira account · 6.5 Open naira account |
 | 7 | [Trading](#7-trading-buy-sell-swap) | 7.1 Get a quote · 7.2 Execute a quote · 7.3 Trade history · 7.4 Get one transaction |
-| 8 | [Withdrawals](#8-withdrawals) | 8.1 Crypto fee quote · 8.2 Withdraw crypto · 8.3 Withdrawal history · 8.4 Naira fee quote · 8.5 Bank list · 8.6 Verify bank account · 8.7 Withdraw naira · 8.8 Saved bank accounts · 8.9 Saved crypto addresses |
+| 8 | [Withdrawals](#8-withdrawals) | 8.1 Crypto fee quote · 8.2 Withdraw crypto · 8.3 Withdrawal history · 8.4 Naira fee quote · 8.5 Bank list · 8.6 Verify bank account · 8.7 Withdraw naira · 8.8 Saved bank accounts · 8.9 Saved crypto addresses · 8.10 Payment username · 8.11 Find a person · 8.12 Send by username |
 | 9 | [Gift cards](#9-gift-cards) | 9.1 Catalogue · 9.2 Brand logo · 9.3 Sell a card · 9.4 My card trades · 9.5 One card trade · 9.6 Card photo |
 | 10 | [Referrals](#10-referrals) | 10.1 Check a code · 10.2 Referral dashboard · 10.3 Set username |
 | 11 | [Notifications](#11-notifications) | 11.1 Notification feed · 11.2 Mark as read |
@@ -2047,6 +2057,7 @@ Shows what a crypto withdrawal will cost **before** the user confirms: the block
 | `asset` | query | string | ✅ | Coin code | `usdt` |
 | `amount` | query | string | ✅ | **Valid positive decimal.** What the recipient should receive. | `100` |
 | `network` | query | string | ✅ | Network id from 5.2 (`purpose=withdraw`), URL-encoded | `trc20` |
+| `savedCryptoAddressId` | query | string | — | The saved address it is for (8.9). If that address belongs to another DavoChain customer, every fee is `0` and the answer adds `"toDavoChainCustomer": true` (28 Oct 2026) | `6c0f…` |
 
 ```http
 GET /v1/withdrawals/quote?asset=usdt&amount=100&network=trc20
@@ -2157,9 +2168,9 @@ Content-Type: application/json
 | 400 | Not enough balance **including fees** | `"Insufficient USDT balance: need 102, have 80"` |
 | 503 | Fee lookup failed | `"Unable to retrieve the network fee. Please try again shortly."` |
 | 400 | Provider refused | `"<reason>. Nothing was deducted from your balance."` |
-| 400 | The address is the customer's own DavoChain address | `{ "code": "OWN_ADDRESS", "message": "This is your own DavoChain address. Choose another address." }` |
-| 400 | The address belongs to a DavoChain customer who has not finished Basic verification | `{ "code": "RECIPIENT_NOT_VERIFIED", "message": "This address belongs to a DavoChain customer who has not finished Basic verification, so it cannot receive coins yet. Ask them to verify first." }` |
-| 400 | The address belongs to a closed or suspended DavoChain account | `{ "code": "RECIPIENT_CANNOT_RECEIVE", "message": "This address belongs to a DavoChain account that cannot receive coins right now." }` |
+| 400 | The address is the customer's own DavoChain address | `{ "code": "OWN_ADDRESS", "message": "You cannot send to your own DavoChain account." }` |
+| 400 | The address belongs to a DavoChain customer who has not finished Basic verification | `{ "code": "RECIPIENT_NOT_VERIFIED", "message": "This DavoChain customer has not finished Basic verification, so they cannot receive coins yet. Ask them to verify first." }` |
+| 400 | The address belongs to a closed or suspended DavoChain account | `{ "code": "RECIPIENT_CANNOT_RECEIVE", "message": "This DavoChain account cannot receive coins right now." }` |
 | 400 / 409 | Idempotency problems | §0.7 |
 
 **Integration notes**
@@ -2525,6 +2536,85 @@ The same, for crypto (default limit 10). `GET/POST /v1/me/crypto-addresses`, `DE
 | `password` | string | ✅ | Never stored | |
 
 Response item: `{ id, assetCode, networkId, networkLabel, address, destinationTag, nickname, usableFrom, usableNow }`. Errors as 8.8, with "This address is already saved.", "You can save up to 10 crypto addresses…", "That does not look like a valid <network> address" and "Saved address not found".
+
+### 8.10 Payment username
+
+**Endpoint:** `PUT /v1/me/pay-username` · **Auth:** **Bearer** · **KYC:** none · **Success:** `200`
+
+The name other DavoChain customers type to send this person crypto (28 Oct 2026). Separate from the referral code (10.3).
+
+| Field | Type | Required | Rules | Example |
+| --- | --- | --- | --- | --- |
+| `username` | string | ✅ | **7 to 20** characters: letters, numbers, `_` and `-`. No spaces. Must contain a letter and start and end with a letter or number. A leading `@` is ignored. Saved in **lower case** (`Ada_Okafor` = `ada_okafor`). Names that look official (davochain, admin, support, quidax…) are refused | `"ada_okafor"` |
+
+```json
+{ "payUsername": "ada_okafor" }
+```
+
+| Status | `code` | When |
+| --- | --- | --- |
+| 400 | `USERNAME_INVALID` | Breaks a rule; `message` says which ("A username needs at least 7 characters.") |
+| 409 | `USERNAME_TAKEN` | Someone has it, or gave it up less than 30 days ago |
+| 400 | `USERNAME_CHANGE_TOO_SOON` | Changed less than 30 days ago; `until` is when it can change |
+
+Setting the same name again changes nothing. An old name is kept from everyone else for 30 days, so nobody can take it over and receive coins meant for this person. `GET /v1/me` shows the current one as `payUsername` (`null` until chosen).
+
+**Check as the person types:** `GET /v1/me/pay-username/check?username=ada_okafor` answers `{ "username": "ada_okafor", "available": true, "reason": null }` or `available: false` with a `reason` to show. Limited to 30 lookups per 10 minutes (shared with 8.11): check after the person stops typing, not on every key.
+
+### 8.11 Find a person by username
+
+**Endpoint:** `GET /v1/transfers/recipient?username={name}` · **Auth:** **Bearer** · **Success:** `200`
+
+```json
+{ "username": "ada_okafor", "displayName": "Ada O.", "canReceive": true, "reason": null }
+```
+
+- `displayName` is the first name and last initial only.
+- `canReceive: false` comes with a `reason` to show: it is your own username, they have not finished Basic verification, or the account cannot receive.
+- Unknown (or closed) username: `404 { "code": "USERNAME_NOT_FOUND", "message": "No DavoChain customer has that username. Check the spelling." }`
+- Limited to 30 lookups per 10 minutes per customer (`429` after that), so nobody can list our customers.
+
+### 8.12 Send crypto by username
+
+**Endpoint:** `POST /v1/transfers/crypto` · **Auth:** **Bearer** · **KYC:** **TIER_1** (same level rule as a crypto withdrawal) · **Success:** `201`
+
+| Header | Value |
+| --- | --- |
+| `Idempotency-Key` | **Required.** New UUID per tap, same one on retries. |
+
+| Field | Type | Required | Rules | Example |
+| --- | --- | --- | --- | --- |
+| `username` | string | ✅ | The receiver's payment username (a leading `@` is fine) | `"ada_okafor"` |
+| `asset` | string | ✅ | A crypto coin code. Naira cannot be sent this way | `"usdt"` |
+| `amount` | string | ✅ | Positive decimal: what the receiver gets. **No fee** | `"25"` |
+| `password` | string | sometimes | Needed for the **first** send to this person worth **₦100,000 or more** | |
+
+```json
+{
+  "transactionId": "e4b2d8f1-…",
+  "status": "COMPLETED",
+  "asset": "usdt",
+  "amount": "25.000000",
+  "toDavoChainCustomer": true,
+  "to": { "username": "ada_okafor", "displayName": "Ada O." }
+}
+```
+
+- Free and instant: the balance goes down by exactly `amount`, and the receiver has it straight away (push and email "Alice O. sent you 25 USDT").
+- Counts against the sender's daily crypto withdrawal limit (`GET /v1/me/level`).
+- `status` can rarely be `RECONCILING` (§0.8): nothing is lost; it finishes by itself.
+
+| Status | `code` / message | When |
+| --- | --- | --- |
+| 404 | `USERNAME_NOT_FOUND` | No such username |
+| 400 | `OWN_ADDRESS` "You cannot send to your own DavoChain account." | Sending to yourself |
+| 400 | `RECIPIENT_NOT_VERIFIED` | The receiver has not finished Basic verification |
+| 400 | `RECIPIENT_CANNOT_RECEIVE` | The receiver's account is suspended |
+| 403 | `PASSWORD_REQUIRED` | First send of ₦100,000 or more to this person: ask for the password and send again with `password` (a **new** Idempotency-Key) |
+| 401 | "Incorrect password" | Wrong password (counted like a failed sign-in) |
+| 400 | "Only crypto can be sent by username." | `asset` is `ngn` |
+| 400 | "Insufficient USDT balance: …" | Not enough balance |
+| 403 / 400 | As 8.2 | Not verified, limits, withdrawals paused |
 
 ## 9. Gift cards
 

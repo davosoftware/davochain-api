@@ -57,6 +57,7 @@ import { SiteSettingsService } from './site-settings.service';
 import { CredentialsService } from '../common/credentials.service';
 import { LevelAdminService } from '../levels/level-admin.service';
 import { SavedDestinationsService } from '../withdrawals/saved-destinations.service';
+import { PayUsernamesService } from '../transfers/pay-usernames.service';
 import { BalanceCorrectionsService } from '../reconciliation/balance-corrections.service';
 import { FeeBandsService } from '../rates/fee-bands.service';
 import { PriceReferenceService } from '../rates/price-reference.service';
@@ -175,6 +176,7 @@ export class AdminController {
     private readonly credentials: CredentialsService,
     private readonly levelAdmin: LevelAdminService,
     private readonly savedDestinations: SavedDestinationsService,
+    private readonly payUsernames: PayUsernamesService,
     private readonly corrections: BalanceCorrectionsService,
     private readonly priceReference: PriceReferenceService,
     private readonly bands: FeeBandsService,
@@ -1139,6 +1141,21 @@ export class AdminController {
     await this.admin.audit(adminId, 'saved_destination.remove', 'SavedCryptoAddress', destId, before, { ...after, reason }, req.ip);
     return { removed: true };
   }
+  /** People → Users: take away an offensive payment username (28 Oct 2026). The customer is told the reason. */
+  @Delete('users/:id/pay-username')
+  @RequirePermissions('users.manage')
+  async removeUserPayUsername(
+    @CurrentAdmin('sub') adminId: string,
+    @Param('id') id: string,
+    @Body() dto: RemoveDestinationDto,
+    @Req() req: Request,
+  ) {
+    const reason = dto.reason.trim();
+    const { before } = await this.payUsernames.removeByAdmin(id, reason);
+    await this.admin.audit(adminId, 'user.pay_username.remove', 'User', id, { payUsername: before }, { payUsername: null, reason }, req.ip);
+    return { removed: true };
+  }
+
   // ── naira deposit accounts (Payrep) ───────────────────────
 
   /** System → naira rail: is it safe to open deposit accounts on? Cached a minute unless refresh=true. */

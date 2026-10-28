@@ -24,6 +24,8 @@ export class UsersService {
       firstName: user.firstName,
       lastName: user.lastName,
       phone: user.phone,
+      /** The name others send crypto to (28 Oct 2026); null until chosen. */
+      payUsername: user.payUsername,
       status: user.status,
       // H9: false until the emailed code is entered; deposits, withdrawals, trades and verification wait for it.
       emailVerified: user.emailVerifiedAt !== null,

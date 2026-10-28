@@ -20,6 +20,7 @@ export const POLICY_NAMES = [
   'kyc.documents',
   'kyc.advanced',
   'giftcards.sell',
+  'transfers.lookup',
   'webhooks',
   'public',
   'default',
@@ -66,6 +67,8 @@ export const DEFAULT_POLICIES: Readonly<Record<PolicyName, Policy>> = {
   'kyc.advanced': { name: 'kyc.advanced', limits: { user: lim(10, H) }, failClosed: true },
   'giftcards.sell': { name: 'giftcards.sell', limits: { user: lim(30, H) }, failClosed: false },
   // Generous on purpose: a 429 spends a provider's retries, and Quidax stops retrying after 24 h.
+  // Looking up payment usernames: enough to find a friend, too few to list our customers.
+  'transfers.lookup': { name: 'transfers.lookup', limits: { user: lim(30, 10 * M) }, failClosed: true },
   webhooks: { name: 'webhooks', limits: { ip: lim(3000, M) }, failClosed: false },
   public: { name: 'public', limits: { ip: lim(120, M) }, failClosed: false },
   default: { name: 'default', limits: { user: lim(300, M) }, failClosed: false },

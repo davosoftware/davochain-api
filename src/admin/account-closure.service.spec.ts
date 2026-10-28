@@ -16,6 +16,7 @@ function build(opts: {
 } = {}) {
   const user = {
     id: 'u1', email: 'ada@example.com', phone: '+2348012345678', firstName: 'Ada', lastName: 'Obi',
+    payUsername: 'ada_obi_1' as string | null,
     status: opts.status ?? 'ACTIVE',
   };
   const prisma: Record<string, any> = {
@@ -32,6 +33,7 @@ function build(opts: {
       findMany: jest.fn(async () => [{ email: 'owner1@davochain.com' }, { email: 'owner2@davochain.com' }]),
     },
     adminAuditLog: { create: jest.fn(async () => ({})) },
+    payUsernameHold: { upsert: jest.fn(async () => ({})) },
     $transaction: jest.fn(async (fn: (tx: unknown) => unknown): Promise<unknown> => fn(prisma as unknown)),
   };
   const passwords = { verify: jest.fn(async () => opts.passwordOk ?? true) };
@@ -202,5 +204,15 @@ describe('AccountClosureService.deleteDataNow (an account already closed)', () =
     const h = build({ status: 'CLOSED' });
     await expect(h.svc.deleteDataNow(owner, 'u1', good)).resolves.toEqual({ dataDeleted: true });
     expect(h.erasure.erase).toHaveBeenCalledWith('u1', { adminId: 'a1', scheduled: false });
+  });
+});
+
+describe('closing frees the payment username', () => {
+  it('clears it and keeps it from everyone else for 30 days, so nobody receives coins meant for the old owner', async () => {
+    const h = build();
+    await h.svc.close(owner, 'u1', good);
+    const data = h.prisma.user.update.mock.calls[0][0].data;
+    expect(data).toMatchObject({ payUsername: null, payUsernameSetAt: null });
+    expect(h.prisma.payUsernameHold.upsert).toHaveBeenCalledWith(expect.objectContaining({ where: { username: 'ada_obi_1' } }));
   });
 });

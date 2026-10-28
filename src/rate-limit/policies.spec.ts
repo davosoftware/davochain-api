@@ -56,10 +56,10 @@ describe('resolvePolicies', () => {
     expect(DEFAULT_POLICIES['auth.login'].limits.acct).toEqual({ count: 10, windowMs: 15 * M });
   });
 
-  it('fails closed on every auth policy and on paid KYC calls, open on the rest', () => {
+  it('fails closed on every auth policy, on paid KYC calls and on username lookups, open on the rest', () => {
     const p = resolvePolicies({});
     for (const name of POLICY_NAMES) {
-      expect(p[name].failClosed).toBe(name.startsWith('auth.') || name === 'kyc.basic' || name === 'kyc.documents' || name === 'kyc.advanced');
+      expect(p[name].failClosed).toBe(name.startsWith('auth.') || name === 'kyc.basic' || name === 'kyc.documents' || name === 'kyc.advanced' || name === 'transfers.lookup');
     }
   });
 });

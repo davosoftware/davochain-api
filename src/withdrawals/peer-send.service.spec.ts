@@ -73,7 +73,7 @@ describe('PeerSendService.recipientFor: whose address is it?', () => {
 
   it('your own address is refused', async () => {
     const { service } = build({ addresses: [{ userId: 'alice', destinationTag: null }] });
-    await expect(service.recipientFor('alice', 'bc1qalice')).rejects.toThrow(/your own DavoChain address/);
+    await expect(service.recipientFor('alice', 'bc1qalice')).rejects.toThrow(/your own DavoChain account/);
   });
 
   it('a receiver who has not finished Basic verification cannot receive', async () => {

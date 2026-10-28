@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { LedgerAccount, TxStatus, TxType } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+import { peerNames } from '../transfers/peer-names';
 import { LedgerService } from '../ledger/ledger.service';
 import { RatesService } from '../rates/rates.service';
 import { KycLimitsService } from '../kyc/kyc-limits.service';
@@ -261,6 +262,7 @@ export class DepositsService {
       orderBy: { createdAt: 'desc' },
       take: Math.min(limit, 100),
     });
+    const peers = await peerNames(this.prisma, rows.map((t) => t.peerUserId));
 
     return rows.map((t) => ({
       id: t.id,
@@ -272,6 +274,8 @@ export class DepositsService {
       provider: t.provider,
       /** The sending bank, for a naira bank transfer. */
       counterpartyBank: t.counterpartyBank,
+      /** Sent by another DavoChain customer (28 Oct 2026): their username and "Ada O."; null otherwise. */
+      from: (t.peerUserId && peers.get(t.peerUserId)) || null,
       createdAt: t.createdAt,
       completedAt: t.completedAt,
     }));

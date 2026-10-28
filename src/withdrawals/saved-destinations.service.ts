@@ -86,7 +86,7 @@ export class SavedDestinationsService {
   ) {}
 
   /** Password again, counted like a sign-in attempt. Returns the user's tier for the cool-off. */
-  private async confirmPassword(userId: string, password: string) {
+  async confirmPassword(userId: string, password: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { id: true, passwordHash: true, kycTier: true, lockedUntil: true },

@@ -114,6 +114,7 @@ export class CustomerErasureService {
       await tx.userOtp.deleteMany({ where: { userId } });
       await tx.refreshToken.deleteMany({ where: { userId } });
       await tx.idempotencyKey.deleteMany({ where: { userId } });
+      await tx.payUsernameHold.deleteMany({ where: { userId } });
 
       await tx.user.update({
         where: { id: userId },
@@ -127,6 +128,8 @@ export class CustomerErasureService {
           closedReason: 'Personal data deleted',
           suspendedReason: null,
           username: null,
+          payUsername: null,
+          payUsernameSetAt: null,
           referralCode: null,
           // Can never match a password.
           passwordHash: `!deleted-${randomBytes(16).toString('hex')}`,

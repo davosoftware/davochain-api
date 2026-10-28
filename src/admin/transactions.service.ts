@@ -47,6 +47,8 @@ export interface TxLeg {
 }
 
 export interface TxRow {
+  /** The other DavoChain customer in a send between two customers (28 Oct 2026); null otherwise. */
+  peer?: { userId: string; name: string; username: string | null } | null;
   id: string;
   reference: string;
   type: TxType;
@@ -473,6 +475,16 @@ export class AdminTransactionsService {
       }),
     );
 
+    // Sends between two DavoChain customers (28 Oct 2026): who was on the other side.
+    const peerIds = [...new Set(found.map((t) => t.peerUserId).filter((id): id is string => !!id))];
+    const peers = new Map(
+      peerIds.length
+        ? (await this.prisma.user.findMany({ where: { id: { in: peerIds } }, select: { id: true, firstName: true, lastName: true, payUsername: true } })).map(
+            (u) => [u.id, { userId: u.id, name: `${u.firstName} ${u.lastName}`.trim(), username: u.payUsername }] as const,
+          )
+        : [],
+    );
+
     return found.map((t) => {
       const figures = figuresFor(t);
       const { mode, modeLabel } = modeOf(t.type, t.fromAsset, t.toAsset);
@@ -513,6 +525,7 @@ export class AdminTransactionsService {
         returnsToSender: t.type === TxType.DEPOSIT && t.toAsset === 'ngn' && t.provider === PaymentProvider.PAYREP,
         reviewedBy: review?.by ?? null,
         reviewedAt: review?.at.toISOString() ?? null,
+        peer: (t.peerUserId && peers.get(t.peerUserId)) || null,
       };
     });
   }

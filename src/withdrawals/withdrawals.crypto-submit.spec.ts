@@ -107,3 +107,29 @@ describe("an address that belongs to another DavoChain customer", () => {
     expect(quidax.createCryptoWithdrawal).toHaveBeenCalled();
   });
 });
+
+describe('the fee quote knows a DavoChain address', () => {
+  it('a saved address of another DavoChain customer: no fees at all', async () => {
+    const { service, quidax } = build({ peer: 'bob' });
+    (service as any).prisma.savedCryptoAddress = { findFirst: jest.fn(async () => ({ id: 'saved-1', address: 'bc1qbob', destinationTag: null })) };
+    (quidax as any).fetchWithdrawalFee = jest.fn();
+    const q = await service.quoteFee('btc', '0.01', 'btc', { userId: 'u1', savedCryptoAddressId: 'saved-1' });
+    expect(q).toMatchObject({ networkFee: '0.00000000', platformFee: '0.00000000', totalFee: '0.00000000', totalDeducted: '0.01000000', youReceive: '0.01000000', toDavoChainCustomer: true });
+    expect((quidax as any).fetchWithdrawalFee).not.toHaveBeenCalled();
+  });
+});
+
+describe('withdrawal history names the DavoChain customer it went to', () => {
+  it('to: { username, displayName } on a send to a customer, null otherwise', async () => {
+    const { service } = build();
+    const at = new Date();
+    (service as any).prisma.transaction.findMany = jest.fn(async () => [
+      { id: 'w1', fromAsset: 'usdt', toAmount: dec('5'), fromAmount: dec('5'), feeAmount: dec('0'), networkFee: dec('0'), peerUserId: 'bob', status: 'COMPLETED', createdAt: at, completedAt: at },
+      { id: 'w2', fromAsset: 'usdt', toAmount: dec('5'), fromAmount: dec('6'), feeAmount: dec('1'), networkFee: dec('0'), peerUserId: null, status: 'COMPLETED', createdAt: at, completedAt: at },
+    ]);
+    (service as any).prisma.user.findMany = jest.fn(async () => [{ id: 'bob', firstName: 'Bob', lastName: 'Eze', payUsername: null }]);
+    const [toBob, outside] = await service.history('u1');
+    expect(toBob.to).toEqual({ username: null, displayName: 'Bob E.' });
+    expect(outside.to).toBeNull();
+  });
+});

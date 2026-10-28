@@ -29,6 +29,7 @@ import { NAIRA_RAIL, type NairaRail, type RailTransfer, RailRefusedError, RailUn
 import { RailTransferHooks } from '../naira-rail/rail-transfer-hooks';
 import { railAsWithdrawal, railEvent } from '../naira-rail/rail-as-withdrawal';
 import { PeerSendService } from './peer-send.service';
+import { peerNames } from '../transfers/peer-names';
 
 /** Customer naira payout references start with this (quidax.newReference('ngnwd')). */
 export const PAYOUT_REF_PREFIX = 'dvc_ngnwd_';
@@ -165,7 +166,13 @@ export class WithdrawalsService implements OnModuleInit {
   }
 
   /** Quote the fee before the user commits. Three lines, never one blended number. */
-  async quoteFee(assetCode: string, amount: string, networkId: string) {
+  async quoteFee(
+    assetCode: string,
+    amount: string,
+    networkId: string,
+    /** With the saved address it is for, a DavoChain customer's address quotes no fees (28 Oct 2026). */
+    destination?: { userId: string; savedCryptoAddressId?: string },
+  ) {
     if (typeof assetCode !== 'string' || !assetCode.trim()) throw new BadRequestException('Choose a coin');
     if (typeof networkId !== 'string' || !networkId.trim()) throw new BadRequestException('Choose a network');
     const total = positiveAmount(amount);
@@ -174,6 +181,29 @@ export class WithdrawalsService implements OnModuleInit {
       this.assets.require(code),
       this.rates.rateConfig(code),
     ]);
+
+    if (destination?.savedCryptoAddressId && this.peers) {
+      const saved = await this.prisma.savedCryptoAddress.findFirst({
+        where: { id: destination.savedCryptoAddressId, userId: destination.userId, removedAt: null },
+      });
+      if (!saved) throw new NotFoundException('Saved address not found');
+      if (await this.peers.recipientFor(destination.userId, saved.address, saved.destinationTag ?? undefined)) {
+        const zero = str(ZERO, asset.displayScale);
+        const all = str(total, asset.displayScale);
+        return {
+          asset: code,
+          network: networkId,
+          amount: all,
+          networkFee: zero,
+          platformFee: zero,
+          platformFeeUsd: '0.00',
+          totalFee: zero,
+          totalDeducted: all,
+          youReceive: all,
+          toDavoChainCustomer: true,
+        };
+      }
+    }
 
     const { platformFee, platformFeeUsd, networkFee } = await this.fees(
       code,
@@ -790,6 +820,7 @@ export class WithdrawalsService implements OnModuleInit {
       orderBy: { createdAt: 'desc' },
       take: Math.min(limit, 100),
     });
+    const peers = await peerNames(this.prisma, rows.map((t) => t.peerUserId));
     return rows.map((t) => ({
       id: t.id,
       asset: t.fromAsset,
@@ -799,6 +830,8 @@ export class WithdrawalsService implements OnModuleInit {
       networkFee: t.networkFee ? str(t.networkFee, t.fromAsset === 'ngn' ? 2 : 8) : '0',
       bankName: t.payoutBankName,
       accountNumberLast4: t.payoutAccountLast4,
+      /** Sent to another DavoChain customer (28 Oct 2026): their username and "Ada O."; null otherwise. */
+      to: (t.peerUserId && peers.get(t.peerUserId)) || null,
       status: t.status,
       reason: t.failureReason,
       createdAt: t.createdAt,

@@ -339,6 +339,10 @@ model User {
   /// to them. Setting this retires `referralCode` from lookup — see
   /// ReferralsService.resolve.
   username String? @unique
+  /// The payment username others send crypto to (28 Oct 2026). Lower case,
+  /// 7 to 20 of a-z 0-9 _ -. Separate from `username`, the referral code.
+  payUsername      String?   @unique
+  payUsernameSetAt DateTime?
 
   /// The referral this user arrived through, and the ones they brought in.
   ///
@@ -2535,4 +2539,17 @@ model AdvancedVerification {
   @@index([state, createdAt])
   @@index([docHash])
   @@map("advanced_verifications")
+}
+
+/// A payment username someone stopped using (changed, removed by an admin or
+/// account closed), kept from everyone else until `heldUntil` so nobody can
+/// take it over and receive coins meant for its old owner (28 Oct 2026).
+model PayUsernameHold {
+  username  String   @id
+  userId    String
+  heldUntil DateTime
+  createdAt DateTime @default(now())
+
+  @@index([heldUntil])
+  @@map("pay_username_holds")
 }
