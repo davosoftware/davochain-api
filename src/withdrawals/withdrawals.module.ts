@@ -6,6 +6,7 @@ import { TradesModule } from '../trades/trades.module';
 import { RatesModule } from '../rates/rates.module';
 import { WithdrawalsService } from './withdrawals.service';
 import { SavedDestinationsService } from './saved-destinations.service';
+import { PeerSendService } from './peer-send.service';
 import { PasswordService } from '../auth/password.service';
 import { WithdrawalsController } from './withdrawals.controller';
 import { SavedDestinationsController } from './saved-destinations.controller';
@@ -13,7 +14,7 @@ import { SavedDestinationsController } from './saved-destinations.controller';
 @Module({
   imports: [QuidaxModule, LedgerModule, AssetsModule, TradesModule, RatesModule],
   controllers: [WithdrawalsController, SavedDestinationsController],
-  providers: [WithdrawalsService, SavedDestinationsService, PasswordService],
+  providers: [WithdrawalsService, SavedDestinationsService, PasswordService, PeerSendService],
   exports: [WithdrawalsService, SavedDestinationsService],
 })
 export class WithdrawalsModule {}

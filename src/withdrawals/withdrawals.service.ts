@@ -28,6 +28,7 @@ import { lagosWhen } from '../common/dates';
 import { NAIRA_RAIL, type NairaRail, type RailTransfer, RailRefusedError, RailUnknownError } from '../naira-rail/naira-rail';
 import { RailTransferHooks } from '../naira-rail/rail-transfer-hooks';
 import { railAsWithdrawal, railEvent } from '../naira-rail/rail-as-withdrawal';
+import { PeerSendService } from './peer-send.service';
 
 /** Customer naira payout references start with this (quidax.newReference('ngnwd')). */
 export const PAYOUT_REF_PREFIX = 'dvc_ngnwd_';
@@ -68,6 +69,8 @@ export class WithdrawalsService implements OnModuleInit {
     /** H11 (decision 19 Oct): customer naira is paid out by the naira rail, never Quidax. */
     @Inject(NAIRA_RAIL) private readonly rail: NairaRail,
     @Optional() private readonly hooks?: RailTransferHooks,
+    /** Sends to another DavoChain customer's address (28 Oct 2026). */
+    @Optional() private readonly peers?: PeerSendService,
   ) {}
 
   onModuleInit(): void {
@@ -587,6 +590,15 @@ export class WithdrawalsService implements OnModuleInit {
     // its side; we surface its rejection rather than guessing at the number.
     if (amount.lte(0)) {
       throw new BadRequestException('Enter an amount greater than zero');
+    }
+
+    // Another DavoChain customer's address: moved inside DavoChain, free. Sent
+    // on the usual path, the receiver would never be credited (Quidax reports
+    // it as an internal deposit, which deposits ignore).
+    const recipientId = await this.peers?.recipientFor(userId, input.address, input.destinationTag);
+    if (recipientId && this.peers) {
+      const sent = await this.peers.send({ senderId: userId, recipientId, asset, amount, level: levelOf(user.kycTier), savedCryptoAddressId });
+      return { ...sent, address: input.address };
     }
 
     const { platformFee, platformFeeUsd, networkFee, usdValue } = await this.fees(

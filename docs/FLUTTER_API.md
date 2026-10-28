@@ -22,6 +22,15 @@
 
 **New (23 Oct 2026): start with the walk-through.** [`CUSTOMER_JOURNEY_API_GUIDE.md`](CUSTOMER_JOURNEY_API_GUIDE.md) takes one customer through the whole app in order, with real responses: register, email code, Basic verification, the naira account number, deposits, buy, sell, swap, withdrawals, gift cards, Advanced verification and sign-out. It also covers exactly when and how to refresh tokens. A ready-to-import Postman collection that refreshes tokens by itself is in [`postman/`](postman/DavoChain-Customer-Journey.postman_collection.json).
 
+## What changed for the app (28 October 2026, later): sending to another DavoChain customer's address
+
+| Change | Where | What the app must do |
+| --- | --- | --- |
+| **A crypto withdrawal to an address that belongs to another DavoChain customer now moves inside DavoChain**: free, and it arrives at once. Before, the sender was charged and the receiver never got it | 8.2 | Nothing required. The answer has `"status": "COMPLETED"` and `"toDavoChainCustomer": true`: show "Sent to a DavoChain customer, no fee" instead of "processing" |
+| **New refusals** on 8.2: `OWN_ADDRESS`, `RECIPIENT_NOT_VERIFIED`, `RECIPIENT_CANNOT_RECEIVE` (400, with `code` and `message`) | 8.2 | Show `message` as it is |
+| **The receiver** gets a normal deposit (`GET /v1/deposits`) with `counterpartyName` such as `"Alice O."`, and the `deposit.credited` push and email | 6 | Nothing |
+| The fee quote (8.1) does not know the address yet, so it still shows the usual fees for these sends | 8.1 | Optional: after a send with `toDavoChainCustomer: true`, say no fee was taken |
+
 ## What changed for the app (28 October 2026): a price list
 
 | Change | Where | What the app must do |
@@ -2131,6 +2140,7 @@ Content-Type: application/json
 | `asset` | string | |
 | `amount` | string | What the recipient will receive |
 | `address` | string | Destination |
+| `toDavoChainCustomer` | boolean | Only present (`true`) when the address belongs to another DavoChain customer: then the coins moved inside DavoChain, free, `status` is normally `COMPLETED` straight away, and nothing went on a blockchain (28 Oct 2026) |
 
 **Errors**
 
@@ -2147,6 +2157,9 @@ Content-Type: application/json
 | 400 | Not enough balance **including fees** | `"Insufficient USDT balance: need 102, have 80"` |
 | 503 | Fee lookup failed | `"Unable to retrieve the network fee. Please try again shortly."` |
 | 400 | Provider refused | `"<reason>. Nothing was deducted from your balance."` |
+| 400 | The address is the customer's own DavoChain address | `{ "code": "OWN_ADDRESS", "message": "This is your own DavoChain address. Choose another address." }` |
+| 400 | The address belongs to a DavoChain customer who has not finished Basic verification | `{ "code": "RECIPIENT_NOT_VERIFIED", "message": "This address belongs to a DavoChain customer who has not finished Basic verification, so it cannot receive coins yet. Ask them to verify first." }` |
+| 400 | The address belongs to a closed or suspended DavoChain account | `{ "code": "RECIPIENT_CANNOT_RECEIVE", "message": "This address belongs to a DavoChain account that cannot receive coins right now." }` |
 | 400 / 409 | Idempotency problems | §0.7 |
 
 **Integration notes**

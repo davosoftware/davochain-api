@@ -277,6 +277,13 @@ export class SettlementService {
     if (!tx || tx.type !== TxType.WITHDRAWAL) return;
     if (tx.status === TxStatus.COMPLETED || tx.status === TxStatus.FAILED) return;
 
+    // A send to another DavoChain customer: the receiver is credited here too.
+    if (tx.peerUserId) {
+      if (event === 'withdraw.successful') await this.completePeerSend(tx.id, data.id);
+      else await this.reverse(tx.id, data.reason ?? 'Rejected by provider');
+      return;
+    }
+
     const leg = await this.prisma.settlementLeg.findUnique({
       where: { reference: data.reference },
     });
@@ -616,6 +623,89 @@ export class SettlementService {
     });
     await this.referrals.evaluate(tx.userId);
     this.log.warn(`Reconciled trade ${tx.id} to COMPLETED`);
+    return true;
+  }
+
+  /**
+   * Finish a send to another DavoChain customer (28 Oct 2026) once Quidax has
+   * moved the coins between the two sub-accounts. The sender's lock is spent
+   * and the receiver credited in one write, closed only from an open state, so
+   * a webhook and the reconciler racing cannot credit twice. Quidax's own
+   * "internal" deposit for the receiver is ignored (H12), so this is the only
+   * credit. Through IN_FLIGHT: what leaves one customer arrives at the other.
+   */
+  async completePeerSend(transactionId: string, quidaxRef?: string | null): Promise<boolean> {
+    const tx = await this.prisma.transaction.findUniqueOrThrow({ where: { id: transactionId } });
+    if (!tx.peerUserId || tx.status === TxStatus.COMPLETED || tx.status === TxStatus.FAILED) return false;
+    const receiverId = tx.peerUserId;
+    const amount = dec(tx.toAmount!);
+    const sender = await this.prisma.user.findUnique({ where: { id: tx.userId }, select: { firstName: true, lastName: true } });
+    // What the receiver sees as the sender: "Alice O.", never the full name.
+    const senderName = sender ? `${sender.firstName} ${sender.lastName.slice(0, 1)}.`.trim() : 'A DavoChain customer';
+    const now = new Date();
+
+    const incoming = await this.prisma.serializable(async (t) => {
+      if (!(await closeOpen(t, tx.id, { status: TxStatus.COMPLETED, completedAt: now, failureReason: null, ...(quidaxRef ? { quidaxRef } : {}) }))) {
+        return null;
+      }
+      await this.ledger.settleLocked(t, {
+        userId: tx.userId,
+        assetCode: tx.fromAsset!,
+        amount: dec(tx.fromAmount!),
+        counterparty: LedgerAccount.IN_FLIGHT,
+        transactionId: tx.id,
+        memo: 'sent to a DavoChain customer',
+      });
+      const row = await t.transaction.create({
+        data: {
+          userId: receiverId,
+          type: TxType.DEPOSIT,
+          status: TxStatus.COMPLETED,
+          completedAt: now,
+          fromAsset: tx.fromAsset,
+          fromAmount: amount.toFixed(),
+          toAsset: tx.toAsset,
+          toAmount: amount.toFixed(),
+          usdValue: tx.usdValue,
+          peerUserId: tx.userId,
+          counterpartyName: senderName,
+          quidaxRef: quidaxRef ?? tx.quidaxRef,
+          reference: `${tx.reference}_in`,
+        },
+      });
+      await this.ledger.credit(t, {
+        userId: receiverId,
+        assetCode: tx.toAsset!,
+        amount,
+        counterparty: LedgerAccount.IN_FLIGHT,
+        transactionId: row.id,
+        memo: 'received from a DavoChain customer',
+      });
+      return row;
+    });
+    if (!incoming) return false;
+
+    const coin = tx.toAsset!.toUpperCase();
+    const amountText = str(amount, 8);
+    await this.notifications.notify({
+      userId: tx.userId,
+      transactionId: tx.id,
+      type: 'withdrawal.sent',
+      title: `${amountText} ${coin} sent`,
+      body: 'Sent to a DavoChain customer: it arrived straight away, with no fee.',
+      email: {
+        key: 'withdrawal.sent',
+        variables: { amount: amountText, assetCode: coin, txHash: 'none: sent inside DavoChain, no blockchain fee', transactionId: tx.id },
+      },
+    });
+    await this.notifications.notify({
+      userId: receiverId,
+      transactionId: incoming.id,
+      type: 'deposit.credited',
+      title: `${amountText} ${coin} added`,
+      body: `${senderName} sent you ${amountText} ${coin} on DavoChain.`,
+      email: { key: 'deposit.credited', variables: { amount: amountText, assetCode: coin, transactionId: incoming.id } },
+    });
     return true;
   }
 

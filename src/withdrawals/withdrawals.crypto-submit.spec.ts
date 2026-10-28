@@ -10,7 +10,7 @@ import { dec } from '../common/money';
  * are on their way. A failure in OUR database afterwards must never refund the
  * user. Only a definite rejection from Quidax may.
  */
-function build(opts: { send?: () => Promise<unknown>; dbFailsAfterSend?: boolean } = {}) {
+function build(opts: { send?: () => Promise<unknown>; dbFailsAfterSend?: boolean; peer?: string | null } = {}) {
   const quidax = {
     newReference: jest.fn().mockReturnValue('wd-test'),
     createCryptoWithdrawal: jest.fn(opts.send ?? (async () => ({ id: 'qx-wd-1', status: 'Submitted', fee: '0.0001' }))),
@@ -22,6 +22,10 @@ function build(opts: { send?: () => Promise<unknown>; dbFailsAfterSend?: boolean
     internalReason: (err: unknown) => (err as Error).message,
     reverse: jest.fn().mockResolvedValue(undefined),
     markReconciling: jest.fn().mockResolvedValue(undefined),
+  };
+  const peers = {
+    recipientFor: jest.fn().mockResolvedValue(opts.peer ?? null),
+    send: jest.fn().mockResolvedValue({ transactionId: 'tx-peer', status: TxStatus.COMPLETED }),
   };
   const dbDown = () => Promise.reject(new Error('connection terminated'));
   const prisma = {
@@ -44,11 +48,13 @@ function build(opts: { send?: () => Promise<unknown>; dbFailsAfterSend?: boolean
     { notify: jest.fn() } as never,
     { fx: async () => ({ ngnPerUsd: '1500' }), assertCooledOff: async () => undefined, assertWithinLimits: async () => undefined, rulesFor: async () => [] } as never, // policy
     railFromQuidax(quidax as never) as never, // naira rail
+    undefined, // rail hooks
+    peers as never,
   );
   jest
     .spyOn(service as unknown as { fees: () => Promise<unknown> }, 'fees')
     .mockResolvedValue({ platformFee: dec('0.0001'), platformFeeUsd: null, networkFee: dec('0.0001'), usdValue: null });
-  return { service, settlement, quidax };
+  return { service, settlement, quidax, peers };
 }
 
 const INPUT = { asset: 'btc', network: 'btc', amount: '0.01', address: 'bc1qexampleaddress' };
@@ -81,5 +87,23 @@ describe('C3: a crypto withdrawal is never refunded after Quidax accepted it', (
     const result = await service.withdrawCrypto('u1', INPUT);
     expect(settlement.reverse).not.toHaveBeenCalled();
     expect(result.status).toBe(TxStatus.RECONCILING);
+  });
+});
+
+describe("an address that belongs to another DavoChain customer", () => {
+  it('goes inside DavoChain, free, and never to the blockchain', async () => {
+    const { service, quidax, peers } = build({ peer: 'bob' });
+    const r = await service.withdrawCrypto('u1', INPUT, 'saved-1');
+    expect(quidax.createCryptoWithdrawal).not.toHaveBeenCalled();
+    expect(peers.send).toHaveBeenCalledWith(expect.objectContaining({ senderId: 'u1', recipientId: 'bob', savedCryptoAddressId: 'saved-1', level: 'BASIC' }));
+    expect(peers.send.mock.calls[0][0].amount.toString()).toBe('0.01');
+    expect(r).toMatchObject({ transactionId: 'tx-peer', status: TxStatus.COMPLETED, address: INPUT.address });
+  });
+
+  it('an outside address still goes to the blockchain', async () => {
+    const { service, quidax, peers } = build({ peer: null });
+    await service.withdrawCrypto('u1', INPUT);
+    expect(peers.recipientFor).toHaveBeenCalledWith('u1', INPUT.address, undefined);
+    expect(quidax.createCryptoWithdrawal).toHaveBeenCalled();
   });
 });

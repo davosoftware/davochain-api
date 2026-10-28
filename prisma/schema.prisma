@@ -209,6 +209,7 @@ enum SettlementLegKind {
   SWAP
   CHAIN_WITHDRAWAL
   BANK_PAYOUT
+  PEER_TRANSFER // one customer's sub-account -> another's
 }
 
 enum LegState {
@@ -588,6 +589,9 @@ model Transaction {
   counterpartyAccountMasked String?
   /// The sender's name did not match the user's. Credited anyway, and flagged.
   nameMismatch              Boolean         @default(false)
+  /// A send between two DavoChain customers: on the sender's row, the receiver;
+  /// on the receiver's row, the sender. Moved inside Quidax, never on a chain.
+  peerUserId                String?
 
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
@@ -608,6 +612,7 @@ model Transaction {
   @@index([status, type])
   @@index([quidaxRef])
   @@index([provider, providerRef])
+  @@index([peerUserId])
   @@map("transactions")
 }
 
