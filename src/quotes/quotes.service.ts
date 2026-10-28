@@ -64,7 +64,8 @@ export class QuotesService {
    * an install that has never configured a ladder still prices correctly rather
    * than failing every quote.
    */
-  private async gateFor(
+  /** Our buy margin (₦ per $) for a trade of this size. Shared with the rate board. */
+  async gateFor(
     assetCode: string,
     usdValue: Decimal,
     cfg: { gateNgnPerUsd: unknown },
@@ -162,7 +163,8 @@ export class QuotesService {
    * otherwise the buy ladder, then the flat gate, so the margin a coin charges
    * does not change until somebody chooses a sell margin for it.
    */
-  private async sellGateFor(
+  /** Our sell margin (₦ per $) for a trade of this size. Shared with the rate board. */
+  async sellGateFor(
     assetCode: string,
     usdValue: Decimal,
     cfg: { gateNgnPerUsd: unknown },

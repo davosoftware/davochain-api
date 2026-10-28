@@ -22,6 +22,12 @@
 
 **New (23 Oct 2026): start with the walk-through.** [`CUSTOMER_JOURNEY_API_GUIDE.md`](CUSTOMER_JOURNEY_API_GUIDE.md) takes one customer through the whole app in order, with real responses: register, email code, Basic verification, the naira account number, deposits, buy, sell, swap, withdrawals, gift cards, Advanced verification and sign-out. It also covers exactly when and how to refresh tokens. A ready-to-import Postman collection that refreshes tokens by itself is in [`postman/`](postman/DavoChain-Customer-Journey.postman_collection.json).
 
+## What changed for the app (28 October 2026): a price list
+
+| Change | Where | What the app must do |
+| --- | --- | --- |
+| **New `GET /v1/rates`**: every coin's naira **buy** and **sell** price and dollar price, public (no sign-in) | 5.3 | Use it for the markets/home screen and coin cards. Refresh every 30 s while visible. Keep using 7.1 for the real price at trade time |
+
 ## What changed for the app (27 October 2026): swaps use Quidax's live price
 
 | Change | Where | What the app must do |
@@ -167,7 +173,7 @@ Admins now decide, on one screen, what people at each level may do: **None** (no
 | 2 | [Authentication](#2-authentication) | 2.1 Register · 2.2 Log in · 2.3 Refresh token · 2.4 Log out · 2.5 Change password · 2.6 Request reset code · 2.7 Reset password · 2.8 Who am I (token) · 2.9 Send email code · 2.10 Confirm email |
 | 3 | [Profile & wallets](#3-profile--wallets) | 3.1 Get profile · 3.2 Get wallet balances |
 | 4 | [KYC](#4-kyc-identity-verification) | 4.1 Get KYC status · 4.2 Basic verification · 4.3 Upload a document · 4.4 States and LGAs · 4.5 Basic screen flow · 4.6 Advanced verification |
-| 5 | [Assets](#5-assets--networks) | 5.1 List coins · 5.2 List a coin's networks |
+| 5 | [Assets & rates](#5-assets-networks--rates) | 5.1 List coins · 5.2 List a coin's networks · 5.3 Rates and prices |
 | 6 | [Deposits](#6-deposits) | 6.1 Get deposit address · 6.2 List my addresses · 6.3 Deposit history · 6.4 Naira account · 6.5 Open naira account |
 | 7 | [Trading](#7-trading-buy-sell-swap) | 7.1 Get a quote · 7.2 Execute a quote · 7.3 Trade history · 7.4 Get one transaction |
 | 8 | [Withdrawals](#8-withdrawals) | 8.1 Crypto fee quote · 8.2 Withdraw crypto · 8.3 Withdrawal history · 8.4 Naira fee quote · 8.5 Bank list · 8.6 Verify bank account · 8.7 Withdraw naira · 8.8 Saved bank accounts · 8.9 Saved crypto addresses |
@@ -1278,7 +1284,7 @@ Normal photos pass. To see other answers, the test files in `src/dojah/dojah.moc
 
 ---
 
-## 5. Assets & networks
+## 5. Assets, networks & rates
 
 ### 5.1 List coins
 
@@ -1379,6 +1385,71 @@ GET /v1/assets/usdt/networks?purpose=withdraw
 **Integration notes**
 - **Always ask for the right `purpose`.** Some networks are deposit-only: USDT on `arbitrum` appears for `deposit` but not `withdraw`.
 - Any `purpose` value other than `deposit` is treated as `withdraw`.
+
+---
+
+### 5.3 Rates and prices (the markets list)
+
+**Endpoint:** `GET /v1/rates` · **Auth:** none · **KYC:** none · **Success:** `200` · **New 28 Oct 2026**
+
+**What it does**
+Every listed coin with **what it costs to buy and what we pay to sell, in naira**, plus its dollar price. Use it for the home or markets screen, coin cards, and "1 BTC ≈ ₦…" lines. No sign-in needed, so it also works on the welcome screen.
+
+**Request**
+```http
+GET /v1/rates
+```
+
+**Response** `200` (real response from the test server, trimmed to two coins)
+```json
+{
+  "updatedAt": "2026-10-28T09:53:02.239Z",
+  "refreshSeconds": 30,
+  "referenceUsd": "100",
+  "coins": [
+    {
+      "code": "btc",
+      "name": "Bitcoin",
+      "available": true,
+      "tradable": true,
+      "priceUsd": "103000",
+      "buy":  { "ngnPerUsd": "1470.80", "ngnPerUnit": "151492730.92" },
+      "sell": { "ngnPerUsd": "1419.22", "ngnPerUnit": "146179660.00" }
+    },
+    {
+      "code": "usdt",
+      "name": "Tether",
+      "available": true,
+      "tradable": true,
+      "priceUsd": "1",
+      "buy":  { "ngnPerUsd": "1470.80", "ngnPerUnit": "1470.80" },
+      "sell": { "ngnPerUsd": "1419.22", "ngnPerUnit": "1419.22" }
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `updatedAt` | string (ISO) | When these prices were worked out |
+| `refreshSeconds` | number | How often the prices change on the server (30). **Asking more often returns the same numbers.** |
+| `referenceUsd` | string | The trade size the prices are for: **$100**. Our margin depends on trade size, so a much bigger or smaller trade can get a slightly different rate at the quote step. |
+| `coins[]` | array | Same coins and **same order** as 5.1 |
+| `coins[].code` / `name` | string | As in 5.1 |
+| `coins[].available` | boolean | `false` when the price couldn't be fetched just now; `priceUsd`, `buy` and `sell` are then `null`. Show "—" and keep the coin in the list. |
+| `coins[].tradable` | boolean | `false` while an admin has paused trading in this coin (or all trading). Show the price, but grey out Buy/Sell. |
+| `coins[].priceUsd` | string \| null | Dollar price of 1 coin (up to 8 decimals) |
+| `coins[].buy.ngnPerUnit` | string \| null | **Naira to buy 1 coin.** "Buy price" on cards |
+| `coins[].buy.ngnPerUsd` | string \| null | Naira per $1 when buying ("rate") |
+| `coins[].sell.ngnPerUnit` | string \| null | **Naira the user receives for 1 coin.** "Sell price" on cards |
+| `coins[].sell.ngnPerUsd` | string \| null | Naira per $1 when selling |
+
+**Integration notes**
+- **This is for showing prices, not for trading.** The price that's charged is always the one from **7.1 Get a quote**. It's worked out the same way, so it will be the same or very close for a ~$100 trade.
+- Refresh it every **30 s** while a prices screen is open (pull-to-refresh can call it any time). Polling faster doesn't give newer prices.
+- Amounts are strings with 2 decimals: format them as naira (₦151,492,730.92) yourself.
+- Naira isn't in the list. A "₦ per $" headline can use `usdt`'s `buy.ngnPerUsd` / `sell.ngnPerUsd`.
+- Public route, so the public rate limit applies (0.4.1).
 
 ---
 
@@ -3610,6 +3681,7 @@ Locally the API uses **pretend ("mock") versions of every provider**: Quidax (cr
 | 4.3 | POST | `/v1/kyc/documents` (multipart) | ✅ | — | — | 201 / 200 |
 | 5.1 | GET | `/v1/assets` | — | — | — | 200 |
 | 5.2 | GET | `/v1/assets/{code}/networks?purpose=` | — | — | — | 200 |
+| 5.3 | GET | `/v1/rates` | — | — | — | 200 |
 | 6.1 | POST | `/v1/deposits/address` | ✅ | TIER_1 | — | 201 |
 | 6.2 | GET | `/v1/deposits/addresses` | ✅ | — | — | 200 |
 | 6.3 | GET | `/v1/deposits?limit=` | ✅ | — | — | 200 |
