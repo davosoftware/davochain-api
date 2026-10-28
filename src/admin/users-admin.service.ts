@@ -244,6 +244,9 @@ export class UsersAdminService {
       closedReason: user.closedReason ?? null,
       closedEmail: user.closedEmail ?? null,
       closedPhone: user.closedPhone ?? null,
+      // What happens to the data (28 Oct 2026): the day it is due to be deleted, or when it was.
+      dataDeleteAt: user.dataDeleteAt ?? null,
+      dataDeletedAt: user.dataDeletedAt ?? null,
       transactionCount: txCount,
       quidax: user.quidaxAccount,
       kyc: user.kycProfile

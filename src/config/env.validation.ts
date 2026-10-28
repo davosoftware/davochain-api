@@ -208,6 +208,8 @@ export const envSchema = z
     CRYPTO_ADDRESS_AUTO_CREATE: bool(true),
     /** H9: customers confirm their email before any money action. Switch off only if email (SMTP) is down. */
     EMAIL_VERIFICATION_REQUIRED: bool(true),
+    // How long a closed customer's personal data is kept when the owner chooses "delete later" (28 Oct 2026).
+    CLOSED_ACCOUNT_DATA_RETENTION_MONTHS: int(6),
     /** HMAC key for BVN/NIN hashes. Rotating it means users re-enter their number. */
     KYC_HASH_KEY: z.string().optional(),
     // ── Dojah (identity lookups and AML screening) ──

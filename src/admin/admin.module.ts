@@ -45,6 +45,7 @@ import { DepositAddressesAdminService } from './deposit-addresses-admin.service'
 
 import { AccountClosureController } from './account-closure.controller';
 import { AccountClosureService } from './account-closure.service';
+import { CustomerErasureService } from './customer-erasure.service';
 @Module({
   imports: [
     JwtModule.register({}),
@@ -70,7 +71,7 @@ import { AccountClosureService } from './account-closure.service';
     AddressesModule,
   ],
   controllers: [AdminController, AdminAuthController, AlertRecipientsController, KycBasicReviewController, KycAdvancedReviewController, ComplianceController, DojahAdminController, TreasuryAdminController, KycDocumentsAdminController, ServerSettingsController, DepositAddressesAdminController, DailyLimitsAdminController, AccountClosureController],
-  providers: [AdminService, UsersAdminService, AdminsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService, AdminSessionsService, AdminOtpService, NgnWithdrawalsService, AdminGuard, LevelAdminService, DojahSettingsService, TwoStepService, DepositAddressesAdminService, AccountClosureService],
+  providers: [AdminService, UsersAdminService, AdminsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService, AdminSessionsService, AdminOtpService, NgnWithdrawalsService, AdminGuard, LevelAdminService, DojahSettingsService, TwoStepService, DepositAddressesAdminService, AccountClosureService, CustomerErasureService],
   exports: [AdminService, UsersAdminService, AdminsService, AdminSessionsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService],
 })
 export class AdminModule {}

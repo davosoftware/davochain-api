@@ -38,8 +38,10 @@ function build(opts: {
   const mail = { send: jest.fn(async () => true) };
   const templated = { send: jest.fn(async () => undefined) };
   const virtualAccounts = { setDesiredForUser: jest.fn(async () => undefined) };
-  const svc = new AccountClosureService(prisma as never, passwords as never, mail as never, templated as never, virtualAccounts as never);
-  return { svc, prisma, user, mail, templated, virtualAccounts };
+  const erasure = { erase: jest.fn(async () => ({ erased: true, files: 0 })) };
+  const settings = { get: jest.fn(() => 6) };
+  const svc = new AccountClosureService(prisma as never, passwords as never, mail as never, templated as never, virtualAccounts as never, erasure as never, settings as never);
+  return { svc, prisma, user, mail, templated, virtualAccounts, erasure };
 }
 
 const owner = { id: 'a1', role: 'OWNER', ip: '1.2.3.4' };
@@ -48,7 +50,7 @@ const good = { password: 'right', reason: 'Customer asked us to close it by emai
 describe('AccountClosureService.check', () => {
   it('an empty account with nothing in progress can be closed', async () => {
     const { svc } = build({ balances: [{ assetCode: 'ngn', available: '0', locked: '0' }] });
-    expect(await svc.check('u1')).toEqual({ canClose: true, blockers: [] });
+    expect(await svc.check('u1')).toMatchObject({ canClose: true, blockers: [] });
   });
 
   it('lists every coin still held, and anything in progress', async () => {
@@ -73,6 +75,57 @@ describe('AccountClosureService.check', () => {
   it('an account already closed says so', async () => {
     const { svc } = build({ status: 'CLOSED' });
     expect((await svc.check('u1')).blockers).toEqual([{ code: 'ALREADY_CLOSED', message: 'This account is already closed' }]);
+  });
+});
+
+describe('AccountClosureService: what happens to the data (28 Oct 2026)', () => {
+  const data = (h: ReturnType<typeof build>) => (h.prisma.user.update.mock.calls[0] as unknown as [{ data: Record<string, unknown> }])[0].data;
+
+  it('the check says how long "delete later" waits', async () => {
+    expect(await build().svc.check('u1')).toMatchObject({ retentionMonths: 6 });
+  });
+
+  it('KEEP: closed, nothing scheduled, nothing deleted', async () => {
+    const h = build();
+    await h.svc.close(owner, 'u1', { ...good, dataChoice: 'KEEP' });
+    expect(data(h).dataDeleteAt).toBeNull();
+    expect(h.erasure.erase).not.toHaveBeenCalled();
+  });
+
+  it('DELETE_LATER: the deletion day is the closing day plus the months in Server settings', async () => {
+    const h = build();
+    await h.svc.close(owner, 'u1', { ...good, dataChoice: 'DELETE_LATER' });
+    const d = data(h);
+    const expected = new Date(d.closedAt as Date);
+    expected.setUTCMonth(expected.getUTCMonth() + 6);
+    expect(d.dataDeleteAt).toEqual(expected);
+    expect(h.erasure.erase).not.toHaveBeenCalled();
+  });
+
+  it('DELETE_NOW: closed, then deleted at once, after the customer is emailed at their real address', async () => {
+    const h = build();
+    const order: string[] = [];
+    h.templated.send.mockImplementation(async () => void order.push('email'));
+    h.erasure.erase.mockImplementation(async () => (order.push('erase'), { erased: true, files: 0 }));
+    const r = await h.svc.close(owner, 'u1', { ...good, dataChoice: 'DELETE_NOW' });
+    expect(h.erasure.erase).toHaveBeenCalledWith('u1', { adminId: 'a1', scheduled: false });
+    expect(order).toEqual(['email', 'erase']);
+    expect(r).toMatchObject({ closed: true, dataDeleted: true });
+  });
+
+  it('DELETE_NOW that fails part-way still closes, and leaves the deletion due so the daily job finishes it', async () => {
+    const h = build();
+    h.erasure.erase.mockRejectedValueOnce(new Error('storage down'));
+    const r = await h.svc.close(owner, 'u1', { ...good, dataChoice: 'DELETE_NOW' });
+    expect(r).toMatchObject({ closed: true, dataDeleted: false });
+    expect(data(h).dataDeleteAt).toEqual(data(h).closedAt);
+  });
+
+  it('no choice means KEEP; an unknown choice is refused', async () => {
+    const h = build();
+    await h.svc.close(owner, 'u1', good);
+    expect(data(h).dataDeleteAt).toBeNull();
+    await expect(build().svc.close(owner, 'u1', { ...good, dataChoice: 'SHRED' as never })).rejects.toThrow('Choose what happens');
   });
 });
 
@@ -135,5 +188,19 @@ describe('AccountClosureService.close', () => {
     const h = build();
     h.templated.send.mockRejectedValueOnce(new Error('SMTP down'));
     await expect(h.svc.close(owner, 'u1', good)).resolves.toMatchObject({ closed: true });
+  });
+});
+
+describe('AccountClosureService.deleteDataNow (an account already closed)', () => {
+  it('owners only, with password and reason, and only for a closed account', async () => {
+    await expect(build({ status: 'CLOSED' }).svc.deleteDataNow({ ...owner, role: 'SUB_ADMIN' }, 'u1', good)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(build({ status: 'CLOSED', passwordOk: false }).svc.deleteDataNow(owner, 'u1', good)).rejects.toThrow('That password is not correct.');
+    await expect(build({ status: 'ACTIVE' }).svc.deleteDataNow(owner, 'u1', good)).rejects.toThrow('Close the account first');
+  });
+
+  it('deletes the data of a closed account', async () => {
+    const h = build({ status: 'CLOSED' });
+    await expect(h.svc.deleteDataNow(owner, 'u1', good)).resolves.toEqual({ dataDeleted: true });
+    expect(h.erasure.erase).toHaveBeenCalledWith('u1', { adminId: 'a1', scheduled: false });
   });
 });

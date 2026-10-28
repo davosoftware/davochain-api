@@ -8,7 +8,14 @@ import { CurrentAdmin } from './current-admin.decorator';
 import { RequirePermissions } from './require-permissions.decorator';
 import type { AdminJwtPayload } from './admin.service';
 import { AccountClosureService } from './account-closure.service';
+import { IsIn, IsOptional } from 'class-validator';
 import { ConfirmWithPasswordDto } from './server-settings.controller';
+import { DATA_CHOICES, type DataChoice } from './account-closure.service';
+
+export class CloseAccountDto extends ConfirmWithPasswordDto {
+  /** KEEP (default), DELETE_LATER (after the months in Server settings) or DELETE_NOW. */
+  @IsOptional() @IsIn(DATA_CHOICES as unknown as string[]) dataChoice?: DataChoice;
+}
 
 /**
  * People → Users → Close account (28 Oct 2026). Anyone who can see users may
@@ -33,7 +40,14 @@ export class AccountClosureController {
 
   @Post(':id/close')
   @HttpCode(200)
-  close(@CurrentAdmin() admin: AdminJwtPayload, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ConfirmWithPasswordDto, @Req() req: Request) {
+  close(@CurrentAdmin() admin: AdminJwtPayload, @Param('id', ParseUUIDPipe) id: string, @Body() dto: CloseAccountDto, @Req() req: Request) {
     return this.closure.close({ id: admin.sub, role: admin.role, ip: req.ip }, id, dto);
+  }
+
+  /** Owners only: delete the personal data of an account that is already closed. */
+  @Post(':id/delete-data')
+  @HttpCode(200)
+  deleteData(@CurrentAdmin() admin: AdminJwtPayload, @Param('id', ParseUUIDPipe) id: string, @Body() dto: ConfirmWithPasswordDto, @Req() req: Request) {
+    return this.closure.deleteDataNow({ id: admin.sub, role: admin.role, ip: req.ip }, id, dto);
   }
 }

@@ -35,7 +35,7 @@ describeAdmin('closing a customer account', () => {
   it('closes an empty account: sign-in stops, and the person can start again with the same details', async () => {
     const user = await verifyBasic(await newUser());
     const bvn = user.bvn!;
-    expect((await call('GET', `/admin/users/${user.id}/close-check`, { token: admin })).body).toEqual({ canClose: true, blockers: [] });
+    expect((await call('GET', `/admin/users/${user.id}/close-check`, { token: admin })).body).toMatchObject({ canClose: true, blockers: [], retentionMonths: 6 });
 
     const r = await call('POST', `/admin/users/${user.id}/close`, { token: admin, body: { password: PASSWORD, reason: 'Customer asked us to close it' } });
     expect(r.status).toBe(200);
@@ -70,5 +70,40 @@ describeAdmin('closing a customer account', () => {
     // Closing it twice is refused.
     const twice = await call('POST', `/admin/users/${user.id}/close`, { token: admin, body: { password: PASSWORD, reason: 'Customer asked us to close it' } });
     expect(twice.status).toBe(409);
+  });
+});
+
+describeAdmin('what happens to a closed customer\'s data (28 Oct 2026)', () => {
+  it('"delete later" sets the deletion day from Server settings (6 months by default)', async () => {
+    const user = await newUser();
+    const r = await call('POST', `/admin/users/${user.id}/close`, { token: admin, body: { password: PASSWORD, reason: 'Testing delete later', dataChoice: 'DELETE_LATER' } });
+    expect(r.status).toBe(200);
+    const due = new Date(r.body.dataDeleteAt);
+    const months = (due.getUTCFullYear() - new Date(r.body.closedAt).getUTCFullYear()) * 12 + (due.getUTCMonth() - new Date(r.body.closedAt).getUTCMonth());
+    expect(months).toBe(6);
+    expect((await call('GET', `/admin/users/${user.id}`, { token: admin })).body).toMatchObject({ dataDeleteAt: r.body.dataDeleteAt, dataDeletedAt: null });
+  });
+
+  it('"delete now" leaves only a "Deleted customer" with no personal details', async () => {
+    const user = await verifyBasic(await newUser());
+    const r = await call('POST', `/admin/users/${user.id}/close`, { token: admin, body: { password: PASSWORD, reason: 'Testing delete now', dataChoice: 'DELETE_NOW' } });
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ closed: true, dataDeleted: true, dataDeleteAt: null });
+    const d = (await call('GET', `/admin/users/${user.id}`, { token: admin })).body;
+    expect(d).toMatchObject({ firstName: 'Deleted', lastName: 'customer', phone: null, closedEmail: null, closedPhone: null });
+    expect(d.email).toBe(`deleted-${user.id}@deleted.davochain`);
+    expect(d.kyc).toMatchObject({ dateOfBirth: null, bvnLast4: null, ninLast4: null });
+    expect(d.dataDeletedAt).toBeTruthy();
+    // No longer found by the old email.
+    const found = await call('GET', `/admin/users?search=${encodeURIComponent(user.email)}`, { token: admin });
+    expect((found.body.rows as Array<{ id: string }>).map((u) => u.id)).not.toContain(user.id);
+  });
+
+  it('a closed account kept on file can have its data deleted later by an owner', async () => {
+    const user = await newUser();
+    await call('POST', `/admin/users/${user.id}/close`, { token: admin, body: { password: PASSWORD, reason: 'Testing keep then delete' } });
+    const r = await call('POST', `/admin/users/${user.id}/delete-data`, { token: admin, body: { password: PASSWORD, reason: 'Customer asked to be forgotten' } });
+    expect(r.status).toBe(200);
+    expect(r.body).toEqual({ dataDeleted: true });
   });
 });

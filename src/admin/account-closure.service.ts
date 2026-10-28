@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { Prisma, TxStatus, UserStatus, VirtualAccountStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { PasswordService } from '../auth/password.service';
@@ -6,6 +6,8 @@ import { MailService } from '../common/mail.service';
 import { TemplatedMailService } from '../cms/templated-mail.service';
 import { VirtualAccountsService } from '../ngn-deposits/virtual-accounts.service';
 import { dec } from '../common/money';
+import { ServerSettingsService } from '../settings/server-settings.service';
+import { CustomerErasureService } from './customer-erasure.service';
 
 export type ClosureBlocker =
   | { code: 'ALREADY_CLOSED'; message: string }
@@ -17,6 +19,14 @@ export type ClosureBlocker =
 const IN_FLIGHT: TxStatus[] = [TxStatus.PENDING, TxStatus.PROCESSING, TxStatus.ON_HOLD, TxStatus.RECONCILING];
 
 const WRONG_PASSWORD = 'That password is not correct.';
+
+/**
+ * What happens to the customer's data when the account is closed, chosen by the
+ * owner each time (decision 28 Oct 2026): keep it, delete it after the months
+ * in Server settings, or delete it now.
+ */
+export type DataChoice = 'KEEP' | 'DELETE_LATER' | 'DELETE_NOW';
+export const DATA_CHOICES: readonly DataChoice[] = ['KEEP', 'DELETE_LATER', 'DELETE_NOW'];
 
 /** The placeholder that frees the real email address for a new sign-up. Not deliverable. */
 const releasedEmail = (userId: string) => `closed-${userId}@closed.davochain`;
@@ -41,30 +51,43 @@ export class AccountClosureService {
     private readonly mail: MailService,
     private readonly templated: TemplatedMailService,
     private readonly virtualAccounts: VirtualAccountsService,
+    private readonly erasure: CustomerErasureService,
+    /** CLOSED_ACCOUNT_DATA_RETENTION_MONTHS (System → Server settings). */
+    @Optional() private readonly settings?: ServerSettingsService,
   ) {}
 
+  /** Months "delete later" waits (Server settings; 6 by default). */
+  private retentionMonths(): number {
+    return this.settings?.get<number>('CLOSED_ACCOUNT_DATA_RETENTION_MONTHS') ?? 6;
+  }
+
   /** What stops this account being closed right now; empty when it can be. */
-  async check(userId: string): Promise<{ canClose: boolean; blockers: ClosureBlocker[] }> {
+  async check(userId: string): Promise<{ canClose: boolean; blockers: ClosureBlocker[]; retentionMonths: number }> {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
     const blockers = await this.blockers(this.prisma, userId, user.status);
-    return { canClose: blockers.length === 0, blockers };
+    return { canClose: blockers.length === 0, blockers, retentionMonths: this.retentionMonths() };
   }
 
   async close(
     actor: { id: string; role: string; ip?: string },
     userId: string,
-    input: { password: string; reason: string },
-  ): Promise<{ closed: true; closedAt: string }> {
-    if (actor.role !== 'OWNER') throw new ForbiddenException('Only an owner can close a customer account.');
-    const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
-    if (reason.length < 10) throw new BadRequestException('Say why, in at least 10 characters. It goes in the audit log.');
-    const admin = await this.prisma.adminUser.findUnique({ where: { id: actor.id }, select: { passwordHash: true } });
-    if (!admin || typeof input.password !== 'string' || !(await this.passwords.verify(input.password, admin.passwordHash))) {
-      throw new BadRequestException(WRONG_PASSWORD);
+    input: { password: string; reason: string; dataChoice?: DataChoice },
+  ): Promise<{ closed: true; closedAt: string; dataDeleteAt: string | null; dataDeleted: boolean }> {
+    const choice: DataChoice = input.dataChoice ?? 'KEEP';
+    if (actor.role === 'OWNER' && !DATA_CHOICES.includes(choice)) {
+      throw new BadRequestException('Choose what happens to their data: keep it, delete it later, or delete it now.');
     }
+    const reason = await this.assertOwner(actor, input, 'close a customer account');
 
     const closedAt = new Date();
+    let dataDeleteAt: Date | null = null;
+    // "Now" is also due now: if the deletion below fails, the daily job finishes it.
+    if (choice === 'DELETE_NOW') dataDeleteAt = closedAt;
+    if (choice === 'DELETE_LATER') {
+      dataDeleteAt = new Date(closedAt);
+      dataDeleteAt.setUTCMonth(dataDeleteAt.getUTCMonth() + this.retentionMonths());
+    }
     const before = await this.prisma.$transaction(async (tx) => {
       const found = await tx.user.findUnique({ where: { id: userId } });
       if (!found) throw new NotFoundException('User not found');
@@ -91,6 +114,7 @@ export class AccountClosureService {
           closedPhone: user.phone,
           email: releasedEmail(userId),
           phone: null,
+          dataDeleteAt,
         },
       });
       await tx.refreshToken.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: closedAt } });
@@ -101,7 +125,7 @@ export class AccountClosureService {
           entity: 'User',
           entityId: userId,
           before: { status: user.status, email: user.email, phone: user.phone } as Prisma.InputJsonValue,
-          after: { status: UserStatus.CLOSED, email: releasedEmail(userId), phone: null, reason } as Prisma.InputJsonValue,
+          after: { status: UserStatus.CLOSED, email: releasedEmail(userId), phone: null, reason, dataChoice: choice, dataDeleteAt: dataDeleteAt?.toISOString() ?? null } as Prisma.InputJsonValue,
           ip: actor.ip ?? null,
         },
       });
@@ -119,9 +143,51 @@ export class AccountClosureService {
         variables: { firstName: before.firstName, lastName: before.lastName, email: before.email },
       })
       .catch((e: Error) => this.log.warn(`Closing email to ${userId} failed: ${e.message}`));
-    await this.emailOwners(`${before.firstName} ${before.lastName} (${before.email})`, reason);
+    await this.emailOwners(`${before.firstName} ${before.lastName} (${before.email})`, reason, choice, dataDeleteAt);
 
-    return { closed: true, closedAt: closedAt.toISOString() };
+    // Last: the emails above needed the real address and name.
+    let dataDeleted = false;
+    if (choice === 'DELETE_NOW') {
+      dataDeleted = await this.erasure
+        .erase(userId, { adminId: actor.id, scheduled: false })
+        .then((r) => r.erased)
+        .catch((e: Error) => {
+          this.log.error(`Closed ${userId} but could not delete its data yet (the daily job will): ${e.message}`);
+          return false;
+        });
+    }
+
+    return {
+      closed: true,
+      closedAt: closedAt.toISOString(),
+      dataDeleteAt: dataDeleted ? null : (dataDeleteAt?.toISOString() ?? null),
+      dataDeleted,
+    };
+  }
+
+  /**
+   * Deletes the personal data of an account that is already closed (it was
+   * closed with "keep", or "delete later" and the owner won't wait).
+   */
+  async deleteDataNow(actor: { id: string; role: string; ip?: string }, userId: string, input: { password: string; reason: string }): Promise<{ dataDeleted: boolean }> {
+    await this.assertOwner(actor, input, "delete a customer's data");
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { status: true } });
+    if (!user) throw new NotFoundException('User not found');
+    if (user.status !== UserStatus.CLOSED) throw new BadRequestException('Close the account first. Only a closed account can have its data deleted.');
+    const r = await this.erasure.erase(userId, { adminId: actor.id, scheduled: false });
+    return { dataDeleted: r.erased };
+  }
+
+  /** Owner, 10+ character reason, right password. Returns the trimmed reason. */
+  private async assertOwner(actor: { id: string; role: string }, input: { password: string; reason: string }, what: string): Promise<string> {
+    if (actor.role !== 'OWNER') throw new ForbiddenException(`Only an owner can ${what}.`);
+    const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
+    if (reason.length < 10) throw new BadRequestException('Say why, in at least 10 characters. It goes in the audit log.');
+    const admin = await this.prisma.adminUser.findUnique({ where: { id: actor.id }, select: { passwordHash: true } });
+    if (!admin || typeof input.password !== 'string' || !(await this.passwords.verify(input.password, admin.passwordHash))) {
+      throw new BadRequestException(WRONG_PASSWORD);
+    }
+    return reason;
   }
 
   private async blockers(db: Pick<PrismaService, 'balance' | 'transaction' | 'giftCardTrade'>, userId: string, status: UserStatus | string): Promise<ClosureBlocker[]> {
@@ -149,12 +215,17 @@ export class AccountClosureService {
   }
 
   /** Every owner hears about a closed account. Never fails the closing. */
-  private async emailOwners(who: string, reason: string): Promise<void> {
+  private async emailOwners(who: string, reason: string, choice: DataChoice, deleteAt: Date | null): Promise<void> {
     try {
       const owners = await this.prisma.adminUser.findMany({ where: { role: 'OWNER', isActive: true }, select: { email: true } });
       const text = [
         `A customer account was closed: ${who}.`,
         `Reason: ${reason}`,
+        choice === 'DELETE_NOW'
+          ? 'Their personal data was deleted at once.'
+          : choice === 'DELETE_LATER'
+            ? `Their personal data will be deleted on ${deleteAt!.toISOString().slice(0, 10)}.`
+            : 'Their data is kept.',
         '',
         'If this was not expected, sign in to the dashboard and check the audit log.',
       ].join('\n');

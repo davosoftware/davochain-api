@@ -299,6 +299,12 @@ model User {
   closedBy     String?
   closedEmail  String?
   closedPhone  String?
+  /// When the closing owner chose "delete after N months": the day the
+  /// personal data is due to be deleted (a daily job does it).
+  dataDeleteAt  DateTime?
+  /// When the personal data was deleted. The row stays as "Deleted customer"
+  /// so the money records it is linked to still add up.
+  dataDeletedAt DateTime?
 
   emailVerifiedAt      DateTime?
   lastLoginAt          DateTime?
@@ -361,6 +367,7 @@ model User {
 
   @@index([status])
   @@index([kycTier, kycStatus])
+  @@index([dataDeleteAt])
   @@map("users")
 }
 

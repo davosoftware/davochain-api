@@ -47,6 +47,7 @@ export const SERVER_SETTINGS: SettingDef[] = [
   s({ key: 'CRYPTO_ADDRESS_AUTO_CREATE', group: 'Crypto', label: 'Make crypto addresses in advance', help: 'Verified customers get the addresses switched on under People → Crypto addresses without opening Receive.', kind: { type: 'boolean' }, live: true, money: false }),
 
   // ── Sign-up ──────────────────────────────────────────────
+  s({ key: 'CLOSED_ACCOUNT_DATA_RETENTION_MONTHS', group: 'Closed accounts', label: 'Delete closed customers after', help: "When an owner closes an account and chooses \"delete later\", the customer's personal details and documents are deleted this many months after closing. Their money records stay, without a name. Note: anti-money-laundering rules usually expect identity records to be kept for 5 years (60 months).", kind: { type: 'int', min: 1, max: 120, unit: 'months' }, live: true, money: false }),
   s({ key: 'EMAIL_VERIFICATION_REQUIRED', group: 'Sign-up', label: 'Customers must confirm their email', help: 'Until they type the emailed code, customers can look around but not move money. Switch off only if email sending is down.', kind: { type: 'boolean' }, live: true, money: true }),
 
   // ── Email sending (the password stays on the API keys screen) ──
@@ -97,6 +98,7 @@ export type ServerSettingKey =
   | 'CRYPTO_ADDRESS_AUTO_CREATE'
   | 'NGN_DEPOSITS_ENABLED' | 'NGN_ACCOUNT_AUTO_OPEN' | 'PAYREP_MAIN_ACCOUNT' | 'PAYREP_ACCOUNT_NAME_PREFIX'
   | 'EMAIL_VERIFICATION_REQUIRED'
+  | 'CLOSED_ACCOUNT_DATA_RETENTION_MONTHS'
   | 'SMTP_HOST' | 'SMTP_PORT' | 'SMTP_SECURE' | 'SMTP_USER' | 'SMTP_FROM'
   | 'MARGIN_DEVIATION_TRIP_BPS' | 'QUOTE_TTL_SECONDS' | 'QUOTE_HARD_EXPIRY_SECONDS' | 'SWAP_REQUOTE_TOLERANCE_BPS' | 'RATE_CACHE_TTL_SECONDS'
   | 'FEE_CLAIM_DESTINATION' | 'FEE_CLAIM_MIN_USD'
