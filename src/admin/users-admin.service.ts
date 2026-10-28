@@ -23,6 +23,8 @@ export interface UserListRow {
   isTest: boolean;
   walletReady: boolean;
   suspendedReason: string | null;
+  /** The name others send crypto to (28 Oct 2026); null until given one. */
+  payUsername: string | null;
   createdAt: Date;
   lastLoginAt: Date | null;
 }
@@ -101,6 +103,8 @@ export class UsersAdminService {
               // A closed account released its email and phone; it is still found by the originals.
               { closedEmail: { contains: search, mode: 'insensitive' } },
               { closedPhone: { contains: search } },
+              // The payment username (28 Oct 2026), typed with or without its @.
+              { payUsername: { contains: search.replace(/^@/, ''), mode: 'insensitive' } },
             ],
           }
         : {}),
@@ -136,6 +140,7 @@ export class UsersAdminService {
           isTest: true,
           suspendedReason: true,
           closedEmail: true,
+          payUsername: true,
           createdAt: true,
           lastLoginAt: true,
           quidaxAccount: { select: { id: true } },
@@ -163,6 +168,8 @@ export class UsersAdminService {
         suspendedReason: u.suspendedReason,
         /** A closed account's original email (its `email` is a placeholder). */
         closedEmail: u.closedEmail ?? null,
+        /** The name others send crypto to (28 Oct 2026). */
+        payUsername: u.payUsername ?? null,
         createdAt: u.createdAt,
         lastLoginAt: u.lastLoginAt,
       })),
