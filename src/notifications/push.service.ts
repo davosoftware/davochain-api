@@ -17,6 +17,18 @@ import { ServerSettingsService } from '../settings/server-settings.service';
  */
 
 interface FirebaseMessaging {
+  /** Up to 500 messages, each with its own phone and data, in one call. */
+  sendEach(messages: Array<{
+    token: string;
+    notification: { title: string; body: string };
+    data?: Record<string, string>;
+    android?: unknown;
+    apns?: unknown;
+  }>): Promise<{
+    successCount: number;
+    failureCount: number;
+    responses: { success: boolean; error?: { code: string; message: string } }[];
+  }>;
   sendEachForMulticast(message: {
     tokens: string[];
     notification: { title: string; body: string };
@@ -30,8 +42,8 @@ interface FirebaseMessaging {
   }>;
 }
 
-/** The most phones Firebase takes in one sendEachForMulticast call. */
-const MULTICAST_MAX = 500;
+/** The most messages Firebase takes in one sendEach call. */
+const SEND_EACH_MAX = 500;
 
 /** Firebase says this phone will never take a message again (app removed, token replaced). */
 function isDeadToken(res: { success: boolean; error?: { code: string } } | undefined): boolean {
@@ -144,29 +156,32 @@ export class PushService implements OnModuleInit {
    * perfectly healthy install.
    */
   /**
-   * One message to many phones: a broadcast wave (29 Oct 2026). Firebase takes
-   * at most 500 phones a call. Phones Firebase says are gone are switched off,
-   * as in deliver(). Push switched off: nothing sent, nothing failed.
+   * A broadcast wave (29 Oct 2026): many phones, each with its own message,
+   * so every push carries that customer's own notificationId (the app opens
+   * and marks read that exact inbox item). Firebase takes at most 500 a call.
+   * Phones Firebase says are gone are switched off, as in deliver(). Push
+   * switched off: nothing sent, nothing failed.
    */
-  async sendToTokens(
-    tokens: string[],
-    message: { title: string; body: string; data?: Record<string, string> },
+  async sendMessages(
+    messages: Array<{ token: string; title: string; body: string; data: Record<string, string> }>,
   ): Promise<{ sent: number; failed: number }> {
-    if (!tokens.length || !this.messaging) return { sent: 0, failed: 0 };
+    if (!messages.length || !this.messaging) return { sent: 0, failed: 0 };
     let sent = 0;
     let failed = 0;
-    for (let i = 0; i < tokens.length; i += MULTICAST_MAX) {
-      const group = tokens.slice(i, i + MULTICAST_MAX);
-      const result = await this.messaging.sendEachForMulticast({
-        tokens: group,
-        notification: { title: message.title, body: message.body },
-        data: message.data,
-        android: { priority: 'high', notification: { channelId: 'davochain' } },
-        apns: { payload: { aps: { sound: 'default' } } },
-      });
+    for (let i = 0; i < messages.length; i += SEND_EACH_MAX) {
+      const group = messages.slice(i, i + SEND_EACH_MAX);
+      const result = await this.messaging.sendEach(
+        group.map((m) => ({
+          token: m.token,
+          notification: { title: m.title, body: m.body },
+          data: m.data,
+          android: { priority: 'high', notification: { channelId: 'davochain' } },
+          apns: { payload: { aps: { sound: 'default' } } },
+        })),
+      );
       sent += result.successCount;
       failed += result.failureCount;
-      const dead = group.filter((_, j) => isDeadToken(result.responses[j]));
+      const dead = group.filter((_, k) => isDeadToken(result.responses[k])).map((m) => m.token);
       if (dead.length) {
         await this.prisma.deviceToken.updateMany({ where: { token: { in: dead } }, data: { disabledAt: new Date() } });
       }

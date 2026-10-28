@@ -26,7 +26,7 @@
 
 | Change | Where | What the app must do |
 | --- | --- | --- |
-| Admin announcements are now sent by a background worker in waves. Their push `data` has `type` (`admin.broadcast.<id>`) and `broadcastId` only, **no `notificationId`** | Appendix A | On tap of an announcement, open the notification feed instead of looking up `notificationId`. Nothing else changes: the feed item is there as before |
+| Admin announcements are now sent by a background worker in waves, so customers may get one a minute or so apart. The push is unchanged: `type` (`admin.broadcast.<id>`), `notificationId` (that customer's feed item) and `broadcastId` | Appendix A | Nothing |
 
 ## What changed for the app (28 October 2026, latest): send crypto by username
 
@@ -3409,7 +3409,7 @@ Push uses **Firebase Cloud Messaging** and is **off until the backend adds Fireb
   "notification": { "title": "Bought 0.00067342 BTC", "body": "Rate: ₦1485.00 per $1" },
   "data": {
     "type": "trade.completed",   // always present
-    "notificationId": "0f3e…",   // the feed item id (not on admin announcements, see below)
+    "notificationId": "0f3e…",   // always present: the feed item id
     "transactionId": "a71c…",    // present when it's about a transaction
     "broadcastId": "b1…"         // only on admin announcements
   },
@@ -3442,7 +3442,7 @@ Push uses **Firebase Cloud Messaging** and is **off until the backend adds Fireb
 
 **Rules**
 - Match `admin.broadcast.` as a **prefix**.
-- **Admin announcements (since 29 Oct 2026)** go to many phones in one message, so their `data` has only `type` and `broadcastId`, **no `notificationId`**. On tap, open the feed; the feed item has the same `broadcastId`. They arrive in waves, so two customers may get the same announcement a minute or so apart.
+- **Admin announcements (since 29 Oct 2026)** are sent in waves, so two customers may get the same announcement a minute or so apart. Like every push they carry `notificationId` (that customer's own feed item) and also `broadcastId`.
 - A `deposit.*` push **without** `transactionId` is a gift-card event.
 - Unknown types: just open the notification feed (new types will be added).
 

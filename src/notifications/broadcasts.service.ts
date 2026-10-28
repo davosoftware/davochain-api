@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
@@ -105,6 +106,8 @@ export class BroadcastsService {
     // Claim the wave and write the inbox messages in one go.
     const now = new Date();
     const type = `admin.broadcast.${id}`;
+    // Made here, not by the database, so each customer's push can carry their own inbox item's id.
+    const inboxId = new Map(users.map((u) => [u.id, randomUUID()]));
     const claimed = await this.prisma.$transaction(async (t) => {
       const { count } = await t.broadcast.updateMany({
         where: { id, status: BroadcastStatus.SENDING, cursor: b.cursor },
@@ -112,25 +115,31 @@ export class BroadcastsService {
       });
       if (count !== 1) return false;
       await t.notification.createMany({
-        data: users.map((u) => ({ userId: u.id, broadcastId: id, type, title: b.title, body: b.body, channel: NotificationChannel.IN_APP, sentAt: now })),
+        data: users.map((u) => ({ id: inboxId.get(u.id)!, userId: u.id, broadcastId: id, type, title: b.title, body: b.body, channel: NotificationChannel.IN_APP, sentAt: now })),
       });
       return true;
     });
     // Another worker took it, or it was paused or cancelled meanwhile: look again.
     if (!claimed) return 'continue';
 
-    // Push: every phone of every customer in the wave. A failure is counted, never re-sent.
+    // Push: every phone of every customer in the wave, each carrying that
+    // customer's own inbox item id. A failure is counted, never re-sent.
     const devices = await this.prisma.deviceToken.findMany({
       where: { userId: { in: users.map((u) => u.id) }, disabledAt: null },
-      select: { token: true },
+      select: { userId: true, token: true },
     });
-    const tokens = devices.map((d) => d.token);
+    const messages = devices.map((d) => ({
+      token: d.token,
+      title: b.title,
+      body: b.body,
+      data: { type, broadcastId: id, notificationId: inboxId.get(d.userId)! },
+    }));
     let push = { sent: 0, failed: 0 };
     try {
-      push = await this.push.sendToTokens(tokens, { title: b.title, body: b.body, data: { type, broadcastId: id } });
+      push = await this.push.sendMessages(messages);
     } catch (err) {
-      push = { sent: 0, failed: tokens.length };
-      this.log.warn(`Broadcast ${id}: push failed for a wave of ${tokens.length} phone(s): ${(err as Error).message}`);
+      push = { sent: 0, failed: messages.length };
+      this.log.warn(`Broadcast ${id}: push failed for a wave of ${messages.length} phone(s): ${(err as Error).message}`);
     }
 
     // Email: confirmed addresses only, queued for the mail worker.

@@ -47,7 +47,7 @@ function build(opts: { broadcast?: B; users?: Array<{ id: string; email: string;
     deviceToken: { findMany: jest.fn(async ({ where }: B) => (opts.tokens ?? []).filter((d) => where.userId.in.includes(d.userId))) },
     $transaction: jest.fn(async (fn: (tx: unknown) => unknown) => fn(t)),
   };
-  const push = { sendToTokens: jest.fn(async (tokens: string[]) => ({ sent: tokens.length, failed: 0 })) };
+  const push = { sendMessages: jest.fn(async (messages: unknown[]) => ({ sent: messages.length, failed: 0 })) };
   const mail = { send: jest.fn(async () => undefined) };
   const queue = { add: jest.fn(async () => undefined) };
   const settings = { get: jest.fn((key: string) => (key === 'BROADCAST_EMAILS_PER_SECOND' ? opts.emailsPerSecond ?? 10 : opts.perSecond ?? 100)) };
@@ -62,7 +62,7 @@ describe('queue: Send only saves the message and hands it to the worker', () => 
     expect(r).toMatchObject({ id: 'b1', status: 'QUEUED', recipientCount: 3, withEmail: true });
     expect(h.prisma.broadcast.create.mock.calls[0][0].data).toMatchObject({ title: 'Hello', body: 'News', audience: 'ALL', status: 'QUEUED', withEmail: true, recipientCount: 3 });
     expect(h.queue.add).toHaveBeenCalledWith('run-broadcast', { broadcastId: 'b1' }, expect.objectContaining({ jobId: expect.stringContaining('b1') }));
-    expect(h.push.sendToTokens).not.toHaveBeenCalled();
+    expect(h.push.sendMessages).not.toHaveBeenCalled();
     expect(h.prisma.notification.createMany).not.toHaveBeenCalled();
   });
 
@@ -78,7 +78,15 @@ describe('runWave: one wave of customers', () => {
     const h = build({ tokens: [{ userId: 'u1', token: 't1' }, { userId: 'u1', token: 't1b' }, { userId: 'u3', token: 't3' }] });
     await expect(h.svc.runWave('b1')).resolves.toBe('continue');
     expect(h.inbox.map((n) => [n.userId, n.channel, n.broadcastId])).toEqual([['u1', 'IN_APP', 'b1'], ['u2', 'IN_APP', 'b1'], ['u3', 'IN_APP', 'b1']]);
-    expect(h.push.sendToTokens).toHaveBeenCalledWith(['t1', 't1b', 't3'], expect.objectContaining({ title: 'Hello', body: 'News', data: { type: 'admin.broadcast.b1', broadcastId: 'b1' } }));
+    // Each phone carries its own customer's inbox message id; both of Ada's phones the same one.
+    const sent = h.push.sendMessages.mock.calls[0][0] as Array<{ token: string; title: string; body: string; data: Record<string, string> }>;
+    const idOf = (userId: string) => h.inbox.find((n) => n.userId === userId)!.id;
+    expect(sent).toEqual([
+      { token: 't1', title: 'Hello', body: 'News', data: { type: 'admin.broadcast.b1', broadcastId: 'b1', notificationId: idOf('u1') } },
+      { token: 't1b', title: 'Hello', body: 'News', data: { type: 'admin.broadcast.b1', broadcastId: 'b1', notificationId: idOf('u1') } },
+      { token: 't3', title: 'Hello', body: 'News', data: { type: 'admin.broadcast.b1', broadcastId: 'b1', notificationId: idOf('u3') } },
+    ]);
+    expect(new Set(h.inbox.map((n) => n.id)).size).toBe(3);
     expect(h.b).toMatchObject({ cursor: 'u3', processedCount: 3, pushSentCount: 3, pushFailedCount: 0 });
   });
 
@@ -117,7 +125,7 @@ describe('runWave: one wave of customers', () => {
       const h = build({ broadcast: { status } });
       await expect(h.svc.runWave('b1')).resolves.toBe('stop');
       expect(h.inbox).toEqual([]);
-      expect(h.push.sendToTokens).not.toHaveBeenCalled();
+      expect(h.push.sendMessages).not.toHaveBeenCalled();
     }
   });
 
@@ -128,12 +136,12 @@ describe('runWave: one wave of customers', () => {
     h.b.cursor = 'u1';
     await h.svc.runWave('b1');
     expect(h.inbox).toEqual([]);
-    expect(h.push.sendToTokens).not.toHaveBeenCalled();
+    expect(h.push.sendMessages).not.toHaveBeenCalled();
   });
 
   it('a push failure is counted, never retried into duplicates', async () => {
     const h = build({ tokens: [{ userId: 'u1', token: 't1' }] });
-    h.push.sendToTokens.mockRejectedValueOnce(new Error('FCM down'));
+    h.push.sendMessages.mockRejectedValueOnce(new Error('FCM down'));
     await expect(h.svc.runWave('b1')).resolves.toBe('continue');
     expect(h.b).toMatchObject({ processedCount: 3, pushFailedCount: 1 });
   });
