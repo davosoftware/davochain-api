@@ -98,6 +98,9 @@ export class UsersAdminService {
               { firstName: { contains: search, mode: 'insensitive' } },
               { lastName: { contains: search, mode: 'insensitive' } },
               { phone: { contains: search } },
+              // A closed account released its email and phone; it is still found by the originals.
+              { closedEmail: { contains: search, mode: 'insensitive' } },
+              { closedPhone: { contains: search } },
             ],
           }
         : {}),
@@ -132,6 +135,7 @@ export class UsersAdminService {
           kycStatus: true,
           isTest: true,
           suspendedReason: true,
+          closedEmail: true,
           createdAt: true,
           lastLoginAt: true,
           quidaxAccount: { select: { id: true } },
@@ -157,6 +161,8 @@ export class UsersAdminService {
         isTest: u.isTest,
         walletReady: Boolean(u.quidaxAccount),
         suspendedReason: u.suspendedReason,
+        /** A closed account's original email (its `email` is a placeholder). */
+        closedEmail: u.closedEmail ?? null,
         createdAt: u.createdAt,
         lastLoginAt: u.lastLoginAt,
       })),
@@ -233,6 +239,11 @@ export class UsersAdminService {
       suspendedAt: user.suspendedAt,
       suspendedReason: user.suspendedReason,
       suspendedBy: user.suspendedBy,
+      // Set when an owner closed the account (28 Oct 2026); email and phone above are then placeholders.
+      closedAt: user.closedAt ?? null,
+      closedReason: user.closedReason ?? null,
+      closedEmail: user.closedEmail ?? null,
+      closedPhone: user.closedPhone ?? null,
       transactionCount: txCount,
       quidax: user.quidaxAccount,
       kyc: user.kycProfile

@@ -67,6 +67,35 @@ describe('H8: one BVN/NIN verifies one account', () => {
   });
 });
 
+describe('H8 and closed accounts (28 Oct 2026)', () => {
+  it('a person whose old account was closed can verify their new account with the same BVN', async () => {
+    const { svc, db } = await setup();
+    await svc.submit('u1', input());
+    await db.user.update({ where: { id: 'u1' }, data: { status: 'CLOSED' } });
+    await expect(svc.submit('u2', input())).resolves.toMatchObject({ state: 'APPROVED' });
+  });
+
+  it('the check at approval ignores a closed account too', async () => {
+    const { svc, db } = await setup();
+    const hash = new KycHashService({ get: () => KEY } as never).hash('22222222222');
+    await db.kycProfile.create({ data: { userId: 'u1', bvnHash: hash, status: 'APPROVED', tier: 'TIER_1' } });
+    await db.user.update({ where: { id: 'u1' }, data: { status: 'CLOSED' } });
+    await db.user.update({ where: { id: 'u2' }, data: { amlStatus: 'CLEAR' } });
+    const v = await db.kycVerification.create({
+      data: { userId: 'u2', activeFor: 'u2', lagosDay: '2026-10-15', idType: 'BVN', idHash: hash, idLast4: '2222', state: 'LOOKED_UP' },
+    });
+    await db.$transaction((tx: never) => svc.approve(tx, v.id as string));
+    expect(db.rows('kycVerification').find((r) => r.id === v.id)).toMatchObject({ state: 'APPROVED' });
+  });
+
+  it('a suspended account still holds its BVN', async () => {
+    const { svc, db } = await setup();
+    await svc.submit('u1', input());
+    await db.user.update({ where: { id: 'u1' }, data: { status: 'SUSPENDED' } });
+    await expect(svc.submit('u2', input())).rejects.toMatchObject({ status: 409, message: MSG_ID_IN_USE });
+  });
+});
+
 describe('H8: two accounts verifying the same BVN at the same moment', () => {
   it('the one that reaches approval second goes to identity review, not approved', async () => {
     const { svc, db } = await setup();

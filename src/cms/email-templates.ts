@@ -111,6 +111,26 @@ If you think this is a mistake, reply to this email or write to
 ${SIGN_OFF}`),
   },
   {
+    key: 'user.closed',
+    label: 'Account closed',
+    hint: 'Sent to the customer when an owner closes their account. Sent to their real address, before it is released.',
+    group: 'Account',
+    variables: [],
+    sentBy: 'AccountClosureService.close',
+    subject: 'Your {{companyName}} account has been closed',
+    frame: { panel: { kind: 'problem', label: 'Account update', value: 'Your account is closed' }, button: NO_BUTTON },
+    body: html(`Hi {{firstName}},
+
+Your {{companyName}} account has been closed, so you can no longer sign in to it.
+Your account held no money when it was closed.
+
+You are welcome to create a new account with the same email address and phone
+number at any time. You will need to verify your identity again.
+
+If you did not ask for this, reply to this email or write to {{supportEmail}}.
+${SIGN_OFF}`),
+  },
+  {
     key: 'user.reinstated',
     label: 'Account reinstated',
     hint: 'Sent when an admin lifts a suspension.',

@@ -290,6 +290,16 @@ model User {
   suspendedReason String?
   suspendedBy     String?
 
+  /// Set together with status = CLOSED (an owner closed the account, 28 Oct 2026).
+  /// The email and phone are released so the person can sign up again; the
+  /// originals are kept here, with every money and identity record, for the
+  /// legal record-keeping period.
+  closedAt     DateTime?
+  closedReason String?
+  closedBy     String?
+  closedEmail  String?
+  closedPhone  String?
+
   emailVerifiedAt      DateTime?
   lastLoginAt          DateTime?
   failedLogins         Int                  @default(0)

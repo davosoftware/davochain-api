@@ -246,8 +246,8 @@ export class BasicVerificationService implements OnModuleInit {
         const idHash = this.hasher.hash(input.idNumber);
         const onProfile = input.idType === 'BVN' ? { bvnHash: idHash } : { ninHash: idHash };
         const [verifiedElsewhere, verifyingElsewhere] = await Promise.all([
-          tx.kycProfile.findFirst({ where: { userId: { not: userId }, ...onProfile }, select: { userId: true } }),
-          tx.kycVerification.findFirst({ where: { userId: { not: userId }, idHash, activeFor: { not: null } }, select: { id: true } }),
+          heldByOpenAccount(tx, userId, await tx.kycProfile.findMany({ where: { userId: { not: userId }, ...onProfile }, select: { userId: true } })),
+          heldByOpenAccount(tx, userId, await tx.kycVerification.findMany({ where: { userId: { not: userId }, idHash, activeFor: { not: null } }, select: { userId: true } })),
         ]);
         if (verifiedElsewhere || verifyingElsewhere) throw new ConflictException(MSG_ID_IN_USE);
 
@@ -322,7 +322,7 @@ export class BasicVerificationService implements OnModuleInit {
     // number at the same moment. The lookup is already paid for, so this rare
     // case waits for a person rather than being thrown away.
     const onProfile = v.idType === 'BVN' ? { bvnHash: v.idHash } : { ninHash: v.idHash };
-    const elsewhere = await tx.kycProfile.findFirst({ where: { userId: { not: v.userId }, ...onProfile }, select: { userId: true } });
+    const elsewhere = await heldByOpenAccount(tx, v.userId, await tx.kycProfile.findMany({ where: { userId: { not: v.userId }, ...onProfile }, select: { userId: true } }));
     if (elsewhere) {
       await tx.kycVerification.updateMany({
         where: { id: v.id, state: { in: ['LOOKED_UP', 'COMPLIANCE_REVIEW'] } },
@@ -407,4 +407,19 @@ export class BasicVerificationService implements OnModuleInit {
       variables: { firstName: user.firstName, lastName: user.lastName, email: user.email, tier: 'BASIC', reason: reason ?? '' },
     });
   }
+}
+
+/**
+ * H8 counts only accounts that are still open: a closed account (an owner
+ * closed it, 28 Oct 2026) releases its BVN/NIN, so the same person can verify
+ * a new account. A suspended account still holds it.
+ */
+async function heldByOpenAccount(
+  tx: { user: { count: (a: { where: Record<string, unknown> }) => Promise<number> } },
+  self: string,
+  rows: Array<{ userId: string }>,
+): Promise<boolean> {
+  const others = [...new Set(rows.map((r) => r.userId))].filter((id) => id !== self);
+  if (others.length === 0) return false;
+  return (await tx.user.count({ where: { id: { in: others }, status: { not: 'CLOSED' } } })) > 0;
 }

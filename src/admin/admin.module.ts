@@ -43,6 +43,8 @@ import { DepositAddressesAdminController } from './deposit-addresses-admin.contr
 import { DailyLimitsAdminController } from './daily-limits-admin.controller';
 import { DepositAddressesAdminService } from './deposit-addresses-admin.service';
 
+import { AccountClosureController } from './account-closure.controller';
+import { AccountClosureService } from './account-closure.service';
 @Module({
   imports: [
     JwtModule.register({}),
@@ -67,8 +69,8 @@ import { DepositAddressesAdminService } from './deposit-addresses-admin.service'
     // People → Crypto addresses (spec 2026-10-26).
     AddressesModule,
   ],
-  controllers: [AdminController, AdminAuthController, AlertRecipientsController, KycBasicReviewController, KycAdvancedReviewController, ComplianceController, DojahAdminController, TreasuryAdminController, KycDocumentsAdminController, ServerSettingsController, DepositAddressesAdminController, DailyLimitsAdminController],
-  providers: [AdminService, UsersAdminService, AdminsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService, AdminSessionsService, AdminOtpService, NgnWithdrawalsService, AdminGuard, LevelAdminService, DojahSettingsService, TwoStepService, DepositAddressesAdminService],
+  controllers: [AdminController, AdminAuthController, AlertRecipientsController, KycBasicReviewController, KycAdvancedReviewController, ComplianceController, DojahAdminController, TreasuryAdminController, KycDocumentsAdminController, ServerSettingsController, DepositAddressesAdminController, DailyLimitsAdminController, AccountClosureController],
+  providers: [AdminService, UsersAdminService, AdminsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService, AdminSessionsService, AdminOtpService, NgnWithdrawalsService, AdminGuard, LevelAdminService, DojahSettingsService, TwoStepService, DepositAddressesAdminService, AccountClosureService],
   exports: [AdminService, UsersAdminService, AdminsService, AdminSessionsService, OverviewService, EarningsService, AdminTransactionsService, SiteSettingsService],
 })
 export class AdminModule {}
