@@ -1,13 +1,10 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { InjectQueue } from '@nestjs/bullmq';
-import { Queue } from 'bullmq';
-import { BroadcastAudience, NotificationChannel, Prisma, UserStatus, VirtualAccountStatus } from '@prisma/client';
+import { Prisma, UserStatus, VirtualAccountStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { bankView, cryptoView } from '../withdrawals/saved-destinations.service';
 import { TemplatedMailService } from '../cms/templated-mail.service';
 import { VirtualAccountsService } from '../ngn-deposits/virtual-accounts.service';
 import { dec, str, ZERO } from '../common/money';
-import { JOBS, QUEUES, jobId } from '../common/queues';
 
 export interface UserListRow {
   /** 1 is the most recent sign-up. Continues across pages. */
@@ -35,7 +32,6 @@ export class UsersAdminService {
 
   constructor(
     private readonly prisma: PrismaService,
-    @InjectQueue(QUEUES.NOTIFICATIONS) private readonly queue: Queue,
     private readonly mail: TemplatedMailService,
     private readonly virtualAccounts: VirtualAccountsService,
   ) {}
@@ -392,162 +388,6 @@ export class UsersAdminService {
   }
 
   // ── broadcasts ──────────────────────────────────────────────
-
-  /**
-   * Send an in-app message to everyone, or to a chosen set.
-   *
-   * Written straight into the notifications table, so it lands in the same feed
-   * as a deposit or trade alert and needs no separate delivery path. A push
-   * provider, when one exists, reads from the same rows.
-   */
-  async broadcast(params: {
-    adminId: string;
-    title: string;
-    body: string;
-    userIds?: string[];
-  }) {
-    const title = params.title?.trim();
-    const body = params.body?.trim();
-    if (!title) throw new BadRequestException('A title is required');
-    if (!body) throw new BadRequestException('A message is required');
-
-    const selected = params.userIds?.filter(Boolean) ?? [];
-    const audience = selected.length > 0 ? BroadcastAudience.SELECTED : BroadcastAudience.ALL;
-
-    const recipients = await this.prisma.user.findMany({
-      where:
-        audience === BroadcastAudience.SELECTED
-          ? { id: { in: selected } }
-          : // Never message suspended or closed accounts — they cannot act on it.
-            { status: UserStatus.ACTIVE },
-      select: { id: true },
-    });
-
-    if (recipients.length === 0) {
-      throw new BadRequestException('No matching recipients');
-    }
-
-    const broadcast = await this.prisma.broadcast.create({
-      data: {
-        title,
-        body,
-        audience,
-        recipientCount: recipients.length,
-        sentBy: params.adminId,
-      },
-    });
-
-    // One row per recipient per channel. createMany in chunks so a large send
-    // does not build one enormous statement.
-    const CHUNK = 500;
-    for (let i = 0; i < recipients.length; i += CHUNK) {
-      const slice = recipients.slice(i, i + CHUNK);
-      await this.prisma.notification.createMany({
-        data: slice.flatMap((r) => [
-          {
-            userId: r.id,
-            broadcastId: broadcast.id,
-            type: `admin.broadcast.${broadcast.id}`,
-            title,
-            body,
-            channel: NotificationChannel.IN_APP,
-          },
-          {
-            userId: r.id,
-            broadcastId: broadcast.id,
-            type: `admin.broadcast.${broadcast.id}`,
-            title,
-            body,
-            channel: NotificationChannel.PUSH,
-          },
-        ]),
-        skipDuplicates: true,
-      });
-    }
-
-    // createMany cannot return ids, so read the PUSH rows back and queue them.
-    // Without this a broadcast reaches the in-app feed and nothing else — the
-    // rows sit unsent forever and no device ever hears about it.
-    const pushRows = await this.prisma.notification.findMany({
-      where: { broadcastId: broadcast.id, channel: NotificationChannel.PUSH, sentAt: null },
-      select: { id: true },
-    });
-
-    if (pushRows.length > 0) {
-      // addBulk in one call: a broadcast to 10,000 users is 10,000 jobs, and
-      // adding them one at a time would hold the request open for minutes.
-      await this.queue
-        .addBulk(
-          pushRows.map((r) => ({
-            name: JOBS.SEND_NOTIFICATION,
-            data: { notificationId: r.id },
-            opts: { jobId: jobId('push', r.id) },
-          })),
-        )
-        .catch((err: Error) =>
-          // The rows are already written, so the feed is correct either way.
-          this.log.error(`Broadcast ${broadcast.id}: could not queue push — ${err.message}`),
-        );
-    }
-
-    this.log.log(
-      `Broadcast "${title}" sent to ${recipients.length} user(s) by ${params.adminId}`,
-    );
-
-    return {
-      id: broadcast.id,
-      title,
-      audience,
-      recipientCount: recipients.length,
-      createdAt: broadcast.createdAt,
-    };
-  }
-
-  async broadcastHistory(limit = 100) {
-    const rows = await this.prisma.broadcast.findMany({
-      orderBy: { createdAt: 'desc' },
-      take: Math.min(limit, 200),
-    });
-    if (rows.length === 0) return [];
-
-    // Two grouped queries rather than one per row. Counting opens inside the
-    // map was a round trip per broadcast, so the history page got slower every
-    // time somebody sent something.
-    const [opens, senders] = await Promise.all([
-      this.prisma.notification.groupBy({
-        by: ['broadcastId'],
-        where: {
-          broadcastId: { in: rows.map((b) => b.id) },
-          channel: NotificationChannel.IN_APP,
-          readAt: { not: null },
-        },
-        _count: { _all: true },
-      }),
-      this.prisma.adminUser.findMany({
-        where: { id: { in: [...new Set(rows.map((b) => b.sentBy))] } },
-        select: { id: true, name: true },
-      }),
-    ]);
-
-    // How many have actually been opened — the only real measure of a send.
-    const readBy = new Map(opens.map((o) => [o.broadcastId, o._count._all]));
-    const nameOf = new Map(senders.map((a) => [a.id, a.name]));
-
-    return rows.map((b) => ({
-      id: b.id,
-      title: b.title,
-      body: b.body,
-      audience: b.audience,
-      recipientCount: b.recipientCount,
-      readCount: readBy.get(b.id) ?? 0,
-      sentBy: b.sentBy,
-      /** The id means nothing on a screen. Admins are never deleted, only
-       *  deactivated, so the row still exists and the fallback is unreachable
-       *  short of someone editing the table by hand. */
-      sentByName: nameOf.get(b.sentBy) ?? 'Unknown',
-      createdAt: b.createdAt,
-    }));
-  }
 
   /** Headline counts for the users screen. */
   async stats() {

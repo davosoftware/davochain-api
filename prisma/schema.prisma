@@ -1506,14 +1506,43 @@ enum BroadcastAudience {
  * send can be audited and counted after the fact, rather than only existing as
  * N scattered notification rows.
  */
+/// Where a broadcast is (29 Oct 2026: sent by a background worker, in waves).
+enum BroadcastStatus {
+  QUEUED // saved; the worker has not started
+  SENDING
+  PAUSED // an admin paused it; Resume carries on from where it stopped
+  CANCELLED // an admin stopped it; whoever already got it keeps it
+  DONE
+}
+
 model Broadcast {
   id             String            @id @default(uuid())
   title          String
   body           String
   audience       BroadcastAudience
+  /// How many customers it is for, counted when it was queued.
   recipientCount Int               @default(0)
   sentBy         String
   createdAt      DateTime          @default(now())
+
+  status          BroadcastStatus @default(QUEUED)
+  /// The admin ticked "Also send by email". Only confirmed addresses get it.
+  withEmail       Boolean         @default(false)
+  /// For audience SELECTED: who it is for.
+  userIds         String[]        @default([])
+  /// The last customer id handled. Waves go in id order; this is where the next starts.
+  cursor          String?
+  /// Customers handled so far (inbox message written).
+  processedCount  Int             @default(0)
+  /// Phones Firebase accepted / refused. One customer can have several phones.
+  pushSentCount   Int             @default(0)
+  pushFailedCount Int             @default(0)
+  /// Emails handed to the mail queue.
+  emailQueuedCount Int            @default(0)
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  /// The admin who last paused, resumed or cancelled it.
+  controlledBy    String?
 
   notifications Notification[]
 

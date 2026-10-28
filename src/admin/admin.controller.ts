@@ -7,6 +7,7 @@ import {
   Delete,
   Get,
   HttpCode,
+  ParseUUIDPipe,
   NotFoundException,
   Param,
   Patch,
@@ -58,6 +59,7 @@ import { CredentialsService } from '../common/credentials.service';
 import { LevelAdminService } from '../levels/level-admin.service';
 import { SavedDestinationsService } from '../withdrawals/saved-destinations.service';
 import { PayUsernamesService } from '../transfers/pay-usernames.service';
+import { BroadcastsService } from '../notifications/broadcasts.service';
 import { BalanceCorrectionsService } from '../reconciliation/balance-corrections.service';
 import { FeeBandsService } from '../rates/fee-bands.service';
 import { PriceReferenceService } from '../rates/price-reference.service';
@@ -177,6 +179,7 @@ export class AdminController {
     private readonly levelAdmin: LevelAdminService,
     private readonly savedDestinations: SavedDestinationsService,
     private readonly payUsernames: PayUsernamesService,
+    private readonly broadcastsService: BroadcastsService,
     private readonly corrections: BalanceCorrectionsService,
     private readonly priceReference: PriceReferenceService,
     private readonly bands: FeeBandsService,
@@ -1242,21 +1245,48 @@ export class AdminController {
   @Get('broadcasts')
   @RequirePermissions('notifications.send')
   broadcasts() {
-    return this.users.broadcastHistory();
+    return this.broadcastsService.history();
   }
 
-  /** Omit userIds to reach every active user. */
+  /**
+   * Saves the message and hands it to the background worker, which sends it
+   * in waves (29 Oct 2026). Answers at once with status QUEUED. Omit userIds
+   * to reach every active customer.
+   */
   @Post('broadcasts')
   @RequirePermissions('notifications.send')
   async broadcast(@CurrentAdmin('sub') adminId: string, @Body() dto: BroadcastDto) {
-    const result = await this.users.broadcast({
-      adminId,
-      title: dto.title,
-      body: dto.body,
-      userIds: dto.userIds,
-    });
+    const result = await this.broadcastsService.queue({ adminId, title: dto.title, body: dto.body, userIds: dto.userIds, withEmail: dto.withEmail });
     await this.admin.audit(adminId, 'broadcast.send', 'Broadcast', result.id, null, result);
     return result;
+  }
+
+  @Post('broadcasts/:id/pause')
+  @HttpCode(200)
+  @RequirePermissions('notifications.send')
+  async pauseBroadcast(@CurrentAdmin('sub') adminId: string, @Param('id', ParseUUIDPipe) id: string) {
+    const r = await this.broadcastsService.pause(id, adminId);
+    await this.admin.audit(adminId, 'broadcast.pause', 'Broadcast', id, null, r);
+    return r;
+  }
+
+  @Post('broadcasts/:id/resume')
+  @HttpCode(200)
+  @RequirePermissions('notifications.send')
+  async resumeBroadcast(@CurrentAdmin('sub') adminId: string, @Param('id', ParseUUIDPipe) id: string) {
+    const r = await this.broadcastsService.resume(id, adminId);
+    await this.admin.audit(adminId, 'broadcast.resume', 'Broadcast', id, null, r);
+    return r;
+  }
+
+  /** Stops the rest. Whoever already got it keeps it. */
+  @Post('broadcasts/:id/cancel')
+  @HttpCode(200)
+  @RequirePermissions('notifications.send')
+  async cancelBroadcast(@CurrentAdmin('sub') adminId: string, @Param('id', ParseUUIDPipe) id: string) {
+    const r = await this.broadcastsService.cancel(id, adminId);
+    await this.admin.audit(adminId, 'broadcast.cancel', 'Broadcast', id, null, r);
+    return r;
   }
 
   // ── kyc review ────────────────────────────────────────────

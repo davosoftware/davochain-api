@@ -59,7 +59,7 @@ describe('Admins see and remove a customer\'s saved destinations', () => {
       savedCryptoAddress: { findMany: jest.fn(async () => [{ id: 'c1', assetCode: 'btc', networkId: 'btc', address: 'bc1q', destinationTag: null, nickname: null, usableFrom: NOW }]) },
       assetNetwork: { findMany: jest.fn(async () => [{ assetCode: 'btc', networkId: 'btc', label: 'Bitcoin' }]) },
     };
-    const svc = new UsersAdminService(prisma as never, {} as never, {} as never, {} as never);
+    const svc = new UsersAdminService(prisma as never, {} as never, {} as never);
     const d = await svc.detail('u1');
     expect(d.savedDestinations.bankAccounts[0]).toMatchObject({ id: 'b1', accountNumberMasked: '******1234' });
     expect(d.savedDestinations.bankAccounts[0]).not.toHaveProperty('accountNumber');

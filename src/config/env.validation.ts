@@ -210,6 +210,9 @@ export const envSchema = z
     EMAIL_VERIFICATION_REQUIRED: bool(true),
     // How long a closed customer's personal data is kept when the owner chooses "delete later" (28 Oct 2026).
     CLOSED_ACCOUNT_DATA_RETENTION_MONTHS: int(6),
+    /** Admin broadcasts (29 Oct 2026): customers per second, and per second when email is ticked. */
+    BROADCAST_PER_SECOND: int(100),
+    BROADCAST_EMAILS_PER_SECOND: int(10),
     /** HMAC key for BVN/NIN hashes. Rotating it means users re-enter their number. */
     KYC_HASH_KEY: z.string().optional(),
     // ── Dojah (identity lookups and AML screening) ──

@@ -16,7 +16,7 @@ function build(kycProfile: Record<string, unknown> | null) {
     savedCryptoAddress: { findMany: jest.fn(async () => []) },
     assetNetwork: { findMany: jest.fn(async () => []) },
   };
-  const svc = new UsersAdminService(prisma as never, {} as never, {} as never, {} as never);
+  const svc = new UsersAdminService(prisma as never, {} as never, {} as never);
   return { svc, findUnique };
 }
 
@@ -59,7 +59,7 @@ describe('UsersAdminService: closed accounts (28 Oct 2026)', () => {
   it('searching by the original email or phone still finds a closed account', async () => {
     const findMany = jest.fn(async () => []);
     const prisma = { user: { findMany, count: jest.fn(async () => 0), groupBy: jest.fn(async () => []) }, balance: { groupBy: jest.fn(async () => []) } };
-    const svc = new UsersAdminService(prisma as never, {} as never, {} as never, {} as never);
+    const svc = new UsersAdminService(prisma as never, {} as never, {} as never);
     await svc.list({ search: 'ada@example.com' } as never).catch(() => undefined);
     const where = JSON.stringify((findMany.mock.calls[0] as unknown as [{ where: unknown }] | undefined)?.[0]?.where ?? {});
     expect(where).toContain('closedEmail');

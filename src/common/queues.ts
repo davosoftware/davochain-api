@@ -22,6 +22,8 @@ export const QUEUES = {
   NAIRA_DEPOSITS: 'naira-deposits',
   /** Advanced KYC: the paid Dojah checks for one attempt, off the request. */
   KYC_ADVANCED: 'kyc-advanced',
+  /** Admin broadcasts, sent in paced waves (29 Oct 2026): one job runs a whole broadcast. */
+  BROADCASTS: 'broadcasts',
 } as const;
 
 export type QueueName = (typeof QUEUES)[keyof typeof QUEUES];
@@ -36,6 +38,7 @@ export const JOBS = {
   SYNC_NETWORKS: 'sync-networks',
   PROCESS_NAIRA_PAYIN: 'process-naira-payin',
   RUN_ADVANCED: 'run-advanced',
+  RUN_BROADCAST: 'run-broadcast',
 } as const;
 
 /** Retry with backoff. Anything touching money keeps trying rather than dropping. */

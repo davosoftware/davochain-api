@@ -198,6 +198,9 @@ export class BroadcastDto {
 
   /** Omit or leave empty to reach every active user. */
   @IsOptional() @IsArray() @IsString({ each: true }) userIds?: string[];
+
+  /** Also email it, to confirmed addresses only (29 Oct 2026). Sent at the slower email speed. */
+  @IsOptional() @IsBoolean() withEmail?: boolean;
 }
 
 /**

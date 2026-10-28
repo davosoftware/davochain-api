@@ -30,6 +30,15 @@ interface FirebaseMessaging {
   }>;
 }
 
+/** The most phones Firebase takes in one sendEachForMulticast call. */
+const MULTICAST_MAX = 500;
+
+/** Firebase says this phone will never take a message again (app removed, token replaced). */
+function isDeadToken(res: { success: boolean; error?: { code: string } } | undefined): boolean {
+  const code = res?.error?.code ?? '';
+  return !!res && !res.success && (code.includes('registration-token-not-registered') || code.includes('invalid-argument'));
+}
+
 @Injectable()
 export class PushService implements OnModuleInit {
   private readonly log = new Logger(PushService.name);
@@ -134,6 +143,37 @@ export class PushService implements OnModuleInit {
    * an error, and treating them as one would fill the log with noise on a
    * perfectly healthy install.
    */
+  /**
+   * One message to many phones: a broadcast wave (29 Oct 2026). Firebase takes
+   * at most 500 phones a call. Phones Firebase says are gone are switched off,
+   * as in deliver(). Push switched off: nothing sent, nothing failed.
+   */
+  async sendToTokens(
+    tokens: string[],
+    message: { title: string; body: string; data?: Record<string, string> },
+  ): Promise<{ sent: number; failed: number }> {
+    if (!tokens.length || !this.messaging) return { sent: 0, failed: 0 };
+    let sent = 0;
+    let failed = 0;
+    for (let i = 0; i < tokens.length; i += MULTICAST_MAX) {
+      const group = tokens.slice(i, i + MULTICAST_MAX);
+      const result = await this.messaging.sendEachForMulticast({
+        tokens: group,
+        notification: { title: message.title, body: message.body },
+        data: message.data,
+        android: { priority: 'high', notification: { channelId: 'davochain' } },
+        apns: { payload: { aps: { sound: 'default' } } },
+      });
+      sent += result.successCount;
+      failed += result.failureCount;
+      const dead = group.filter((_, j) => isDeadToken(result.responses[j]));
+      if (dead.length) {
+        await this.prisma.deviceToken.updateMany({ where: { token: { in: dead } }, data: { disabledAt: new Date() } });
+      }
+    }
+    return { sent, failed };
+  }
+
   async deliver(notificationId: string): Promise<{ sent: number; pruned: number }> {
     const notification = await this.prisma.notification.findUnique({
       where: { id: notificationId },

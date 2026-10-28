@@ -11,7 +11,7 @@ function setup(status: 'ACTIVE' | 'SUSPENDED') {
   };
   const mail = { send: jest.fn(async () => undefined) };
   const virtualAccounts = { setDesiredForUser: jest.fn(async () => undefined) };
-  const svc = new UsersAdminService(prisma as never, {} as never, mail as never, virtualAccounts as never);
+  const svc = new UsersAdminService(prisma as never, mail as never, virtualAccounts as never);
   jest.spyOn(svc, 'detail').mockResolvedValue({ id: 'u1' } as never);
   return { svc, virtualAccounts };
 }

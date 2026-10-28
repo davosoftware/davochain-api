@@ -89,6 +89,10 @@ export const SERVER_SETTINGS: SettingDef[] = [
   s({ key: 'R2_ACCOUNT_ID', group: 'File storage', label: 'Cloudflare account ID', help: 'From Cloudflare → R2. Used with the R2 keys on the API keys screen.', kind: { type: 'string', maxLength: 64, pattern: /^[a-f0-9]{32}$/i, patternMessage: 'A Cloudflare account ID is 32 letters and numbers.' }, live: true, money: false }),
   s({ key: 'R2_BUCKET', group: 'File storage', label: 'Bucket name', help: "Only the bucket's name (3–63 lowercase letters, numbers and hyphens), not its address.", kind: { type: 'string', maxLength: 63, pattern: /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/, patternMessage: "Enter only the bucket's name, as shown in Cloudflare → R2." }, live: true, money: false }),
 
+  // ── Broadcasts (29 Oct 2026) ─────────────────────────────
+  s({ key: 'BROADCAST_PER_SECOND', group: 'Broadcasts', label: 'Customers per second', help: 'A message to all customers is sent by a background worker this many customers each second: their inbox message and a push to their phones. 100 sends 10,000 customers in under 2 minutes. Higher is faster but puts more load on the database at once.', kind: { type: 'int', min: 1, max: 1000, unit: 'per second' }, live: true, money: false }),
+  s({ key: 'BROADCAST_EMAILS_PER_SECOND', group: 'Broadcasts', label: 'Customers per second, with email', help: 'Used instead when "Also send by email" is ticked. Mail servers limit how fast you may send; going over can get our mail marked as spam. 10 sends 10,000 customers in about 17 minutes. Ask your mail provider for its limit.', kind: { type: 'int', min: 1, max: 200, unit: 'per second' }, live: true, money: false }),
+
   // ── Push (the private key lives on the API keys screen) ──
   s({ key: 'FCM_PROJECT_ID', group: 'Push notifications', label: 'Firebase project ID', help: 'From the Firebase console. Applies after the API restarts.', kind: { type: 'string', maxLength: 100, pattern: /^[a-z0-9-]+$/, patternMessage: 'A Firebase project ID uses lowercase letters, numbers and hyphens.' }, live: false, money: false }),
   s({ key: 'FCM_CLIENT_EMAIL', group: 'Push notifications', label: 'Firebase service account email', help: 'Applies after the API restarts.', kind: { type: 'string', maxLength: 200, pattern: /^[^@\s]+@[^@\s]+\.[^@\s]+$/, patternMessage: 'Enter the service account email.' }, live: false, money: false }),
@@ -99,6 +103,7 @@ export type ServerSettingKey =
   | 'NGN_DEPOSITS_ENABLED' | 'NGN_ACCOUNT_AUTO_OPEN' | 'PAYREP_MAIN_ACCOUNT' | 'PAYREP_ACCOUNT_NAME_PREFIX'
   | 'EMAIL_VERIFICATION_REQUIRED'
   | 'CLOSED_ACCOUNT_DATA_RETENTION_MONTHS'
+  | 'BROADCAST_PER_SECOND' | 'BROADCAST_EMAILS_PER_SECOND'
   | 'SMTP_HOST' | 'SMTP_PORT' | 'SMTP_SECURE' | 'SMTP_USER' | 'SMTP_FROM'
   | 'MARGIN_DEVIATION_TRIP_BPS' | 'QUOTE_TTL_SECONDS' | 'QUOTE_HARD_EXPIRY_SECONDS' | 'SWAP_REQUOTE_TOLERANCE_BPS' | 'RATE_CACHE_TTL_SECONDS'
   | 'FEE_CLAIM_DESTINATION' | 'FEE_CLAIM_MIN_USD'

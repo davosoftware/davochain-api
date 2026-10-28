@@ -111,6 +111,21 @@ If you think this is a mistake, reply to this email or write to
 ${SIGN_OFF}`),
   },
   {
+    key: 'admin.broadcast',
+    label: 'Message to customers',
+    hint: 'Sent when an admin sends a message from System → Notifications with "Also send by email" ticked. Only to confirmed email addresses.',
+    group: 'Account',
+    variables: ['title', 'message'],
+    sentBy: 'BroadcastsService.runWave',
+    subject: '{{title}}',
+    frame: { panel: { kind: 'done', label: 'Message from {{companyName}}', value: '{{title}}' }, status: false, button: NO_BUTTON },
+    body: html(`Hi {{firstName}},
+
+{{message}}
+
+The {{companyName}} team`),
+  },
+  {
     key: 'user.closed',
     label: 'Account closed',
     hint: 'Sent to the customer when an owner closes their account. Sent to their real address, before it is released.',
@@ -722,6 +737,8 @@ ${SIGN_OFF}`),
  */
 export const SAMPLE_VALUES: Record<string, string> = {
   firstName: 'Ada',
+  title: 'New coins on DavoChain',
+  message: 'You can now buy and sell Solana and TON in the app.<br>Update the app to see them.',
   lastName: 'Okafor',
   email: 'ada@example.com',
   amount: '0.05000000',
