@@ -101,11 +101,13 @@ describe('PayUsernamesService.lookup: who am I sending to?', () => {
 });
 
 describe('PayUsernamesService.removeByAdmin: an offensive name taken away', () => {
-  it('clears it, holds it for 30 days and tells the customer why', async () => {
+  it('clears it, holds it for 30 days, gives a new generated one and tells the customer why', async () => {
     const { prisma, tx } = build({ me: { payUsername: 'rude_name1', payUsernameSetAt: new Date() } });
     const notifications = { notify: jest.fn() };
     const service = new PayUsernamesService(prisma as never, notifications as never);
-    await expect(service.removeByAdmin('alice', 'Offensive to other customers')).resolves.toEqual({ before: 'rude_name1' });
+    jest.spyOn(service, 'assignGenerated').mockResolvedValue('alice_4821');
+    await expect(service.removeByAdmin('alice', 'Offensive to other customers')).resolves.toEqual({ before: 'rude_name1', after: 'alice_4821' });
+    expect(notifications.notify.mock.calls[0][0].body).toContain('@alice_4821');
     expect(tx.user.update).toHaveBeenCalledWith({ where: { id: 'alice' }, data: { payUsername: null, payUsernameSetAt: null } });
     expect(tx.payUsernameHold.upsert.mock.calls[0][0].where).toEqual({ username: 'rude_name1' });
     expect(notifications.notify).toHaveBeenCalledWith(expect.objectContaining({ userId: 'alice', body: expect.stringContaining('Offensive to other customers') }));
@@ -114,5 +116,77 @@ describe('PayUsernamesService.removeByAdmin: an offensive name taken away', () =
   it('a customer without a name: 404', async () => {
     const err = await build().service.removeByAdmin('alice', 'Offensive to other customers').catch((e) => e);
     expect(err.getStatus()).toBe(404);
+  });
+});
+
+describe('PayUsernamesService.assignGenerated: a username for a customer who has none', () => {
+  function assigner(taken: string[] = []) {
+    const updates: string[] = [];
+    const prisma = {
+      user: {
+        findUnique: jest.fn(async ({ where }: any) =>
+          where.id ? { id: 'u1', firstName: 'Ada', payUsername: null, status: 'ACTIVE', dataDeletedAt: null } : taken.includes(where.payUsername) ? { id: 'other' } : null,
+        ),
+        updateMany: jest.fn(async ({ data }: any) => (updates.push(data.payUsername), { count: 1 })),
+      },
+      payUsernameHold: { findUnique: jest.fn(async () => null) },
+    };
+    return { service: new PayUsernamesService(prisma as never), prisma, updates };
+  }
+
+  it('saves firstname_digits, marked as not chosen yet (so it can be changed at once)', async () => {
+    const { service, prisma } = assigner();
+    const name = await service.assignGenerated('u1');
+    expect(name).toMatch(/^ada_\d{4}$/);
+    expect(prisma.user.updateMany).toHaveBeenCalledWith({ where: { id: 'u1', payUsername: null }, data: { payUsername: name, payUsernameSetAt: null } });
+  });
+
+  it('tries again when the name is taken', async () => {
+    const { service } = assigner();
+    const spy = jest.spyOn(service as any, 'isFree').mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValue(true);
+    await expect(service.assignGenerated('u1')).resolves.toMatch(/^ada_\d+$/);
+    expect(spy).toHaveBeenCalledTimes(3);
+  });
+
+  it('a customer who already has one keeps it', async () => {
+    const { service, prisma } = assigner();
+    prisma.user.findUnique.mockResolvedValueOnce({ id: 'u1', firstName: 'Ada', payUsername: 'ada_okafor', status: 'ACTIVE', dataDeletedAt: null } as never);
+    await expect(service.assignGenerated('u1')).resolves.toBe('ada_okafor');
+    expect(prisma.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('a closed account gets none', async () => {
+    const { service, prisma } = assigner();
+    prisma.user.findUnique.mockResolvedValueOnce({ id: 'u1', firstName: 'Ada', payUsername: null, status: 'CLOSED', dataDeletedAt: null } as never);
+    await expect(service.assignGenerated('u1')).resolves.toBeNull();
+  });
+});
+
+describe('PayUsernamesService.backfill: everyone who signed up before this feature', () => {
+  it('gives each open account without a username one, page by page', async () => {
+    const pages = [[{ id: 'a' }, { id: 'b' }], []];
+    const prisma = { user: { findMany: jest.fn(async () => pages.shift() ?? []) } };
+    const service = new PayUsernamesService(prisma as never);
+    const assign = jest.spyOn(service, 'assignGenerated').mockResolvedValue('x_1234');
+    await expect(service.backfill()).resolves.toBe(2);
+    expect(assign.mock.calls.map((c) => c[0])).toEqual(['a', 'b']);
+    expect((prisma.user.findMany.mock.calls as any)[0][0].where).toEqual({ payUsername: null, status: { not: 'CLOSED' }, dataDeletedAt: null });
+  });
+});
+
+describe('changing a generated name', () => {
+  it('a name the customer never chose can be changed straight away', async () => {
+    const { service, tx } = build({ me: { payUsername: 'ada_4821', payUsernameSetAt: null } });
+    await expect(service.set('alice', 'ada_okafor')).resolves.toMatchObject({ payUsername: 'ada_okafor' });
+    expect(tx.user.update).toHaveBeenCalled();
+  });
+});
+
+describe('PayUsernamesService.mine: GET /v1/me/pay-username', () => {
+  it('says whether it was chosen and when it can next change', async () => {
+    const setAt = new Date('2026-10-01T10:00:00Z');
+    await expect(build({ me: { payUsername: 'ada_4821', payUsernameSetAt: null } }).service.mine('alice')).resolves.toEqual({ payUsername: 'ada_4821', chosenByYou: false, canChangeFrom: null });
+    const r = await build({ me: { payUsername: 'ada_okafor', payUsernameSetAt: setAt } }).service.mine('alice');
+    expect(r).toEqual({ payUsername: 'ada_okafor', chosenByYou: true, canChangeFrom: '2026-10-31T10:00:00.000Z' });
   });
 });

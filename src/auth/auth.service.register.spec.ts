@@ -27,3 +27,23 @@ it('sign-up never waits for the email code to send: a hung mail server cannot st
   await expect(Promise.race([done, timeout])).resolves.toMatchObject({ userId: 'u1', accessToken: 'a' });
   expect(otps.requestForUser).toHaveBeenCalledWith('u1', 'EMAIL_VERIFY');
 });
+
+it('every new customer gets a payment username, "firstname_digits", and a failure there never stops sign-up (28 Oct 2026)', async () => {
+  const build = (assign: () => Promise<unknown>) => {
+    const prisma = { user: { findUnique: jest.fn(async () => null), create: jest.fn(async () => ({ id: 'u1', email: 'a@b.test', firstName: 'Ada', lastName: 'B' })) } };
+    const payUsernames = { assignGenerated: jest.fn(assign) };
+    const svc = new AuthService(
+      prisma as never, { hash: jest.fn(async () => 'hash') } as never, { add: jest.fn(async () => undefined) } as never, {} as never,
+      { get: () => 'test' } as never, { send: jest.fn(async () => undefined) } as never, { requestForUser: jest.fn(async () => undefined) } as never, {} as never,
+      undefined, payUsernames as never,
+    );
+    jest.spyOn(svc as unknown as { issueTokens: () => Promise<unknown> }, 'issueTokens').mockResolvedValue({ accessToken: 'a', refreshToken: 'r' });
+    return { svc, payUsernames };
+  };
+  const ok = build(async () => 'ada_4821');
+  await ok.svc.register({ email: 'a@b.test', password: 'x', firstName: 'Ada', lastName: 'B' });
+  expect(ok.payUsernames.assignGenerated).toHaveBeenCalledWith('u1');
+
+  const broken = build(async () => { throw new Error('db hiccup'); });
+  await expect(broken.svc.register({ email: 'a@b.test', password: 'x', firstName: 'Ada', lastName: 'B' })).resolves.toMatchObject({ userId: 'u1' });
+});

@@ -1,3 +1,5 @@
+import { randomInt } from 'node:crypto';
+
 /**
  * Payment usernames (decisions 28 Oct 2026): the name other customers type to
  * send crypto. Separate from the referral username (referral-code.ts).
@@ -38,4 +40,25 @@ export function checkPayUsername(input: string): PayUsernameVerdict {
 export function displayName(u: { firstName: string; lastName: string }): string {
   const initial = u.lastName.trim().slice(0, 1).toUpperCase();
   return initial ? `${u.firstName.trim()} ${initial}.` : u.firstName.trim();
+}
+
+/** Digits for a generated name, from a secure source so they cannot be predicted. */
+const randomDigits = (n: number): string => Array.from({ length: n }, () => String(randomInt(10))).join('');
+
+/**
+ * The name every customer gets at sign-up (decision 28 Oct 2026):
+ * "firstname_" and random digits, lower case, 7 to 20 characters. Accents are
+ * folded and anything else dropped; a first name with no letters left, or one
+ * that looks official, becomes "user". The customer can change it later.
+ */
+export function generatePayUsername(firstName: string, digits: (n: number) => string = randomDigits, minDigits = 4): string {
+  let base = (firstName ?? '')
+    .normalize('NFKD')
+    .replace(/\p{M}/gu, '') // accent marks, after NFKD split them off
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+  if (!/[a-z]/.test(base) || OFFICIAL.some((word) => base.includes(word))) base = 'user';
+  const count = Math.max(minDigits, PAY_USERNAME_MIN - Math.min(base.length, PAY_USERNAME_MAX) - 1);
+  base = base.slice(0, PAY_USERNAME_MAX - 1 - count);
+  return `${base}_${digits(count)}`;
 }

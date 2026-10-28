@@ -1151,9 +1151,9 @@ export class AdminController {
     @Req() req: Request,
   ) {
     const reason = dto.reason.trim();
-    const { before } = await this.payUsernames.removeByAdmin(id, reason);
-    await this.admin.audit(adminId, 'user.pay_username.remove', 'User', id, { payUsername: before }, { payUsername: null, reason }, req.ip);
-    return { removed: true };
+    const { before, after } = await this.payUsernames.removeByAdmin(id, reason);
+    await this.admin.audit(adminId, 'user.pay_username.remove', 'User', id, { payUsername: before }, { payUsername: after, reason }, req.ip);
+    return { removed: true, newUsername: after };
   }
 
   // ── naira deposit accounts (Payrep) ───────────────────────

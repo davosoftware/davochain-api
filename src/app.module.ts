@@ -28,6 +28,7 @@ import { DepositsModule } from './deposits/deposits.module';
 import { NgnDepositsModule } from './ngn-deposits/ngn-deposits.module';
 import { WithdrawalsModule } from './withdrawals/withdrawals.module';
 import { TransfersModule } from './transfers/transfers.module';
+import { PayUsernamesModule } from './transfers/pay-usernames.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { InventoryModule } from './inventory/inventory.module';
@@ -67,6 +68,7 @@ import { HealthController } from './common/health.controller';
     DepositsModule,
     NgnDepositsModule,
     WithdrawalsModule,
+    PayUsernamesModule,
     TransfersModule,
     WebhooksModule,
     NotificationsModule,

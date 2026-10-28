@@ -20,7 +20,13 @@ export class TransfersController {
     private readonly transfers: TransfersService,
   ) {}
 
-  /** Choose or change your payment username (once every 30 days). */
+  /** Your payment username, whether you chose it, and when it can next change. */
+  @Get('me/pay-username')
+  myUsername(@CurrentUser('sub') userId: string) {
+    return this.usernames.mine(userId);
+  }
+
+  /** Change your payment username: a generated one at once, after that once every 30 days. */
   @Put('me/pay-username')
   setUsername(@CurrentUser('sub') userId: string, @Body() dto: SetPayUsernameDto) {
     return this.usernames.set(userId, dto.username);

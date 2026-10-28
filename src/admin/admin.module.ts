@@ -5,7 +5,6 @@ import { ComplianceController } from './compliance.controller';
 import { DojahAdminController } from './dojah-admin.controller';
 import { KycModule } from '../kyc/kyc.module';
 import { Module } from '@nestjs/common';
-import { TransfersModule } from '../transfers/transfers.module';
 import { JwtModule } from '@nestjs/jwt';
 import { BullModule } from '@nestjs/bullmq';
 import { AdminService } from './admin.service';
@@ -49,8 +48,6 @@ import { AccountClosureService } from './account-closure.service';
 import { CustomerErasureService } from './customer-erasure.service';
 @Module({
   imports: [
-    // Payment usernames: an admin can remove an offensive one.
-    TransfersModule,
     JwtModule.register({}),
     BullModule.registerQueue({ name: QUEUES.NOTIFICATIONS }),
     AssetsModule,

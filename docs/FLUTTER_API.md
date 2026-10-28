@@ -26,7 +26,8 @@
 
 | Change | Where | What the app must do |
 | --- | --- | --- |
-| **Payment usernames.** `PUT /v1/me/pay-username` chooses one (7 to 20 of letters, numbers, `_`, `-`; no spaces; capitals don't matter). `GET /v1/me/pay-username/check?username=` says if it is free. `GET /v1/me` has `payUsername` | 8.10 | Add "Choose your username" to the profile, checking as the person types |
+| **Every customer has a payment username from sign-up**, `firstname_1234` (customers who signed up earlier were given one too). New `GET /v1/me/pay-username` → `{ payUsername, chosenByYou, canChangeFrom }`. A generated name can be changed at once. **Full guide: [`PAYMENT_USERNAMES.md`](PAYMENT_USERNAMES.md)** | 8.10 | Show it on the profile; add an "Edit username" screen |
+| **Payment usernames.** `PUT /v1/me/pay-username` changes it (7 to 20 of letters, numbers, `_`, `-`; no spaces; capitals don't matter). `GET /v1/me/pay-username/check?username=` says if it is free. `GET /v1/me` has `payUsername` | 8.10 | Add "Choose your username" to the profile, checking as the person types |
 | **Find a person:** `GET /v1/transfers/recipient?username=` answers `{ username, displayName: "Ada O.", canReceive, reason }` | 8.11 | Show the short name before the person confirms |
 | **Send by username:** `POST /v1/transfers/crypto` with `{ username, asset, amount }` (+ `password` the first time ₦100,000 or more goes to someone). Free and instant | 8.12 | New "Send to a DavoChain user" screen |
 | **Histories name the other customer:** `GET /v1/withdrawals` rows have `to`, `GET /v1/deposits` rows have `from`: `{ username, displayName }` or `null` | 8.3, 6 | Show "Sent to @ada_okafor" / "Received from Ada O." |
@@ -2541,7 +2542,7 @@ Response item: `{ id, assetCode, networkId, networkLabel, address, destinationTa
 
 **Endpoint:** `PUT /v1/me/pay-username` · **Auth:** **Bearer** · **KYC:** none · **Success:** `200`
 
-The name other DavoChain customers type to send this person crypto (28 Oct 2026). Separate from the referral code (10.3).
+The name other DavoChain customers type to send this person crypto (28 Oct 2026). Separate from the referral code (10.3). **Every customer gets one at sign-up**, `firstname_` and random digits (e.g. `ada_4821`), which they can change straight away; after choosing their own, once every 30 days. `GET /v1/me/pay-username` answers `{ "payUsername": "ada_4821", "chosenByYou": false, "canChangeFrom": null }`. The full guide for the app is [`PAYMENT_USERNAMES.md`](PAYMENT_USERNAMES.md).
 
 | Field | Type | Required | Rules | Example |
 | --- | --- | --- | --- | --- |
@@ -2555,7 +2556,7 @@ The name other DavoChain customers type to send this person crypto (28 Oct 2026)
 | --- | --- | --- |
 | 400 | `USERNAME_INVALID` | Breaks a rule; `message` says which ("A username needs at least 7 characters.") |
 | 409 | `USERNAME_TAKEN` | Someone has it, or gave it up less than 30 days ago |
-| 400 | `USERNAME_CHANGE_TOO_SOON` | Changed less than 30 days ago; `until` is when it can change |
+| 400 | `USERNAME_CHANGE_TOO_SOON` | They chose a name less than 30 days ago; `until` is when it can change (a generated name can always be changed) |
 
 Setting the same name again changes nothing. An old name is kept from everyone else for 30 days, so nobody can take it over and receive coins meant for this person. `GET /v1/me` shows the current one as `payUsername` (`null` until chosen).
 

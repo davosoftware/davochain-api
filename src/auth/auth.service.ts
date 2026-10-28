@@ -9,6 +9,7 @@ import { JwtService } from '@nestjs/jwt';
 import { KycStatus, KycTier, Prisma, UserOtpPurpose, UserStatus } from '@prisma/client';
 import { createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { PrismaService } from '../prisma/prisma.service';
+import { PayUsernamesService } from '../transfers/pay-usernames.service';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { PasswordService } from './password.service';
@@ -56,6 +57,8 @@ export class AuthService {
     private readonly referrals: ReferralsService,
     /** Live values from System → Server settings (spec 2026-10-26); .env when absent. */
     @Optional() private readonly settings?: ServerSettingsService,
+    /** Every new customer gets a payment username (28 Oct 2026). */
+    @Optional() private readonly payUsernames?: PayUsernamesService,
   ) {}
 
   // ── registration ────────────────────────────────────────────
@@ -122,6 +125,12 @@ export class AuthService {
       .catch((err: Error) => this.log.error(`Could not send the email code for ${user.id}: ${err.message}`));
 
     this.log.log(`Registered ${user.id}`);
+
+    // "firstname_1234", changeable later (decision 28 Oct 2026). Never a reason
+    // for sign-up to fail: the hourly backfill gives one to anyone missed here.
+    await this.payUsernames
+      ?.assignGenerated(user.id)
+      .catch((err: Error) => this.log.error(`Could not give ${user.id} a payment username: ${err.message}`));
 
     /*
      * Attach the referrer, if they came through a code.

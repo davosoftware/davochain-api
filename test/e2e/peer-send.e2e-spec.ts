@@ -127,4 +127,22 @@ describeAdmin('sending coins to another DavoChain customer by address', () => {
       expect(Number((await balance(carol, 'usdt')).available)).toBeCloseTo(80, 6);
     });
   });
+
+  describe('every customer has a username from sign-up', () => {
+    it('a new customer gets "firstname_digits" at once, and can change it straight away, then not again for 30 days', async () => {
+      const dan = await newUser('Dan', 'Fresh');
+      const me = (await call('GET', '/me', { token: dan.token })).body;
+      expect(me.payUsername).toMatch(/^dan_\d{4,8}$/);
+      expect((await call('GET', '/me/pay-username', { token: dan.token })).body).toEqual({ payUsername: me.payUsername, chosenByYou: false, canChangeFrom: null });
+
+      const name = `dan_${Date.now().toString(36)}`;
+      expect((await call('PUT', '/me/pay-username', { token: dan.token, body: { username: name } })).status).toBe(200);
+      const after = (await call('GET', '/me/pay-username', { token: dan.token })).body;
+      expect(after).toMatchObject({ payUsername: name, chosenByYou: true, canChangeFrom: expect.any(String) });
+
+      const again = await call('PUT', '/me/pay-username', { token: dan.token, body: { username: `${name}x` } });
+      expect(again.status).toBe(400);
+      expect(again.body.code).toBe('USERNAME_CHANGE_TOO_SOON');
+    });
+  });
 });
