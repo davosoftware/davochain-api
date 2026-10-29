@@ -5,6 +5,7 @@ import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module';
 import { setupSwagger } from './common/swagger';
 import { securityHeaders } from './common/security-headers';
+import { refusedMoneyLog } from './common/refused-money-log';
 import { PrismaExceptionFilter } from './common/prisma-exception.filter';
 import { QuidaxBusyFilter } from './common/quidax-busy.filter';
 import { assertExactJsonSupported } from './common/exact-json';
@@ -63,6 +64,8 @@ async function bootstrap(): Promise<void> {
 
   // M7: CSP everywhere except the Swagger page (see securityHeaders).
   app.use(securityHeaders());
+  // A refused send, withdrawal or trade leaves one log line saying why (never the PIN).
+  app.use(refusedMoneyLog());
   // L1: a database duplicate is a 409 and a missing record a 404, not a 500.
   // M9: a Quidax 'busy' is a 503 with Retry-After, never a 500.
   app.useGlobalFilters(new PrismaExceptionFilter(), new QuidaxBusyFilter());
