@@ -1,7 +1,7 @@
 import { BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { JobLeaseService } from '../common/job-lease.service';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { AdminRole, AlertType, LegState, SettlementLegKind, TxStatus, TxType } from '@prisma/client';
+import { AdminRole, AlertType, LedgerAccount, LedgerDirection, LegState, SettlementLegKind, TxStatus, TxType } from '@prisma/client';
 import { OPEN_STATUSES } from '../trades/close-open';
 import { PrismaService } from '../prisma/prisma.service';
 import { QuidaxClient } from '../quidax/quidax.client';
@@ -53,6 +53,35 @@ export interface CustomerMismatches {
     unreadable: boolean;
     open: Array<{ id: string; type: TxType; status: TxStatus; createdAt: Date }>;
     reason: MismatchReason;
+  }>;
+}
+
+export type CheckVerdict = 'OK' | 'RECORDS_DISAGREE' | 'BEING_CHECKED' | 'IN_PROGRESS' | 'UNEXPLAINED' | 'NOT_CHECKED';
+
+export interface CustomerCheck {
+  userId: string;
+  name: string;
+  email: string;
+  checkedAt: string;
+  /** Whether their Quidax sub-account was read. NO_ACCOUNT: they have none yet. */
+  quidax: 'READ' | 'UNREADABLE' | 'NO_ACCOUNT';
+  rows: Array<{
+    asset: string;
+    available: string;
+    locked: string;
+    /** available + locked: their balance as the app shows it. */
+    recorded: string;
+    /** The same balance rebuilt from every ledger entry they have. */
+    fromEntries: string;
+    /** recorded = fromEntries. False means our own records disagree with each other. */
+    entriesMatch: boolean;
+    uncollectedFees: string;
+    /** What Quidax holds for them; null for naira (not held there) or when not read. */
+    held: string | null;
+    /** recorded + uncollected fees − held; positive means our records say more than Quidax holds. */
+    difference: string | null;
+    open: Array<{ id: string; type: TxType; status: TxStatus; createdAt: Date }>;
+    verdict: CheckVerdict;
   }>;
 }
 
@@ -299,6 +328,118 @@ export class ReconciliationService {
           reason,
         };
       }),
+    };
+  }
+
+  /**
+   * One customer, every coin (29 Oct 2026): their recorded balance, the same
+   * figure rebuilt from their ledger entries, and what Quidax holds for them.
+   * The first comparison catches our records disagreeing with each other; the
+   * second, our records disagreeing with the money. Read-only: a customer
+   * without a Quidax account is reported as such, never given one.
+   */
+  async customerCheck(userId: string): Promise<CustomerCheck> {
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, firstName: true, lastName: true, email: true } });
+    if (!user) throw new NotFoundException('Customer not found');
+
+    const [assets, balances, sums, fees, account, open] = await Promise.all([
+      this.prisma.asset.findMany({ select: { code: true, isFiat: true } }),
+      this.prisma.balance.findMany({ where: { userId }, select: { assetCode: true, available: true, locked: true } }),
+      this.prisma.ledgerEntry.groupBy({
+        by: ['assetCode', 'direction'],
+        where: { userId, account: LedgerAccount.USER },
+        _sum: { amount: true },
+      }),
+      this.prisma.feeReceivable.findMany({ where: { userId, sweptAt: null }, select: { assetCode: true, amount: true } }),
+      this.prisma.quidaxAccount.findUnique({ where: { userId }, select: { quidaxUserId: true } }),
+      this.prisma.transaction.findMany({
+        where: { userId, status: { in: [TxStatus.PENDING, TxStatus.PROCESSING, TxStatus.RECONCILING] } },
+        select: { id: true, type: true, status: true, createdAt: true, fromAsset: true, toAsset: true },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ]);
+
+    let quidax: CustomerCheck['quidax'] = 'NO_ACCOUNT';
+    const held = new Map<string, Decimal>();
+    if (account) {
+      try {
+        for (const w of await this.quidax.fetchWallets(account.quidaxUserId)) {
+          const code = w.currency?.toLowerCase();
+          if (code) held.set(code, (held.get(code) ?? ZERO).plus(dec(w.balance || '0')));
+        }
+        quidax = 'READ';
+      } catch {
+        quidax = 'UNREADABLE';
+      }
+    }
+
+    const fiat = new Set(assets.filter((a) => a.isFiat).map((a) => a.code));
+    const fromEntries = new Map<string, Decimal>();
+    for (const s of sums) {
+      const amount = dec(s._sum.amount ?? 0);
+      const signed = s.direction === LedgerDirection.CREDIT ? amount : amount.neg();
+      fromEntries.set(s.assetCode, (fromEntries.get(s.assetCode) ?? ZERO).plus(signed));
+    }
+    const owedFees = new Map<string, Decimal>();
+    for (const f of fees) owedFees.set(f.assetCode, (owedFees.get(f.assetCode) ?? ZERO).plus(dec(f.amount)));
+
+    const codes = new Set<string>([...balances.map((b) => b.assetCode), ...fromEntries.keys(), ...owedFees.keys()]);
+    for (const code of held.keys()) if (!fiat.has(code)) codes.add(code);
+
+    const tolerance = dec(ReconciliationService.TOLERANCE);
+    const rows: CustomerCheck['rows'] = [];
+    for (const asset of [...codes].sort()) {
+      const b = balances.find((x) => x.assetCode === asset);
+      const available = dec(b?.available ?? 0);
+      const locked = dec(b?.locked ?? 0);
+      const recorded = available.plus(locked);
+      const rebuilt = fromEntries.get(asset) ?? ZERO;
+      const feesOwed = owedFees.get(asset) ?? ZERO;
+      const mine = open
+        .filter((t) => t.fromAsset === asset || t.toAsset === asset)
+        .map(({ id, type, status, createdAt }) => ({ id, type, status, createdAt }));
+      const atQuidax = fiat.has(asset) || quidax !== 'READ' ? null : (held.get(asset) ?? ZERO);
+      if (recorded.isZero() && rebuilt.isZero() && feesOwed.isZero() && (atQuidax ?? ZERO).isZero() && mine.length === 0) continue;
+
+      const entriesMatch = recorded.minus(rebuilt).abs().lte(tolerance);
+      const raw = atQuidax === null ? null : recorded.plus(feesOwed).minus(atQuidax);
+      // Within the tolerance is rounding dust, and is shown as none.
+      const difference = raw === null ? null : raw.abs().lte(tolerance) ? ZERO : raw;
+      const verdict: CheckVerdict = !entriesMatch
+        ? 'RECORDS_DISAGREE'
+        : fiat.has(asset)
+          ? 'OK'
+          : difference === null
+            ? 'NOT_CHECKED'
+            : difference.abs().lte(tolerance)
+              ? 'OK'
+              : mine.some((t) => t.status === TxStatus.RECONCILING)
+                ? 'BEING_CHECKED'
+                : mine.length > 0
+                  ? 'IN_PROGRESS'
+                  : 'UNEXPLAINED';
+      rows.push({
+        asset,
+        available: available.toFixed(),
+        locked: locked.toFixed(),
+        recorded: recorded.toFixed(),
+        fromEntries: rebuilt.toFixed(),
+        entriesMatch,
+        uncollectedFees: feesOwed.toFixed(),
+        held: atQuidax?.toFixed() ?? null,
+        difference: difference?.toFixed() ?? null,
+        open: mine,
+        verdict,
+      });
+    }
+
+    return {
+      userId,
+      name: `${user.firstName} ${user.lastName}`.trim(),
+      email: user.email,
+      checkedAt: new Date().toISOString(),
+      quidax,
+      rows,
     };
   }
 

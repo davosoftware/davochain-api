@@ -397,6 +397,16 @@ export class AdminController {
   }
 
   /**
+   * One customer, every coin (29 Oct 2026): recorded balance, the same balance
+   * rebuilt from their ledger entries, and what Quidax holds for them. Read-only.
+   */
+  @Get('users/:id/balance-check')
+  @RequirePermissions('reconciliation.view')
+  customerBalanceCheck(@Param('id', new ParseUUIDPipe()) id: string) {
+    return this.reconciliation.customerCheck(id);
+  }
+
+  /**
    * The flat list the old screen used, kept for anything already calling it.
    *
    * The transactions manager uses `/transactions/manager` below, which pages,
@@ -435,6 +445,8 @@ export class AdminController {
     from?: string;
     to?: string;
     direction?: string;
+    userId?: string;
+    asset?: string;
   }): TxQuery {
     const TABS = ['ALL', 'BUY', 'SELL', 'SWAP', 'DEPOSIT', 'WITHDRAWAL', 'APPROVAL'];
     const MODES = ['BANK', 'NGN_BALANCE', 'CHAIN', 'INTERNAL'];
@@ -454,6 +466,12 @@ export class AdminController {
     if (q.mode && !MODES.includes(q.mode)) {
       throw new BadRequestException(`mode must be one of ${MODES.join(', ')}`);
     }
+    if (q.userId && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(q.userId)) {
+      throw new BadRequestException('userId must be a customer id');
+    }
+    if (q.asset && !/^[a-z0-9]{2,15}$/i.test(q.asset)) {
+      throw new BadRequestException('asset must be a coin code, such as usdt');
+    }
 
     return {
       ...this.range(q.from, q.to),
@@ -463,6 +481,8 @@ export class AdminController {
       amountType: q.amountType as 'DEBIT' | 'CREDIT' | undefined,
       mode: q.mode,
       search: q.search,
+      userId: q.userId,
+      asset: q.asset,
       direction: q.direction === 'asc' ? 'asc' : 'desc',
     };
   }
@@ -481,9 +501,11 @@ export class AdminController {
     @Query('direction') direction?: string,
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
+    @Query('userId') userId?: string,
+    @Query('asset') asset?: string,
   ) {
     return this.txs.list({
-      ...this.txQuery({ tab, status, type, amountType, mode, search, from, to, direction }),
+      ...this.txQuery({ tab, status, type, amountType, mode, search, from, to, direction, userId, asset }),
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
     });
@@ -503,13 +525,15 @@ export class AdminController {
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('direction') direction?: string,
+    @Query('userId') userId?: string,
+    @Query('asset') asset?: string,
   ) {
-    const query = this.txQuery({ tab, status, type, amountType, mode, search, from, to, direction });
+    const query = this.txQuery({ tab, status, type, amountType, mode, search, from, to, direction, userId, asset });
     const result = await this.txs.all(query);
     await this.admin.audit(adminId, 'transactions.export', 'Transaction', null, null, {
       rows: result.rows.length,
       truncated: result.truncated,
-      filters: { tab, status, type, amountType, mode, search, from, to },
+      filters: { tab, status, type, amountType, mode, search, from, to, userId, asset },
     });
     return result;
   }

@@ -221,3 +221,44 @@ describe('a send between two DavoChain customers names the other side (28 Oct 20
     expect(rows[1].peer).toBeNull();
   });
 });
+
+describe('one customer\'s history, for tracing a discrepancy (29 Oct 2026)', () => {
+  function build() {
+    const prisma = {
+      transaction: {
+        findMany: jest.fn(async () => []),
+        count: jest.fn(async () => 0),
+        groupBy: jest.fn(async () => []),
+      },
+      adminAuditLog: { findMany: jest.fn(async () => []) },
+      user: { findMany: jest.fn(async () => []) },
+    };
+    return { prisma, svc: new AdminTransactionsService(prisma as never, {} as never, {} as never, {} as never) };
+  }
+
+  it('narrows the rows, the tab counts and the "needs a decision" counts to that customer', async () => {
+    const { prisma, svc } = build();
+    await svc.list({ userId: 'u-ada' });
+
+    const rowsWhere = (prisma.transaction.findMany.mock.calls[0] as never[])[0] as { where: unknown };
+    expect(JSON.stringify(rowsWhere.where)).toContain('"userId":"u-ada"');
+    const countsWhere = (prisma.transaction.groupBy.mock.calls[0] as never[])[0] as { where: unknown };
+    expect(JSON.stringify(countsWhere.where)).toContain('"userId":"u-ada"');
+    for (const call of prisma.transaction.count.mock.calls as never[][]) {
+      expect(JSON.stringify((call[0] as { where: unknown }).where)).toContain('"userId":"u-ada"');
+    }
+  });
+
+  it('a coin filter keeps every transaction where that coin went in or out', async () => {
+    const { prisma, svc } = build();
+    await svc.list({ userId: 'u-ada', asset: 'USDT' });
+    const where = JSON.stringify(((prisma.transaction.findMany.mock.calls[0] as never[])[0] as { where: unknown }).where);
+    expect(where).toContain('{"OR":[{"fromAsset":"usdt"},{"toAsset":"usdt"}]}');
+  });
+
+  it('without a customer, the counts stay business-wide as before', async () => {
+    const { prisma, svc } = build();
+    await svc.list({});
+    expect(JSON.stringify(((prisma.transaction.groupBy.mock.calls[0] as never[])[0] as { where: unknown }).where)).not.toContain('userId');
+  });
+});

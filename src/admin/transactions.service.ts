@@ -31,6 +31,10 @@ export interface TxQuery {
   /** The derived mode of payment — 'BANK' | 'NGN_BALANCE' | 'CHAIN' | 'INTERNAL'. */
   mode?: string;
   search?: string;
+  /** One customer's history (29 Oct 2026): every count on the screen follows it too. */
+  userId?: string;
+  /** Transactions where this coin went in or out. */
+  asset?: string;
   from?: Date;
   to?: Date;
   page?: number;
@@ -279,6 +283,11 @@ export class AdminTransactionsService {
 
     if (query.status) and.push({ status: query.status });
     if (query.type) and.push({ type: query.type });
+    if (query.userId) and.push({ userId: query.userId });
+    if (query.asset) {
+      const coin = query.asset.toLowerCase();
+      and.push({ OR: [{ fromAsset: coin }, { toAsset: coin }] });
+    }
 
     if (query.amountType === 'DEBIT') and.push({ type: { in: [...DEBITS] } });
     if (query.amountType === 'CREDIT') and.push({ type: { notIn: [...DEBITS] } });
@@ -362,7 +371,8 @@ export class AdminTransactionsService {
       this.prisma.transaction.count({ where }),
 
       /*
-       * The tab counts, scoped by the date range only.
+       * The tab counts, scoped by the date range (and the customer, on one
+       * customer's history) only.
        *
        * Not by the tab itself, or every count would change the moment you
        * clicked one — telling you about the tab rather than about the business.
@@ -370,12 +380,12 @@ export class AdminTransactionsService {
       this.prisma.transaction.groupBy({
         by: ['type'],
         _count: { _all: true },
-        where: this.where({ from: query.from, to: query.to }),
+        where: this.where({ from: query.from, to: query.to, userId: query.userId }),
       }),
       this.prisma.transaction.count({
-        where: { type: TxType.DEPOSIT, status: TxStatus.ON_HOLD, toAsset: 'ngn' },
+        where: { type: TxType.DEPOSIT, status: TxStatus.ON_HOLD, toAsset: 'ngn', ...(query.userId ? { userId: query.userId } : {}) },
       }),
-      this.prisma.transaction.count({ where: { status: TxStatus.RECONCILING } }),
+      this.prisma.transaction.count({ where: { status: TxStatus.RECONCILING, ...(query.userId ? { userId: query.userId } : {}) } }),
     ]);
 
     return {
