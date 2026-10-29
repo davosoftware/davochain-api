@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { CredentialsService } from '../common/credentials.service';
 import { QuidaxClient } from './quidax.client';
 import { QuidaxMockClient } from './quidax.mock';
+import { QuidaxMockRestore } from './quidax-mock-restore';
 import type Redis from 'ioredis';
 import { RATE_LIMIT_REDIS } from '../rate-limit/rate-limit.service';
 
@@ -21,6 +22,7 @@ import { RATE_LIMIT_REDIS } from '../rate-limit/rate-limit.service';
           ? new QuidaxMockClient(config, credentials)
           : new QuidaxClient(config, credentials, redis),
     },
+    QuidaxMockRestore,
   ],
   exports: [QuidaxClient],
 })
