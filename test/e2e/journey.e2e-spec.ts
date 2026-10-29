@@ -1,7 +1,7 @@
 import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { ADDRESS, adminToken, balance, call, hasAdmin, idNumber, key, login, requireServer, uniquePhone, type TestUser } from './helpers';
+import { ADDRESS, adminToken, balance, call, hasAdmin, idNumber, key, login, requireServer, uniquePhone, type TestUser, createPin } from './helpers';
 
 /**
  * The whole customer journey over real HTTP, in order (launch request, 22 Oct 2026):
@@ -89,6 +89,12 @@ describeAdmin('the whole customer journey, start to finish', () => {
     expect(ok.status).toBe(200);
     expect(ok.body).toEqual({ verified: true });
     expect((await call('GET', '/me', { token: user.token })).body.emailVerified).toBe(true);
+  });
+
+  it('2b. creates the transaction PIN that sends, withdrawals and swaps ask for', async () => {
+    expect((await call('GET', '/me', { token: user.token })).body.hasTransactionPin).toBe(false);
+    await createPin(user);
+    expect((await call('GET', '/me', { token: user.token })).body.hasTransactionPin).toBe(true);
   });
 
   it('3. Basic verification approves (Dojah mock), then a fresh sign-in', async () => {

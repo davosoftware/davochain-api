@@ -21,6 +21,7 @@ export const POLICY_NAMES = [
   'kyc.advanced',
   'giftcards.sell',
   'transfers.lookup',
+  'pin.manage',
   'webhooks',
   'public',
   'default',
@@ -69,6 +70,8 @@ export const DEFAULT_POLICIES: Readonly<Record<PolicyName, Policy>> = {
   // Generous on purpose: a 429 spends a provider's retries, and Quidax stops retrying after 24 h.
   // Looking up payment usernames: enough to find a friend, too few to list our customers.
   'transfers.lookup': { name: 'transfers.lookup', limits: { user: lim(30, 10 * M) }, failClosed: true },
+  // Creating, changing or resetting the transaction PIN: a few goes, then wait.
+  'pin.manage': { name: 'pin.manage', limits: { user: lim(10, 15 * M) }, failClosed: true },
   webhooks: { name: 'webhooks', limits: { ip: lim(3000, M) }, failClosed: false },
   public: { name: 'public', limits: { ip: lim(120, M) }, failClosed: false },
   default: { name: 'default', limits: { user: lim(300, M) }, failClosed: false },

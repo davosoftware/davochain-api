@@ -21,6 +21,7 @@
    - [Step 3 · Log in](#step-3--log-in)
    - [Step 4 · Who am I](#step-4--who-am-i)
    - [Step 5 · Confirm the email address](#step-5--confirm-the-email-address)
+   - [Step 5b · Create the transaction PIN](#step-5b--create-the-transaction-pin)
    - [Step 6 · Basic verification (KYC)](#step-6--basic-verification-kyc)
    - [Step 7 · Sign in again, then check the level](#step-7--sign-in-again-then-check-the-level)
    - [Step 8 · Get the naira account number](#step-8--get-the-naira-account-number)
@@ -62,7 +63,8 @@ Every customer endpoint starts with `/v1`. Only two things don't: `GET /health` 
 |---|---|
 | `Content-Type: application/json` | Every request with a body (except file uploads, which are `multipart/form-data`) |
 | `Authorization: Bearer <accessToken>` | Every request except the public ones (marked **Public** below) |
-| `Idempotency-Key: <a new UUID>` | Required on the three requests that move money: `POST /trades`, `POST /withdrawals/ngn`, `POST /withdrawals/crypto`. See [step 11](#step-11--buy-crypto). |
+| `Idempotency-Key: <a new UUID>` | Required on the four requests that move money: `POST /trades`, `POST /withdrawals/ngn`, `POST /withdrawals/crypto`, `POST /transfers/crypto`. See [step 11](#step-11--buy-crypto). |
+| `X-Transaction-Pin: <4 digits>` | **New 29 Oct 2026.** Required on the same four requests: the customer's transaction PIN ([step 5b](#step-5b--create-the-transaction-pin)). |
 
 ### 1.3 Money is always text
 
@@ -78,9 +80,9 @@ Amounts go in and come out as **strings**, e.g. `"50000"`, `"33.87985577"`, neve
 - On a form error (400), `message` can be a **list** of sentences, one per field: `{"message": ["Password must be at least 10 characters", "Password must contain a number"], ...}`.
 - Some errors add a `code` so the app can react without reading the words, e.g. `"code": "EMAIL_NOT_VERIFIED"`. Section 5 lists them all.
 
-### 1.5 There is no person-to-person "transfer"
+### 1.5 Sending crypto to another DavoChain customer
 
-DavoChain has no "send money to another DavoChain user" feature. Moving money **out** is a withdrawal: naira to a bank account ([step 14](#step-14--withdraw-naira-to-a-bank-account)), or crypto to an outside wallet address ([step 15](#step-15--withdraw-crypto-to-an-outside-address)).
+Since 28 Oct 2026 a customer can send crypto to another DavoChain customer by **payment username** (`POST /v1/transfers/crypto`): free and instant. [`TRANSACTION_PIN.md`](TRANSACTION_PIN.md) §3 has the exact request and every reply. Naira cannot be sent this way. Other money going **out** is a withdrawal: naira to a bank account ([step 14](#step-14--withdraw-naira-to-a-bank-account)), or crypto to a wallet address ([step 15](#step-15--withdraw-crypto-to-an-outside-address)).
 
 ---
 
@@ -335,6 +337,22 @@ Until the email is confirmed, the customer can look around but **cannot** deposi
 
 After success, `GET /v1/me` shows `"emailVerified": true`. No new sign-in is needed.
 
+### Step 5b · Create the transaction PIN
+
+**New 29 Oct 2026.** Buying, selling, swapping, sending and withdrawing all need a 4-digit PIN in the header `X-Transaction-Pin`. Make it once, before the first of those:
+
+```http
+POST /v1/me/transaction-pin
+Authorization: Bearer <accessToken>
+Content-Type: application/json
+
+{ "password": "<their password>", "pin": "4826" }
+```
+
+**201** `{ "isSet": true, "setAt": "2026-10-29T09:12:44.120Z", "lockedUntil": null, "triesLeft": 5 }`
+
+`GET /v1/me` shows `"hasTransactionPin": true` from then on. Easy PINs (`1234`, `0000`, `1212`…) answer `400 PIN_WEAK`. Five wrong PINs in a row lock it for 30 minutes. Change PIN, Forgot PIN and every error are in [`TRANSACTION_PIN.md`](TRANSACTION_PIN.md).
+
 ### Step 6 · Basic verification (KYC)
 
 **Check where they are:** `GET /v1/kyc` (200, before verification; shortened):
@@ -524,6 +542,7 @@ For `buy`, `amount` is in the **from** asset (₦50,000 to spend).
 POST /v1/trades
 Authorization: Bearer <accessToken>
 Idempotency-Key: 3f1c9a52-6b1e-4f7a-9d0e-0a1b2c3d4e5f
+X-Transaction-Pin: 4826
 Content-Type: application/json
 
 { "quoteId": "a54988b6-3844-4acd-ade5-56ef4f44283b" }
@@ -622,7 +641,7 @@ Use the `code` exactly as given; codes come from Payrep's list. (Test computer c
 ```
 `payoutAvailable: false` means naira payouts are switched off right now; show a message instead of the button. `limit.allowed: false` comes with a `reason`.
 
-**5. Withdraw:** `POST /v1/withdrawals/ngn` with a new `Idempotency-Key`
+**5. Withdraw:** `POST /v1/withdrawals/ngn` with a new `Idempotency-Key` and the `X-Transaction-Pin` header
 ```json
 { "amount": "10000", "savedBankAccountId": "216be5cc-af03-49f7-a3da-e19431103f63" }
 ```
@@ -661,7 +680,7 @@ The customer receives `amount`; `totalDeducted` (amount + fees) comes off their 
 ```
 Add `destinationTag` for coins that need one. A badly formed address gets 400 "That does not look like a valid … address". List with `GET /v1/me/crypto-addresses` (`max: 10`); remove with `DELETE /v1/me/crypto-addresses/:id`.
 
-**4. Withdraw:** `POST /v1/withdrawals/crypto` with a new `Idempotency-Key`
+**4. Withdraw:** `POST /v1/withdrawals/crypto` with a new `Idempotency-Key` and the `X-Transaction-Pin` header
 ```json
 { "amount": "10", "savedCryptoAddressId": "8b9b3395-e0b0-4081-863c-50ce2b47be97" }
 ```
@@ -819,6 +838,10 @@ If Advanced is switched off by the admin, these answer 503. While one submission
 | 401 | `"Invalid or expired token"` | The access token has expired | Refresh once (section 2), retry once |
 | 401 | `"Session expired. Please sign in again."` | Refresh refused | Go to sign-in |
 | 401 | `"Incorrect password"` | Wrong password when saving a bank account or address | Ask again; **don't** refresh |
+| 403 | `{ "code": "PIN_NOT_SET" }` | No transaction PIN yet | Open "Create your PIN" (step 5b) |
+| 403 | `{ "code": "PIN_REQUIRED" }` | The `X-Transaction-Pin` header was missing | Show the PIN pad |
+| 403 | `{ "code": "PIN_WRONG", "triesLeft": 3 }` | Wrong PIN | Show `message`; try again with a new Idempotency-Key |
+| 403 | `{ "code": "PIN_LOCKED", "until": "…" }` | Five wrong PINs: locked for 30 minutes | Show `message` and a **Forgot PIN** button |
 | 403 | `code: "EMAIL_NOT_VERIFIED"` | Email not confirmed | Code screen (step 5) |
 | 403 | `requiredTier`, `currentTier` | Not verified enough | Verification screen |
 | 403 | `code: "NOT_ALLOWED_AT_LEVEL"` | This level may not do this | `requiredLevel` set: verification screen; `null`: show `message` |

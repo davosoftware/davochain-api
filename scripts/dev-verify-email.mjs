@@ -7,6 +7,7 @@
  *
  * --set-code replaces the newest open emailed code with a known one, so a test
  * can type it into POST /v1/auth/email/verify like a customer would.
+ * Add --purpose PIN_RESET for the Forgot PIN code instead (29 Oct 2026).
  *
  * Stands in for typing the emailed six-digit code, so tests and local runs
  * don't need a real inbox. REFUSES to run when NODE_ENV=production.
@@ -39,7 +40,7 @@ async function main() {
       }
       const user = await prisma.user.findUnique({ where: { email: email.toLowerCase() }, select: { id: true } });
       const open = user && (await prisma.userOtp.findFirst({
-        where: { userId: user.id, purpose: 'EMAIL_VERIFY', consumedAt: null, expiresAt: { gt: new Date() } },
+        where: { userId: user.id, purpose: arg('purpose') ?? 'EMAIL_VERIFY', consumedAt: null, expiresAt: { gt: new Date() } },
         orderBy: { createdAt: 'desc' },
       }));
       if (!open) {

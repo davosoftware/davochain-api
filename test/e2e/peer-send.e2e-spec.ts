@@ -114,16 +114,12 @@ describeAdmin('sending coins to another DavoChain customer by address', () => {
       expect(inn.from).toMatchObject({ displayName: 'Alice S.' });
     });
 
-    it('a first send of ₦100,000 or more needs the password', async () => {
+    it('a large first send needs no password now: the PIN replaced it (29 Oct 2026)', async () => {
       const carol = await verifyBasic(await newUser('Carol', 'Third'));
       const carolName = `carol_${Date.now().toString(36)}`;
       await call('PUT', '/me/pay-username', { token: carol.token, body: { username: carolName } });
-      const body = { username: carolName, asset: 'usdt', amount: '80' };
-      const no = await call('POST', '/transfers/crypto', { token: alice.token, body, headers: { 'Idempotency-Key': key() } });
-      expect(no.status).toBe(403);
-      expect(no.body.code).toBe('PASSWORD_REQUIRED');
-      const yes = await call('POST', '/transfers/crypto', { token: alice.token, body: { ...body, password: alice.password }, headers: { 'Idempotency-Key': key() } });
-      expect(yes.status).toBe(201);
+      const r = await call('POST', '/transfers/crypto', { token: alice.token, body: { username: carolName, asset: 'usdt', amount: '80' }, headers: { 'Idempotency-Key': key() } });
+      expect(r.status).toBe(201);
       expect(Number((await balance(carol, 'usdt')).available)).toBeCloseTo(80, 6);
     });
   });

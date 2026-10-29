@@ -9,6 +9,7 @@ import { RateLimit } from '../rate-limit/rate-limit.decorator';
 import { PayUsernamesService } from './pay-usernames.service';
 import { TransfersService } from './transfers.service';
 import { SendByUsernameDto, SetPayUsernameDto } from './dto';
+import { RequiresPin } from '../pin/requires-pin';
 
 /** Payment usernames and sending crypto to another DavoChain customer by name (28 Oct 2026). */
 @ApiTags('transfers')
@@ -48,6 +49,7 @@ export class TransfersController {
 
   /** Send crypto to a DavoChain customer by username: free and instant. */
   @RequiresAction(PolicyAction.CRYPTO_WITHDRAW)
+  @RequiresPin()
   @UseInterceptors(IdempotencyInterceptor)
   @PausedDuringMaintenance()
   @Post('transfers/crypto')

@@ -8,6 +8,7 @@ import { IdempotencyInterceptor } from '../common/idempotency.interceptor';
 import { dec } from '../common/money';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { PausedDuringMaintenance } from '../common/maintenance.guard';
+import { RequiresPin } from '../pin/requires-pin';
 
 @ApiTags('trading')
 @ApiBearerAuth('user')
@@ -41,6 +42,7 @@ export class QuotesController {
 
   /** Execute a quote. Idempotency-Key required — this one moves money. */
   @RequiresAction('QUOTE_SIDE')
+  @RequiresPin()
   @UseInterceptors(IdempotencyInterceptor)
   @PausedDuringMaintenance()
   @Post('trades')

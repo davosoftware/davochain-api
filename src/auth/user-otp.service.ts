@@ -19,6 +19,7 @@ const RESEND_COOLDOWN_MS = 60_000;
 const TEMPLATE: Record<UserOtpPurpose, string> = {
   [UserOtpPurpose.PASSWORD_RESET]: 'user.password_reset',
   [UserOtpPurpose.EMAIL_VERIFY]: 'user.email_verify',
+  [UserOtpPurpose.PIN_RESET]: 'user.pin_reset',
 };
 
 /**

@@ -21,17 +21,26 @@ export interface Res<T = any> {
   headers: Headers;
 }
 
+/**
+ * Every test user gets this transaction PIN (29 Oct 2026), and `call` sends it
+ * with every signed-in request, so suites written before the PIN keep working.
+ * Pass `pin: null` to leave it out, or a string to send a different one.
+ */
+export const E2E_PIN = '4826';
+
 export async function call<T = any>(
   method: string,
   path: string,
-  opts: { body?: unknown; token?: string | null; headers?: Record<string, string> } = {},
+  opts: { body?: unknown; token?: string | null; headers?: Record<string, string>; pin?: string | null } = {},
 ): Promise<Res<T>> {
+  const pin = opts.pin === undefined ? E2E_PIN : opts.pin;
   const url = path.startsWith('http') ? path : path.startsWith('/health') || path.startsWith('/webhooks') ? BASE + path : API + path;
   const res = await fetch(url, {
     method,
     headers: {
       'content-type': 'application/json',
       ...(opts.token ? { authorization: `Bearer ${opts.token}` } : {}),
+      ...(opts.token && pin !== null ? { 'x-transaction-pin': pin } : {}),
       ...(opts.headers ?? {}),
     },
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
@@ -77,7 +86,7 @@ export function uniquePhone(): string {
  * A fresh user with no KYC, logged in. Their email is confirmed (H9) unless
  * `verifyEmail: false`: the gate reads the database, so the token stays good.
  */
-export async function newUser(firstName = 'E2e', lastName = 'Tester', opts: { verifyEmail?: boolean } = {}): Promise<TestUser> {
+export async function newUser(firstName = 'E2e', lastName = 'Tester', opts: { verifyEmail?: boolean; pin?: boolean } = {}): Promise<TestUser> {
   const email = `e2e-${randomUUID().slice(0, 12)}@davochain.invalid`;
   const password = `E2e-${randomUUID().slice(0, 10)}-9`;
   const phone = uniquePhone();
@@ -90,7 +99,14 @@ export async function newUser(firstName = 'E2e', lastName = 'Tester', opts: { ve
   }
   const user = { id: r.body.userId, email, password, phone, token: r.body.accessToken, refreshToken: r.body.refreshToken };
   if (opts.verifyEmail !== false) verifyEmail(user);
+  if (opts.pin !== false) await createPin(user);
   return user;
+}
+
+/** Give a test user the shared PIN (E2E_PIN). */
+export async function createPin(user: { token: string; password: string }): Promise<void> {
+  const r = await call('POST', '/me/transaction-pin', { token: user.token, body: { password: user.password, pin: E2E_PIN } });
+  if (r.status !== 201) throw new Error(`Could not create the test PIN (${r.status} ${JSON.stringify(r.body)}).`);
 }
 
 /** Confirm the email through the development-only script (refuses in production). */

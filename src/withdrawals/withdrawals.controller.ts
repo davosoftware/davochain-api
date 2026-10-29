@@ -7,6 +7,7 @@ import { RequiresAction } from '../levels/requires-action.decorator';
 import { IdempotencyInterceptor } from '../common/idempotency.interceptor';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { PausedDuringMaintenance } from '../common/maintenance.guard';
+import { RequiresPin } from '../pin/requires-pin';
 
 @ApiTags('withdrawals')
 @ApiBearerAuth('user')
@@ -55,6 +56,7 @@ export class WithdrawalsController {
   }
 
   @RequiresAction(PolicyAction.NGN_WITHDRAW)
+  @RequiresPin()
   @UseInterceptors(IdempotencyInterceptor)
   @PausedDuringMaintenance()
   @Post('ngn')
@@ -63,6 +65,7 @@ export class WithdrawalsController {
   }
 
   @RequiresAction(PolicyAction.CRYPTO_WITHDRAW)
+  @RequiresPin()
   @UseInterceptors(IdempotencyInterceptor)
   @PausedDuringMaintenance()
   @Post('crypto')

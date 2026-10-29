@@ -26,6 +26,8 @@ export class UsersService {
       phone: user.phone,
       /** The name others send crypto to (28 Oct 2026); null until chosen. */
       payUsername: user.payUsername,
+      /** Whether a transaction PIN exists (29 Oct 2026). False: show "Create your PIN" before any send, withdrawal or swap. */
+      hasTransactionPin: user.transactionPinHash !== null,
       status: user.status,
       // H9: false until the emailed code is entered; deposits, withdrawals, trades and verification wait for it.
       emailVerified: user.emailVerifiedAt !== null,

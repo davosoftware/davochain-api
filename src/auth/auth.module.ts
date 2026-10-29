@@ -27,6 +27,6 @@ import { RateLimitGuard } from '../rate-limit/rate-limit.guard';
     // Last, so the signed-in user is known when a per-user limit is counted.
     { provide: APP_GUARD, useClass: RateLimitGuard },
   ],
-  exports: [AuthService, PasswordService, JwtModule],
+  exports: [AuthService, UserOtpService, PasswordService, JwtModule],
 })
 export class AuthModule {}

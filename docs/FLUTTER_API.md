@@ -22,6 +22,18 @@
 
 **New (23 Oct 2026): start with the walk-through.** [`CUSTOMER_JOURNEY_API_GUIDE.md`](CUSTOMER_JOURNEY_API_GUIDE.md) takes one customer through the whole app in order, with real responses: register, email code, Basic verification, the naira account number, deposits, buy, sell, swap, withdrawals, gift cards, Advanced verification and sign-out. It also covers exactly when and how to refresh tokens. A ready-to-import Postman collection that refreshes tokens by itself is in [`postman/`](postman/DavoChain-Customer-Journey.postman_collection.json).
 
+## What changed for the app (29 October 2026, latest): transaction PIN
+
+The full guide, with request and response examples, is [`TRANSACTION_PIN.md`](TRANSACTION_PIN.md).
+
+| Change | Where | What the app must do |
+| --- | --- | --- |
+| New 4-digit transaction PIN: create, change, Forgot PIN (`/v1/me/transaction-pin`) | `TRANSACTION_PIN.md` §5 | Build the PIN screens |
+| `X-Transaction-Pin` header required on `POST /v1/transfers/crypto`, `/v1/withdrawals/crypto`, `/v1/withdrawals/ngn` and `/v1/trades` | 7.2, 8.2, 8.7, 8.12 | Add it. Without a PIN: `403 PIN_NOT_SET`; wrong: `403 PIN_WRONG` with `triesLeft`; 5 wrong: `403 PIN_LOCKED` for 30 minutes |
+| `GET /v1/me` has `hasTransactionPin` | 3.1 | Show "Create your PIN" when it is `false` |
+| The password on a first send of ₦100,000 or more is gone (`PASSWORD_REQUIRED` no longer happens) | 8.12 | Drop that screen |
+| Every `POST`/`PUT` body must be JSON with `Content-Type: application/json`. Without it the body arrives empty (`400 "username must be a string"…`) | `TRANSACTION_PIN.md` §1–2 | Check the HTTP client |
+
 ## What changed for the app (29 October 2026): announcements are sent in the background
 
 | Change | Where | What the app must do |
@@ -924,6 +936,7 @@ Authorization: Bearer eyJhbGciOi…
   },
   "walletReady": true,
   "emailVerified": true,
+  "hasTransactionPin": true,
   "dateOfBirth": "1995-03-03",
   "createdAt": "2026-09-30T12:00:00.000Z"
 }
@@ -942,6 +955,7 @@ Authorization: Bearer eyJhbGciOi…
 | `kyc.submittedAt` | string \| null | When KYC was last submitted |
 | `walletReady` | boolean | `false` while the crypto wallet is still being set up (usually seconds after signup) |
 | `emailVerified` | boolean | `false` until the customer enters the emailed code (2.10). Money routes answer `403 EMAIL_NOT_VERIFIED` until then. |
+| `hasTransactionPin` | boolean | **New 29 Oct 2026.** `false` until the customer creates a transaction PIN; show "Create your PIN" before any send, withdrawal or swap ([`TRANSACTION_PIN.md`](TRANSACTION_PIN.md)) |
 | `dateOfBirth` | string \| null | **New 28 Oct 2026.** `"YYYY-MM-DD"`, the **verified** date from the BVN/NIN record at Basic (not what was typed). `null` until Basic is approved. Read-only: the customer can't change it |
 | `createdAt` | string | Signup date |
 
@@ -1862,6 +1876,7 @@ Executes a quote from 7.1. **This moves money.** A quote can be used **once**, o
 | --- | --- |
 | `Authorization` | `Bearer <accessToken>` |
 | `Idempotency-Key` | **Required.** New UUID per tap; the same one on retries (§0.7). |
+| `X-Transaction-Pin` | **Required** (29 Oct 2026). The customer's 4-digit transaction PIN. See [`TRANSACTION_PIN.md`](TRANSACTION_PIN.md) |
 
 | Field | Type | Required | Rules |
 | --- | --- | --- | --- |
@@ -1871,6 +1886,7 @@ Executes a quote from 7.1. **This moves money.** A quote can be used **once**, o
 POST /v1/trades
 Authorization: Bearer eyJhbGciOi…
 Idempotency-Key: 3b8f1c2e-6a4d-4f7b-9c1e-2d5a8b7f0e13
+X-Transaction-Pin: 4826
 Content-Type: application/json
 
 { "quoteId": "5f0e2c1a-8d3b-4c6e-9f21-7a4b3c2d1e0f" }
@@ -2123,6 +2139,7 @@ Sends crypto from the user's balance to an external wallet address. **This moves
 | Header | Value |
 | --- | --- |
 | `Idempotency-Key` | **Required.** New UUID per tap, same one on retries. |
+| `X-Transaction-Pin` | **Required** (29 Oct 2026). The customer's 4-digit transaction PIN. See [`TRANSACTION_PIN.md`](TRANSACTION_PIN.md) |
 
 | Field | Type | Required | Rules | Example |
 | --- | --- | --- | --- | --- |
@@ -2135,6 +2152,7 @@ Sends crypto from the user's balance to an external wallet address. **This moves
 POST /v1/withdrawals/crypto
 Authorization: Bearer eyJhbGciOi…
 Idempotency-Key: 9d2c4e1a-7b3f-4a8e-b6d1-0f5c2e9a8b47
+X-Transaction-Pin: 4826
 Content-Type: application/json
 
 { "amount": "100", "savedCryptoAddressId": "6c0f2b1e-8a4d-4f3c-9e7a-2d5b1c8f0a64" }
@@ -2420,6 +2438,7 @@ Sends naira from the user's balance to a Nigerian bank account. **This moves mon
 | Header | Value |
 | --- | --- |
 | `Idempotency-Key` | **Required** |
+| `X-Transaction-Pin` | **Required** (29 Oct 2026). The customer's 4-digit transaction PIN. See [`TRANSACTION_PIN.md`](TRANSACTION_PIN.md) |
 
 | Field | Type | Required | Rules | Example |
 | --- | --- | --- | --- | --- |
@@ -2588,13 +2607,14 @@ Setting the same name again changes nothing. An old name is kept from everyone e
 | Header | Value |
 | --- | --- |
 | `Idempotency-Key` | **Required.** New UUID per tap, same one on retries. |
+| `Content-Type` | **Required.** `application/json` (without it the body arrives empty) |
+| `X-Transaction-Pin` | **Required** (29 Oct 2026). The customer's 4-digit transaction PIN. See [`TRANSACTION_PIN.md`](TRANSACTION_PIN.md) |
 
 | Field | Type | Required | Rules | Example |
 | --- | --- | --- | --- | --- |
 | `username` | string | ✅ | The receiver's payment username (a leading `@` is fine) | `"ada_okafor"` |
 | `asset` | string | ✅ | A crypto coin code. Naira cannot be sent this way | `"usdt"` |
 | `amount` | string | ✅ | Positive decimal: what the receiver gets. **No fee** | `"25"` |
-| `password` | string | sometimes | Needed for the **first** send to this person worth **₦100,000 or more** | |
 
 ```json
 {
@@ -2617,11 +2637,12 @@ Setting the same name again changes nothing. An old name is kept from everyone e
 | 400 | `OWN_ADDRESS` "You cannot send to your own DavoChain account." | Sending to yourself |
 | 400 | `RECIPIENT_NOT_VERIFIED` | The receiver has not finished Basic verification |
 | 400 | `RECIPIENT_CANNOT_RECEIVE` | The receiver's account is suspended |
-| 403 | `PASSWORD_REQUIRED` | First send of ₦100,000 or more to this person: ask for the password and send again with `password` (a **new** Idempotency-Key) |
-| 401 | "Incorrect password" | Wrong password (counted like a failed sign-in) |
+| 403 | `PIN_NOT_SET` / `PIN_REQUIRED` / `PIN_WRONG` / `PIN_LOCKED` | Transaction PIN: see [`TRANSACTION_PIN.md`](TRANSACTION_PIN.md) §7 |
 | 400 | "Only crypto can be sent by username." | `asset` is `ngn` |
 | 400 | "Insufficient USDT balance: …" | Not enough balance |
 | 403 / 400 | As 8.2 | Not verified, limits, withdrawals paused |
+
+The full step-by-step, with the exact headers, body and every reply, is [`TRANSACTION_PIN.md`](TRANSACTION_PIN.md) §3.
 
 ## 9. Gift cards
 

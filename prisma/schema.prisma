@@ -344,6 +344,14 @@ model User {
   payUsername      String?   @unique
   payUsernameSetAt DateTime?
 
+  /// The 4-digit transaction PIN (29 Oct 2026), scrypt like a password. Asked
+  /// for (header X-Transaction-Pin) before money leaves the wallet or a swap runs.
+  transactionPinHash  String?
+  transactionPinSetAt DateTime?
+  /// Wrong PINs in a row. Five lock the PIN for 30 minutes.
+  pinFailedCount      Int       @default(0)
+  pinLockedUntil      DateTime?
+
   /// The referral this user arrived through, and the ones they brought in.
   ///
   /// Who referred whom lives ONLY on the Referral row. An earlier draft also
@@ -1710,6 +1718,8 @@ enum UserOtpPurpose {
   PASSWORD_RESET
   /// H9: confirms a new customer owns their email address (needed before any money action).
   EMAIL_VERIFY
+  /// Forgot transaction PIN: the emailed code that lets a new one be set (29 Oct 2026).
+  PIN_RESET
 }
 
 /// A six-digit code emailed to a user who cannot sign in.

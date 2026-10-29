@@ -59,6 +59,7 @@ import { CredentialsService } from '../common/credentials.service';
 import { LevelAdminService } from '../levels/level-admin.service';
 import { SavedDestinationsService } from '../withdrawals/saved-destinations.service';
 import { PayUsernamesService } from '../transfers/pay-usernames.service';
+import { TransactionPinService } from '../pin/transaction-pin.service';
 import { BroadcastsService } from '../notifications/broadcasts.service';
 import { BalanceCorrectionsService } from '../reconciliation/balance-corrections.service';
 import { FeeBandsService } from '../rates/fee-bands.service';
@@ -179,6 +180,7 @@ export class AdminController {
     private readonly levelAdmin: LevelAdminService,
     private readonly savedDestinations: SavedDestinationsService,
     private readonly payUsernames: PayUsernamesService,
+    private readonly pins: TransactionPinService,
     private readonly broadcastsService: BroadcastsService,
     private readonly corrections: BalanceCorrectionsService,
     private readonly priceReference: PriceReferenceService,
@@ -1157,6 +1159,16 @@ export class AdminController {
     const { before, after } = await this.payUsernames.removeByAdmin(id, reason);
     await this.admin.audit(adminId, 'user.pay_username.remove', 'User', id, { payUsername: before }, { payUsername: after, reason }, req.ip);
     return { removed: true, newUsername: after };
+  }
+
+  /** People → Users: unlock a transaction PIN that five wrong tries locked (29 Oct 2026). Owners only. */
+  @Post('users/:id/transaction-pin/unlock')
+  @RequirePermissions('users.manage')
+  async unlockUserPin(@CurrentAdmin() actor: AdminJwtPayload, @Param('id', ParseUUIDPipe) id: string, @Req() req: Request) {
+    if (actor.role !== AdminRole.OWNER) throw new ForbiddenException('Only an owner can unlock a transaction PIN');
+    const { before } = await this.pins.unlockByAdmin(id);
+    await this.admin.audit(actor.sub, 'user.transaction_pin.unlock', 'User', id, before, { pinLockedUntil: null, pinFailedCount: 0 }, req.ip);
+    return { unlocked: true };
   }
 
   // ── naira deposit accounts (Payrep) ───────────────────────

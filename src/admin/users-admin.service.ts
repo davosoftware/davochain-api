@@ -247,6 +247,13 @@ export class UsersAdminService {
       closedReason: user.closedReason ?? null,
       closedEmail: user.closedEmail ?? null,
       payUsername: user.payUsername ?? null,
+      // Transaction PIN (29 Oct 2026): whether one exists and whether wrong tries have locked it. Never the PIN.
+      transactionPin: {
+        isSet: user.transactionPinHash !== null,
+        setAt: user.transactionPinSetAt ?? null,
+        lockedUntil: user.pinLockedUntil && user.pinLockedUntil > new Date() ? user.pinLockedUntil : null,
+        failedTries: user.pinFailedCount ?? 0,
+      },
       closedPhone: user.closedPhone ?? null,
       // What happens to the data (28 Oct 2026): the day it is due to be deleted, or when it was.
       dataDeleteAt: user.dataDeleteAt ?? null,

@@ -566,6 +566,171 @@
       ]
     },
     {
+      "name": "3b. Transaction PIN (new 29 Oct 2026)",
+      "description": "A 4-digit PIN asked for (header X-Transaction-Pin) on trades, withdrawals and sends. Make it once here; {{pin}} is used everywhere after. Guide: docs/TRANSACTION_PIN.md",
+      "item": [
+        {
+          "name": "PIN status",
+          "event": [],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/me/transaction-pin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "me",
+                "transaction-pin"
+              ]
+            },
+            "description": "isSet, lockedUntil, triesLeft."
+          }
+        },
+        {
+          "name": "Create my PIN",
+          "event": [],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/me/transaction-pin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "me",
+                "transaction-pin"
+              ]
+            },
+            "description": "Needs the account password. Easy PINs (1234, 0000, 1212…) answer 400 PIN_WEAK.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": \"{{password}}\",\n  \"pin\": \"{{pin}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Change my PIN",
+          "event": [],
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/me/transaction-pin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "me",
+                "transaction-pin"
+              ]
+            },
+            "description": "Afterwards set the {{pin}} variable to the new PIN.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPin\": \"{{pin}}\",\n  \"newPin\": \"7391\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Forgot PIN 1: email me a code",
+          "event": [],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/me/transaction-pin/reset/request",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "me",
+                "transaction-pin",
+                "reset",
+                "request"
+              ]
+            },
+            "description": "A 6-digit code goes to the email. Put it in {{pinResetCode}}.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Forgot PIN 2: code + new PIN",
+          "event": [],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/me/transaction-pin/reset",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "me",
+                "transaction-pin",
+                "reset"
+              ]
+            },
+            "description": "Sends and withdrawals then wait (COOLING_OFF), like after a password change. Set {{pin}} to the new PIN.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"{{pinResetCode}}\",\n  \"newPin\": \"5173\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "4. Basic verification (KYC)",
       "description": "After APPROVED, every session ends: run \"2. Account › Log in\" again.",
       "item": [
@@ -1028,6 +1193,10 @@
               {
                 "key": "Idempotency-Key",
                 "value": "{{idemKey}}"
+              },
+              {
+                "key": "X-Transaction-Pin",
+                "value": "{{pin}}"
               }
             ],
             "url": {
@@ -1065,6 +1234,10 @@
               {
                 "key": "Idempotency-Key",
                 "value": "{{idemKey}}"
+              },
+              {
+                "key": "X-Transaction-Pin",
+                "value": "{{pin}}"
               }
             ],
             "url": {
@@ -1186,6 +1359,10 @@
               {
                 "key": "Idempotency-Key",
                 "value": "{{idemKey}}"
+              },
+              {
+                "key": "X-Transaction-Pin",
+                "value": "{{pin}}"
               }
             ],
             "url": {
@@ -1287,6 +1464,10 @@
               {
                 "key": "Idempotency-Key",
                 "value": "{{idemKey}}"
+              },
+              {
+                "key": "X-Transaction-Pin",
+                "value": "{{pin}}"
               }
             ],
             "url": {
@@ -1499,6 +1680,10 @@
               {
                 "key": "Idempotency-Key",
                 "value": "{{idemKey}}"
+              },
+              {
+                "key": "X-Transaction-Pin",
+                "value": "{{pin}}"
               }
             ],
             "url": {
@@ -1673,6 +1858,10 @@
               {
                 "key": "Idempotency-Key",
                 "value": "{{idemKey}}"
+              },
+              {
+                "key": "X-Transaction-Pin",
+                "value": "{{pin}}"
               }
             ],
             "url": {
@@ -1717,6 +1906,84 @@
               ]
             },
             "description": ""
+          }
+        },
+        {
+          "name": "Find a person by username",
+          "event": [],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/transfers/recipient?username={{recipientUsername}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "transfers",
+                "recipient"
+              ],
+              "query": [
+                {
+                  "key": "username",
+                  "value": "{{recipientUsername}}"
+                }
+              ]
+            },
+            "description": "Shows 'Ada O.' and whether they can receive."
+          }
+        },
+        {
+          "name": "Send 5 USDT by username (free, instant)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('idemKey', pm.variables.replaceIn('{{$guid}}'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "{{idemKey}}"
+              },
+              {
+                "key": "X-Transaction-Pin",
+                "value": "{{pin}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/transfers/crypto",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "transfers",
+                "crypto"
+              ]
+            },
+            "description": "Content-Type: application/json is required, or the body arrives empty. Guide: docs/TRANSACTION_PIN.md §3",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{recipientUsername}}\",\n  \"asset\": \"usdt\",\n  \"amount\": \"5\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           }
         }
       ]
@@ -2652,6 +2919,24 @@
       "value": "",
       "type": "string",
       "description": "The 6-digit code from the reset email"
+    },
+    {
+      "key": "pin",
+      "value": "4826",
+      "type": "string",
+      "description": "The 4-digit transaction PIN (sent as X-Transaction-Pin)"
+    },
+    {
+      "key": "pinResetCode",
+      "value": "",
+      "type": "string",
+      "description": "The 6-digit Forgot PIN code from the email"
+    },
+    {
+      "key": "recipientUsername",
+      "value": "",
+      "type": "string",
+      "description": "Another customer's payment username, for Send by username"
     },
     {
       "key": "depositNetwork",

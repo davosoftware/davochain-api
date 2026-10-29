@@ -59,7 +59,7 @@ describe('resolvePolicies', () => {
   it('fails closed on every auth policy, on paid KYC calls and on username lookups, open on the rest', () => {
     const p = resolvePolicies({});
     for (const name of POLICY_NAMES) {
-      expect(p[name].failClosed).toBe(name.startsWith('auth.') || name === 'kyc.basic' || name === 'kyc.documents' || name === 'kyc.advanced' || name === 'transfers.lookup');
+      expect(p[name].failClosed).toBe(name.startsWith('auth.') || name === 'kyc.basic' || name === 'kyc.documents' || name === 'kyc.advanced' || name === 'transfers.lookup' || name === 'pin.manage');
     }
   });
 });

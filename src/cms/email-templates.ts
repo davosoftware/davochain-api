@@ -215,6 +215,62 @@ ${SIGN_OFF}`),
   },
 
   {
+    key: 'user.pin_reset',
+    label: 'Transaction PIN reset code',
+    hint: 'The six-digit code for Forgot PIN. Asked for after the customer enters their password.',
+    group: 'Account',
+    variables: ['code', 'expiresIn'],
+    sentBy: 'TransactionPinService.requestReset',
+    subject: 'Your {{companyName}} PIN reset code',
+    frame: { panel: { kind: 'code', label: 'PIN reset code', value: '{{code}}', sub: 'Expires in {{expiresIn}}' }, button: NO_BUTTON },
+    body: html(`Hi {{firstName}},
+
+Enter the code above in the app to choose a new transaction PIN. For your
+safety, sending and withdrawing will pause for a while after the new PIN is
+set. Swaps keep working.
+
+**Didn't ask for this?** Someone may know your password. Change it now and
+contact {{supportEmail}}.
+${SIGN_OFF}`),
+  },
+  {
+    key: 'user.pin_changed',
+    label: 'Transaction PIN set or changed',
+    hint: 'Sent when a transaction PIN is created, changed or reset. A security notice.',
+    group: 'Account',
+    variables: ['changedAt', 'method'],
+    sentBy: 'TransactionPinService.create, .change and .reset',
+    subject: 'Your {{companyName}} transaction PIN was updated',
+    frame: { panel: { kind: 'security', label: 'Security notice', value: 'Transaction PIN updated', sub: '{{changedAt}}' } },
+    body: html(`Hi {{firstName}},
+
+Your transaction PIN was {{method}}.
+
+**Wasn't you?** Contact {{supportEmail}} straight away: someone else may have
+access to your account.
+${SIGN_OFF}`),
+  },
+  {
+    key: 'user.pin_locked',
+    label: 'Transaction PIN locked',
+    hint: 'Sent when five wrong PINs in a row lock the transaction PIN for 30 minutes. A security notice.',
+    group: 'Account',
+    variables: ['until'],
+    sentBy: 'TransactionPinService.verify',
+    subject: 'Your {{companyName}} transaction PIN is locked',
+    frame: { panel: { kind: 'security', label: 'Security notice', value: 'Transaction PIN locked', sub: 'Until {{until}}' } },
+    body: html(`Hi {{firstName}},
+
+Someone entered the wrong transaction PIN five times in a row, so sending,
+withdrawing and swapping are paused until {{until}}. Your money is safe.
+
+If this was you, wait, or use **Forgot PIN** in the app to choose a new one.
+
+**Wasn't you?** Someone may have your phone. Contact {{supportEmail}} straight away.
+${SIGN_OFF}`),
+  },
+
+  {
     key: 'destination.added',
     label: 'Withdrawal destination added',
     hint: 'Sent when a bank account or crypto address is saved for withdrawals. A security notice.',
@@ -761,6 +817,7 @@ export const SAMPLE_VALUES: Record<string, string> = {
   networkLabel: 'Bitcoin Network',
   destinationTag: '—',
   expiresIn: '10 minutes',
+  until: '29 October 2026 at 10:30 WAT',
   inviteUrl: 'https://admin.davochain.com/invite/sample-token',
   role: 'Sub-admin',
   invitedBy: 'Chidi Balogun',

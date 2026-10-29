@@ -23,7 +23,10 @@ export class SendByUsernameDto {
   @IsNumberString({}, { message: 'Enter an amount greater than zero' })
   amount!: string;
 
-  /** Needed for a first send of ₦100,000 or more to someone (403 PASSWORD_REQUIRED without it). */
+  /**
+   * No longer used (29 Oct 2026): the transaction PIN replaced it. Still
+   * accepted, and ignored, so an older app that sends it is not refused.
+   */
   @IsOptional()
   @IsString()
   @MaxLength(200)

@@ -130,6 +130,10 @@ export class CustomerErasureService {
           username: null,
           payUsername: null,
           payUsernameSetAt: null,
+          transactionPinHash: null,
+          transactionPinSetAt: null,
+          pinFailedCount: 0,
+          pinLockedUntil: null,
           referralCode: null,
           // Can never match a password.
           passwordHash: `!deleted-${randomBytes(16).toString('hex')}`,
