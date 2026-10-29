@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { dec, str } from '../common/money';
+import { avatarUrl } from '../avatars/avatars.service';
 
 @Injectable()
 export class UsersService {
@@ -28,6 +29,8 @@ export class UsersService {
       payUsername: user.payUsername,
       /** Whether a transaction PIN exists (29 Oct 2026). False: show "Create your PIN" before any send, withdrawal or swap. */
       hasTransactionPin: user.transactionPinHash !== null,
+      /** Profile photo link (29 Oct 2026), or null. Changes whenever the photo does. */
+      avatarUrl: avatarUrl(user.avatarId),
       status: user.status,
       // H9: false until the emailed code is entered; deposits, withdrawals, trades and verification wait for it.
       emailVerified: user.emailVerifiedAt !== null,

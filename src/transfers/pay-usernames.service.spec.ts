@@ -76,7 +76,12 @@ describe('PayUsernamesService.lookup: who am I sending to?', () => {
   const bob = { id: 'bob', firstName: 'Bob', lastName: 'Eze', status: 'ACTIVE', kycTier: 'TIER_1', payUsername: 'bob_eze_1' };
 
   it('gives the short name and whether they can receive', async () => {
-    await expect(build({ owner: bob }).service.lookup('alice', '@Bob_Eze_1')).resolves.toEqual({ username: 'bob_eze_1', displayName: 'Bob E.', canReceive: true, reason: null });
+    await expect(build({ owner: bob }).service.lookup('alice', '@Bob_Eze_1')).resolves.toEqual({ username: 'bob_eze_1', displayName: 'Bob E.', avatarUrl: null, canReceive: true, reason: null });
+  });
+
+  it('includes their photo link when they have one (29 Oct 2026)', async () => {
+    const r = await build({ owner: { ...bob, avatarId: 'a'.repeat(32) } }).service.lookup('alice', 'bob_eze_1');
+    expect(r.avatarUrl).toBe(`/v1/avatars/${'a'.repeat(32)}`);
   });
 
   it('an unverified person shows, but cannot receive yet', async () => {

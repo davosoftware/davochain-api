@@ -22,6 +22,7 @@ export const POLICY_NAMES = [
   'giftcards.sell',
   'transfers.lookup',
   'pin.manage',
+  'avatar.upload',
   'webhooks',
   'public',
   'default',
@@ -72,6 +73,8 @@ export const DEFAULT_POLICIES: Readonly<Record<PolicyName, Policy>> = {
   'transfers.lookup': { name: 'transfers.lookup', limits: { user: lim(30, 10 * M) }, failClosed: true },
   // Creating, changing or resetting the transaction PIN: a few goes, then wait.
   'pin.manage': { name: 'pin.manage', limits: { user: lim(10, 15 * M) }, failClosed: true },
+  // Profile photo uploads: plenty to pick a good one, not a free image host.
+  'avatar.upload': { name: 'avatar.upload', limits: { user: lim(10, H) }, failClosed: false },
   webhooks: { name: 'webhooks', limits: { ip: lim(3000, M) }, failClosed: false },
   public: { name: 'public', limits: { ip: lim(120, M) }, failClosed: false },
   default: { name: 'default', limits: { user: lim(300, M) }, failClosed: false },

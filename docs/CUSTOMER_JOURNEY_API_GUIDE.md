@@ -353,6 +353,8 @@ Content-Type: application/json
 
 `GET /v1/me` shows `"hasTransactionPin": true` from then on. Easy PINs (`1234`, `0000`, `1212`…) answer `400 PIN_WEAK`. Five wrong PINs in a row lock it for 30 minutes. Change PIN, Forgot PIN and every error are in [`TRANSACTION_PIN.md`](TRANSACTION_PIN.md).
 
+**Profile photo (optional, any time):** `PUT /v1/me/avatar` as `multipart/form-data` with one field `file` (JPEG, PNG or WebP, up to 5 MB) answers `{ "avatarUrl": "/v1/avatars/…", "updatedAt": "…" }`. `GET /v1/me` then shows `avatarUrl`. Full guide: [`PROFILE_PHOTO.md`](PROFILE_PHOTO.md).
+
 ### Step 6 · Basic verification (KYC)
 
 **Check where they are:** `GET /v1/kyc` (200, before verification; shortened):

@@ -21,7 +21,8 @@ export type NotificationType =
   | 'withdrawal.rejected'
   | 'security.destination_added'
   | 'security.destination_removed'
-  | 'account.pay_username_removed';
+  | 'account.pay_username_removed'
+  | 'account.avatar_removed';
 
 interface NotifyInput {
   userId: string;

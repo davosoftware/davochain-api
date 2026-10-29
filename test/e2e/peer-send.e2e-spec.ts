@@ -96,7 +96,7 @@ describeAdmin('sending coins to another DavoChain customer by address', () => {
     it('Alice looks Bob up and sees a short name', async () => {
       const r = await call('GET', `/transfers/recipient?username=@${name}`, { token: alice.token });
       expect(r.status).toBe(200);
-      expect(r.body).toEqual({ username: name, displayName: 'Bob R.', canReceive: true, reason: null });
+      expect(r.body).toEqual({ username: name, displayName: 'Bob R.', avatarUrl: null, canReceive: true, reason: null });
       expect((await call('GET', '/transfers/recipient?username=nobody_at_all_x', { token: alice.token })).status).toBe(404);
     });
 

@@ -22,7 +22,17 @@
 
 **New (23 Oct 2026): start with the walk-through.** [`CUSTOMER_JOURNEY_API_GUIDE.md`](CUSTOMER_JOURNEY_API_GUIDE.md) takes one customer through the whole app in order, with real responses: register, email code, Basic verification, the naira account number, deposits, buy, sell, swap, withdrawals, gift cards, Advanced verification and sign-out. It also covers exactly when and how to refresh tokens. A ready-to-import Postman collection that refreshes tokens by itself is in [`postman/`](postman/DavoChain-Customer-Journey.postman_collection.json).
 
-## What changed for the app (29 October 2026, latest): transaction PIN
+## What changed for the app (29 October 2026, latest): profile photo
+
+**Start here:** [`FLUTTER_UPDATE_2026-10-29.md`](FLUTTER_UPDATE_2026-10-29.md) explains all of today's changes in one place. The full photo guide is [`PROFILE_PHOTO.md`](PROFILE_PHOTO.md).
+
+| Change | Where | What the app must do |
+| --- | --- | --- |
+| New: upload / replace (`PUT /v1/me/avatar`, multipart field `file`, JPEG/PNG/WebP up to 5 MB) and delete (`DELETE /v1/me/avatar`) a profile photo | `PROFILE_PHOTO.md` | Build the photo screens |
+| `GET /v1/me` has `avatarUrl` (null when none) | 3.1 | Show the photo (with the Authorization header), or initials |
+| `GET /v1/transfers/recipient` has `avatarUrl` | 8.11 | Show it next to the name on the Send screen |
+
+## What changed for the app (29 October 2026): transaction PIN
 
 The full guide, with request and response examples, is [`TRANSACTION_PIN.md`](TRANSACTION_PIN.md).
 
@@ -937,6 +947,7 @@ Authorization: Bearer eyJhbGciOi…
   "walletReady": true,
   "emailVerified": true,
   "hasTransactionPin": true,
+  "avatarUrl": "/v1/avatars/3f9c2b7e1d4a4e8b9c0f1a2b3c4d5e6f",
   "dateOfBirth": "1995-03-03",
   "createdAt": "2026-09-30T12:00:00.000Z"
 }
@@ -955,6 +966,7 @@ Authorization: Bearer eyJhbGciOi…
 | `kyc.submittedAt` | string \| null | When KYC was last submitted |
 | `walletReady` | boolean | `false` while the crypto wallet is still being set up (usually seconds after signup) |
 | `emailVerified` | boolean | `false` until the customer enters the emailed code (2.10). Money routes answer `403 EMAIL_NOT_VERIFIED` until then. |
+| `avatarUrl` | string \| null | **New 29 Oct 2026.** The profile photo's link: put the API address in front and send the `Authorization` header. `null` = no photo, show initials. A new photo gets a new link ([`PROFILE_PHOTO.md`](PROFILE_PHOTO.md)) |
 | `hasTransactionPin` | boolean | **New 29 Oct 2026.** `false` until the customer creates a transaction PIN; show "Create your PIN" before any send, withdrawal or swap ([`TRANSACTION_PIN.md`](TRANSACTION_PIN.md)) |
 | `dateOfBirth` | string \| null | **New 28 Oct 2026.** `"YYYY-MM-DD"`, the **verified** date from the BVN/NIN record at Basic (not what was typed). `null` until Basic is approved. Read-only: the customer can't change it |
 | `createdAt` | string | Signup date |
@@ -2592,10 +2604,11 @@ Setting the same name again changes nothing. An old name is kept from everyone e
 **Endpoint:** `GET /v1/transfers/recipient?username={name}` · **Auth:** **Bearer** · **Success:** `200`
 
 ```json
-{ "username": "ada_okafor", "displayName": "Ada O.", "canReceive": true, "reason": null }
+{ "username": "ada_okafor", "displayName": "Ada O.", "avatarUrl": "/v1/avatars/3f9c2b7e1d4a4e8b9c0f1a2b3c4d5e6f", "canReceive": true, "reason": null }
 ```
 
 - `displayName` is the first name and last initial only.
+- `avatarUrl` (29 Oct 2026) is their profile photo, or `null`: show it next to the name ([`PROFILE_PHOTO.md`](PROFILE_PHOTO.md) §3).
 - `canReceive: false` comes with a `reason` to show: it is your own username, they have not finished Basic verification, or the account cannot receive.
 - Unknown (or closed) username: `404 { "code": "USERNAME_NOT_FOUND", "message": "No DavoChain customer has that username. Check the spelling." }`
 - Limited to 30 lookups per 10 minutes per customer (`429` after that), so nobody can list our customers.

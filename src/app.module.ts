@@ -30,6 +30,7 @@ import { WithdrawalsModule } from './withdrawals/withdrawals.module';
 import { TransfersModule } from './transfers/transfers.module';
 import { PayUsernamesModule } from './transfers/pay-usernames.module';
 import { TransactionPinModule } from './pin/transaction-pin.module';
+import { AvatarsModule } from './avatars/avatars.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { InventoryModule } from './inventory/inventory.module';
@@ -71,6 +72,7 @@ import { HealthController } from './common/health.controller';
     WithdrawalsModule,
     PayUsernamesModule,
     TransactionPinModule,
+    AvatarsModule,
     TransfersModule,
     WebhooksModule,
     NotificationsModule,

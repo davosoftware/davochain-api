@@ -500,6 +500,56 @@
             },
             "description": ""
           }
+        },
+        {
+          "name": "Upload profile photo (new 29 Oct 2026)",
+          "event": [],
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/me/avatar",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "me",
+                "avatar"
+              ]
+            },
+            "description": "multipart/form-data with ONE field named file (JPEG, PNG or WebP, max 5 MB). Pick the file in the Body tab. Do not set Content-Type yourself. Guide: docs/PROFILE_PHOTO.md",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete profile photo",
+          "event": [],
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/me/avatar",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "me",
+                "avatar"
+              ]
+            },
+            "description": "Answers { removed: true } (or false when there was none)."
+          }
         }
       ]
     },

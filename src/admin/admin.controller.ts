@@ -60,6 +60,8 @@ import { LevelAdminService } from '../levels/level-admin.service';
 import { SavedDestinationsService } from '../withdrawals/saved-destinations.service';
 import { PayUsernamesService } from '../transfers/pay-usernames.service';
 import { TransactionPinService } from '../pin/transaction-pin.service';
+import { AvatarsService } from '../avatars/avatars.service';
+import { sendAvatar } from '../avatars/send-avatar';
 import { BroadcastsService } from '../notifications/broadcasts.service';
 import { BalanceCorrectionsService } from '../reconciliation/balance-corrections.service';
 import { FeeBandsService } from '../rates/fee-bands.service';
@@ -181,6 +183,7 @@ export class AdminController {
     private readonly savedDestinations: SavedDestinationsService,
     private readonly payUsernames: PayUsernamesService,
     private readonly pins: TransactionPinService,
+    private readonly avatars: AvatarsService,
     private readonly broadcastsService: BroadcastsService,
     private readonly corrections: BalanceCorrectionsService,
     private readonly priceReference: PriceReferenceService,
@@ -1159,6 +1162,28 @@ export class AdminController {
     const { before, after } = await this.payUsernames.removeByAdmin(id, reason);
     await this.admin.audit(adminId, 'user.pay_username.remove', 'User', id, { payUsername: before }, { payUsername: after, reason }, req.ip);
     return { removed: true, newUsername: after };
+  }
+
+  /** People → Users: take down an offensive profile photo (29 Oct 2026). The customer is told the reason. */
+  @Delete('users/:id/avatar')
+  @RequirePermissions('users.manage')
+  async removeUserAvatar(
+    @CurrentAdmin('sub') adminId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: RemoveDestinationDto,
+    @Req() req: Request,
+  ) {
+    const reason = dto.reason.trim();
+    const { before } = await this.avatars.removeByAdmin(id, reason);
+    await this.admin.audit(adminId, 'user.avatar.remove', 'User', id, { avatarId: before }, { avatarId: null, reason }, req.ip);
+    return { removed: true };
+  }
+
+  /** A customer's profile photo, for the dashboard. */
+  @Get('avatars/:avatarId')
+  @RequirePermissions('users.view')
+  async customerAvatar(@Param('avatarId') avatarId: string, @Res() res: Response) {
+    sendAvatar(res, await this.avatars.read(avatarId));
   }
 
   /** People → Users: unlock a transaction PIN that five wrong tries locked (29 Oct 2026). Owners only. */

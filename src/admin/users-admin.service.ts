@@ -1,3 +1,4 @@
+import { adminAvatarUrl } from '../avatars/avatars.service';
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, UserStatus, VirtualAccountStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -247,6 +248,8 @@ export class UsersAdminService {
       closedReason: user.closedReason ?? null,
       closedEmail: user.closedEmail ?? null,
       payUsername: user.payUsername ?? null,
+      // Profile photo (29 Oct 2026): the dashboard's link to it, or null.
+      avatarUrl: adminAvatarUrl(user.avatarId),
       // Transaction PIN (29 Oct 2026): whether one exists and whether wrong tries have locked it. Never the PIN.
       transactionPin: {
         isSet: user.transactionPinHash !== null,

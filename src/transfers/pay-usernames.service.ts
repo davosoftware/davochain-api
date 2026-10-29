@@ -1,3 +1,4 @@
+import { avatarUrl } from '../avatars/avatars.service';
 import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { PolicyLevel, Prisma, UserStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
@@ -177,9 +178,13 @@ export class PayUsernamesService {
    * GET /v1/transfers/recipient: the short name behind a username, so the
    * sender can check before confirming. A closed account reads as unknown.
    */
-  async lookup(callerId: string, raw: string): Promise<{ username: string; displayName: string; canReceive: boolean; reason: string | null }> {
+  async lookup(
+    callerId: string,
+    raw: string,
+  ): Promise<{ username: string; displayName: string; avatarUrl: string | null; canReceive: boolean; reason: string | null }> {
     const user = await this.find(raw);
-    const base = { username: user.payUsername!, displayName: displayName(user) };
+    // The photo (29 Oct 2026) helps the sender see it is the right person.
+    const base = { username: user.payUsername!, displayName: displayName(user), avatarUrl: avatarUrl(user.avatarId) };
     if (user.id === callerId) return { ...base, canReceive: false, reason: 'This is your own username.' };
     if (user.status !== UserStatus.ACTIVE) return { ...base, canReceive: false, reason: 'This DavoChain account cannot receive coins right now.' };
     if (levelOf(user.kycTier) === PolicyLevel.NONE) {
@@ -194,7 +199,7 @@ export class PayUsernamesService {
     if (!verdict.value) throw notFound();
     const user = await this.prisma.user.findUnique({
       where: { payUsername: verdict.value },
-      select: { id: true, firstName: true, lastName: true, status: true, kycTier: true, payUsername: true },
+      select: { id: true, firstName: true, lastName: true, status: true, kycTier: true, payUsername: true, avatarId: true },
     });
     if (!user || user.status === UserStatus.CLOSED) throw notFound();
     return user;

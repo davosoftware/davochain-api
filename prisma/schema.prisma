@@ -352,6 +352,12 @@ model User {
   pinFailedCount      Int       @default(0)
   pinLockedUntil      DateTime?
 
+  /// Profile photo (29 Oct 2026): a random id, the file is avatars/<id>.webp in
+  /// R2 and is served at /v1/avatars/<id>. A new id on every change, so an old
+  /// link stops working and a cached photo is never stale.
+  avatarId        String?   @unique
+  avatarUpdatedAt DateTime?
+
   /// The referral this user arrived through, and the ones they brought in.
   ///
   /// Who referred whom lives ONLY on the Referral row. An earlier draft also

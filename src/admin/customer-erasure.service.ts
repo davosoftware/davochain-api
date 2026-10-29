@@ -1,3 +1,4 @@
+import { avatarKey } from '../avatars/avatars.service';
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { randomBytes } from 'node:crypto';
@@ -78,6 +79,8 @@ export class CustomerErasureService {
       this.prisma.giftCardTradeImage.findMany({ where: { trade: { userId } }, select: { storageKey: true } }),
     ]);
     const keys = [...docs, ...cardPhotos].map((f) => f.storageKey).filter((k): k is string => !!k);
+    // The profile photo (29 Oct 2026).
+    if (user.avatarId) keys.push(avatarKey(user.avatarId));
     const now = new Date();
 
     await this.prisma.$transaction(async (tx) => {
@@ -134,6 +137,8 @@ export class CustomerErasureService {
           transactionPinSetAt: null,
           pinFailedCount: 0,
           pinLockedUntil: null,
+          avatarId: null,
+          avatarUpdatedAt: null,
           referralCode: null,
           // Can never match a password.
           passwordHash: `!deleted-${randomBytes(16).toString('hex')}`,
