@@ -39,9 +39,23 @@ describe('H4: an owner resolves a transaction the reconciler cannot', () => {
     await expect(svc.resolveByOwner(owner, 'tx1', 'COMPLETED', 'ok')).rejects.toMatchObject({ status: 400 });
   });
 
-  it('only a transaction that is being checked can be resolved', async () => {
-    const { svc } = build({ id: 'tx1', type: TxType.BUY, status: TxStatus.COMPLETED });
+  it.each([TxStatus.COMPLETED, TxStatus.FAILED, TxStatus.ON_HOLD])('a %s transaction is not waiting, so it cannot be resolved', async (status) => {
+    const { svc, done } = build({ id: 'tx1', type: TxType.BUY, status });
     await expect(svc.resolveByOwner(owner, 'tx1', 'FAILED', NOTE)).rejects.toMatchObject({ status: 409 });
+    expect(done).toEqual([]);
+  });
+
+  it.each([TxStatus.PENDING, TxStatus.PROCESSING])('a %s transaction can be resolved too (29 Oct 2026: anything waiting)', async (status) => {
+    const { svc, done } = build({ id: 'tx1', type: TxType.WITHDRAWAL, status });
+    await svc.resolveByOwner(owner, 'tx1', 'COMPLETED', NOTE);
+    expect(done).toEqual(['withdrawal-completed']);
+  });
+
+  it.each([TxType.DEPOSIT, TxType.GIFT_CARD])('a %s is refused either way: rejecting one could drop money that did arrive', async (type) => {
+    const { svc, done } = build({ id: 'tx1', type, status: TxStatus.PENDING });
+    await expect(svc.resolveByOwner(owner, 'tx1', 'FAILED', NOTE)).rejects.toMatchObject({ status: 400 });
+    await expect(svc.resolveByOwner(owner, 'tx1', 'COMPLETED', NOTE)).rejects.toMatchObject({ status: 400 });
+    expect(done).toEqual([]);
   });
 
   it.each([
@@ -56,10 +70,10 @@ describe('H4: an owner resolves a transaction the reconciler cannot', () => {
     expect(legUpdates).toContainEqual(expect.objectContaining({ state: LegState.CONFIRMED }));
   });
 
-  it('failing it refunds through the normal path, with the note as the reason', async () => {
+  it('rejecting it gives the money back through the normal path; the customer sees the reason as written', async () => {
     const { svc, done, legUpdates } = build({ id: 'tx1', type: TxType.WITHDRAWAL, status: TxStatus.RECONCILING });
     await svc.resolveByOwner(owner, 'tx1', 'FAILED', NOTE);
-    expect(done).toEqual([`refund: Resolved by an owner: ${NOTE}`]);
+    expect(done).toEqual([`refund: ${NOTE}`]);
     expect(legUpdates).toContainEqual(expect.objectContaining({ state: LegState.FAILED }));
   });
 });

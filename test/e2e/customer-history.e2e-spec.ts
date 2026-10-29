@@ -77,6 +77,19 @@ describeAdmin('one customer\'s history and balance check (admin)', () => {
     expect(b.body.rows.find((r: { asset: string }) => r.asset === 'usdt')).toMatchObject({ recorded: '5', held: '5', difference: '0', verdict: 'OK' });
   });
 
+  it('a finished send cannot be completed or rejected by hand (only waiting ones can)', async () => {
+    const r = await call('GET', `/admin/transactions/manager?userId=${aliceId}&tab=WITHDRAWAL`, { token: ADMIN });
+    const send = r.body.rows[0];
+    const note = 'Checked Quidax: this send shows Done.';
+    for (const outcome of ['COMPLETED', 'FAILED']) {
+      const res = await call('POST', `/admin/transactions/${send.id}/resolve`, { token: ADMIN, body: { outcome, note } });
+      expect(res.status).toBe(409);
+    }
+    // Nothing moved: Bob still has exactly the 5 USDT.
+    const b = await call('GET', `/admin/users/${bobId}/balance-check`, { token: ADMIN });
+    expect(b.body.rows.find((x: { asset: string }) => x.asset === 'usdt')).toMatchObject({ recorded: '5' });
+  });
+
   it('only admins with the right permission; unknown customers are 404', async () => {
     expect((await call('GET', `/admin/users/${aliceId}/balance-check`, { token: alice.token })).status).toBe(401);
     expect((await call('GET', '/admin/users/00000000-0000-4000-8000-000000000000/balance-check', { token: ADMIN })).status).toBe(404);

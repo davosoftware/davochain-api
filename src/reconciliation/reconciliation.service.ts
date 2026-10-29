@@ -613,7 +613,7 @@ export class ReconciliationService {
     note: string,
   ): Promise<{ transactionId: string; outcome: 'COMPLETED' | 'FAILED' }> {
     if (actor.role !== AdminRole.OWNER) {
-      throw new ForbiddenException('Only an owner can resolve a transaction that is being checked');
+      throw new ForbiddenException('Only an owner can complete or reject a waiting transaction');
     }
     const reason = (note ?? '').trim();
     if (reason.length < 10) {
@@ -621,12 +621,21 @@ export class ReconciliationService {
     }
     const tx = await this.prisma.transaction.findUnique({ where: { id: transactionId } });
     if (!tx) throw new NotFoundException('Transaction not found');
-    if (tx.status !== TxStatus.RECONCILING) {
-      throw new ConflictException('Only a transaction that is being checked (RECONCILING) can be resolved');
+    // Anything still waiting (29 Oct 2026), not only RECONCILING. The run-once
+    // paths below close only from an open state, so a webhook finishing it at
+    // the same moment cannot pay twice.
+    if (!OPEN_STATUSES.includes(tx.status)) {
+      throw new ConflictException('Only a waiting transaction (pending, processing or being checked) can be completed or rejected');
+    }
+    // Never a deposit or gift card: rejecting one could drop money that did arrive.
+    const decidable: TxType[] = [TxType.BUY, TxType.SELL, TxType.SWAP, TxType.WITHDRAWAL];
+    if (!decidable.includes(tx.type)) {
+      throw new BadRequestException(`A ${tx.type.toLowerCase().replace('_', ' ')} cannot be completed or rejected here`);
     }
 
     if (outcome === 'FAILED') {
-      await this.settlement.reverse(tx.id, `Resolved by an owner: ${reason}`);
+      // The customer is shown this reason as written; the audit log records who.
+      await this.settlement.reverse(tx.id, reason);
     } else if (tx.type === TxType.BUY || tx.type === TxType.SELL) {
       await this.settlement.completeTrade(tx.id);
     } else if (tx.type === TxType.SWAP) {
